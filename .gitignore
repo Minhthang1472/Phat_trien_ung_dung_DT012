@@ -1,0 +1,43 @@
+# ==========================================
+# Môi trường ảo Python & Node modules
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
+node_modules/
+
+# ==========================================
+# BẢO MẬT: Tuyệt đối KHÔNG đẩy file .env chứa mật khẩu lên Git
+# ==========================================
+.env
+*.env
+!.env.example
+
+# ==========================================
+# Byte-compiled / optimized / cache files
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# ==========================================
+# File tạm âm thanh & phụ đề phát sinh khi test
+# ==========================================
+*.wav
+*.mp3
+*.mp4
+*.m4a
+*.srt
+*.vtt
+test_sample.*
+
+# ==========================================
+# Cấu hình IDE cá nhân & Hệ điều hành
+# ==========================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

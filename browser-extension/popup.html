@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lecture AI Subtitles</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <div class="logo-badge">AI</div>
+      <h2>Lecture Caption</h2>
+    </div>
+    <p class="subtitle">Đồng bộ phụ đề & Tóm tắt bài giảng</p>
+
+    <div class="status-box" id="statusBox">
+      <span class="status-dot"></span>
+      <span id="statusText">Sẵn sàng phân tích</span>
+    </div>
+
+    <div class="field">
+      <label for="targetLang">Ngôn ngữ hiển thị</label>
+      <select id="targetLang">
+        <option value="vi" selected>Tiếng Việt (Mặc định)</option>
+        <option value="en">English</option>
+      </select>
+    </div>
+
+    <div class="button-group">
+      <button id="btnProcessTab" class="btn-primary">
+        ⚡ Bắt đầu tạo phụ đề cho Tab này
+      </button>
+      <button id="btnToggleOverlay" class="btn-secondary">
+        Ẩn/Hiện lớp phủ phụ đề
+      </button>
+    </div>
+
+    <div class="summary-section" id="summarySection" style="display: none;">
+      <h3>📌 Tóm tắt bài giảng:</h3>
+      <div class="summary-content" id="summaryContent"></div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Lecture Subtitle & AI Summary",
+  "version": "1.0.0",
+  "description": "Tự động tạo phụ đề đồng bộ và tóm tắt bài giảng trực tiếp trên trình duyệt",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*",
+    "*://*/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Bật/Tắt Phụ đề bài giảng AI"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*/*"],
+      "js": ["content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

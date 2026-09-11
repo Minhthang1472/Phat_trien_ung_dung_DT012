@@ -1,0 +1,18 @@
+# Backend Web Framework & Server
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+python-dotenv>=1.0.1
+python-multipart>=0.0.9
+
+# AI & Speech Recognition (Chạy tăng tốc trên GPU NVIDIA RTX 2050)
+faster-whisper>=1.0.0
+yt-dlp>=2024.3.10
+
+# Database & Async MongoDB
+motor>=3.3.2
+pymongo>=4.6.2
+
+# NLP & Summarization / Translation
+google-generativeai>=0.4.1
+requests>=2.31.0
