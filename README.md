@@ -13,9 +13,8 @@
 
 | Tài liệu | Nội dung chính |
 | :--- | :--- |
-| 🚀 **[Hướng dẫn Chạy Backend AI Tuần 3-5](docs/HUONG_DAN_CHAY_VA_TONG_KET_TUAN_03_05.md)** | **Cẩm nang chạy Tuần 3-5**: Khởi động Server, Swagger UI, Test Suite, CSDL Cloud |
+| 🚀 **[Hướng dẫn Cài đặt & Chạy Hệ thống](docs/HUONG_DAN_CAI_DAT_VA_CHAY_HE_THONG.md)** | **CẨM NANG TOÀN DIỆN**: Chi tiết đã cài những gì (thư viện, Firebase, Gemini) và cách chạy từ A-Z |
 | 📋 **[Báo cáo Tiến độ Tuần 3-5](docs/BAO_CAO_TIEN_DO_TUAN_03_05.md)** | Bản báo cáo học thuật chính thức Giai đoạn 02 nộp cho GVHD Phan Mạnh Thường |
-| 📖 **[Hướng dẫn Cài đặt & Chạy Tuần 1-2](docs/HUONG_DAN_CAI_DAT_VA_TONG_KET_TUAN_01_02.md)** | Chi tiết cách cài đặt môi trường và tổng kết toàn bộ thành quả Tuần 1-2 |
 | 📋 **[Báo cáo Tiến độ Tuần 1-2](docs/BAO_CAO_TIEN_DO_TUAN_01_02.md)** | Bản báo cáo học thuật chính thức Giai đoạn 01 nộp cho GVHD Phan Mạnh Thường |
 | 🏗️ **[Thiết kế Kiến trúc & Cơ sở Dữ liệu](docs/THIET_KE_KIEN_TRUC_VA_DATABASE.md)** | Kiến trúc 4 tầng, Sơ đồ tuần tự tương tác (Mermaid) & Data Dictionary MongoDB |
 | 🎨 **[Thiết kế Giao diện UI/UX](docs/THIET_KE_GIAO_DIEN_UI_UX.md)** | Bản vẽ Wireframe cho Mobile App (4 màn hình) và Chrome Extension |

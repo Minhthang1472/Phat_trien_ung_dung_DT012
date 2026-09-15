@@ -8,11 +8,13 @@ ENV/
 node_modules/
 
 # ==========================================
-# BẢO MẬT: Tuyệt đối KHÔNG đẩy file .env chứa mật khẩu lên Git
+# BẢO MẬT: Tuyệt đối KHÔNG đẩy file .env và Key Firebase chứa mật khẩu lên Git
 # ==========================================
 .env
 *.env
 !.env.example
+serviceAccountKey.json
+*serviceAccountKey*.json
 
 # ==========================================
 # Byte-compiled / optimized / cache files

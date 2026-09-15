@@ -32,11 +32,12 @@ Hệ thống được thiết kế theo mô hình kiến trúc phân tầng chu�
 │    - Translation Service: Neural Machine Translation (Đa ngôn ngữ)         │
 │    - Summary Service: Large Language Model (Gemini / Local LLM)            │
 └─────────────────────────────────────┬──────────────────────────────────────┘
-                                      │ ODM (Motor Async Driver)
+                                      │ Firebase Admin SDK / Motor ODM
 ┌─────────────────────────────────────▼──────────────────────────────────────┐
-│ 4. TẦNG LƯU TRỮ DỮ LIỆU (DATA PERSISTENCE LAYER)                           │
-│    - MongoDB Atlas / Local MongoDB: Users, Lectures, Subtitles, Summaries  │
-│    - Local File Cache: Lưu trữ tạm file WAV khi đang xử lý                │
+│ 4. TẦNG LƯU TRỮ DỮ LIỆU & CACHE (DATA PERSISTENCE LAYER)                   │
+│    - Google Firebase Cloud Firestore: Kho lưu vĩnh cửu & Cache O(1)        │
+│    - MongoDB Atlas: Cơ sở dữ liệu NoSQL đám mây (Dự phòng mở rộng)         │
+│    - Local File Cache: Lưu trữ tạm file WAV khi đang xử lý                 │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
