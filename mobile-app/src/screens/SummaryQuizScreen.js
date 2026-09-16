@@ -6,7 +6,10 @@ import {
   StyleSheet,
   TouchableOpacity,
   Share,
+  Alert,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { colors, spacing, borderRadius } from '../constants/theme';
 import QuizCard from '../components/QuizCard';
 
@@ -25,6 +28,52 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
       const textToShare = `=== TỔNG QUAN BÀI HỌC: ${lecture?.title || ''} ===\n\n${summary}\n\n=== ĐIỂM KIẾN THỨC CỐT LÕI ===\n${keyPoints.map((k, i) => `${i + 1}. ${k}`).join('\n')}`;
       await Share.share({ message: textToShare });
     } catch (_) {}
+  };
+
+  // Xuất tài liệu ôn tập dưới dạng file TXT
+  const handleExportSummary = async () => {
+    try {
+      let content = `=== BÀI GIẢNG: ${lecture?.title || 'Không tên'} ===\n\n`;
+      content += `📝 TÓM TẮT:\n${summary}\n\n`;
+
+      if (keyPoints.length > 0) {
+        content += `📌 ĐIỂM KIẾN THỨC CỐT LÕI:\n`;
+        keyPoints.forEach((k, i) => { content += `  ${i + 1}. ${k}\n`; });
+        content += '\n';
+      }
+
+      if (formulasAndTerms.length > 0) {
+        content += `🧮 THUẬT NGỮ & CÔNG THỨC:\n`;
+        formulasAndTerms.forEach((t) => { content += `  • ${t}\n`; });
+        content += '\n';
+      }
+
+      if (quizList.length > 0) {
+        content += `📝 CÂU HỎI TRẮC NGHIỆM:\n`;
+        quizList.forEach((q, i) => {
+          content += `\nCâu ${i + 1}: ${q.question}\n`;
+          q.options.forEach((opt) => { content += `  ${opt}\n`; });
+          content += `  ✅ Đáp án đúng: ${q.correct_answer}\n`;
+          if (q.explanation) content += `  💡 Giải thích: ${q.explanation}\n`;
+        });
+      }
+
+      const safeTitle = (lecture?.title || 'summary').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
+      const filePath = `${FileSystem.cacheDirectory}${safeTitle}_summary.txt`;
+      await FileSystem.writeAsStringAsync(filePath, content, { encoding: FileSystem.EncodingType.UTF8 });
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(filePath, {
+          mimeType: 'text/plain',
+          dialogTitle: 'Xuất tài liệu ôn tập',
+        });
+      } else {
+        Alert.alert('Thành công', `File đã được lưu tại:\n${filePath}`);
+      }
+    } catch (err) {
+      Alert.alert('Lỗi xuất tài liệu', err.message);
+    }
   };
 
   return (
@@ -83,9 +132,14 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
         )}
 
         {/* Nút Xuất / Chia sẻ tài liệu ôn tập */}
-        <TouchableOpacity style={styles.exportBtn} onPress={handleShareDoc} activeOpacity={0.8}>
-          <Text style={styles.exportBtnText}>📥 XUẤT TÀI LIỆU ÔN TẬP (SHARE / PDF)</Text>
-        </TouchableOpacity>
+        <View style={styles.exportRow}>
+          <TouchableOpacity style={styles.exportFileBtn} onPress={handleExportSummary} activeOpacity={0.8}>
+            <Text style={styles.exportFileBtnText}>📥 XUẤT FILE TÀI LIỆU</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.exportBtn} onPress={handleShareDoc} activeOpacity={0.8}>
+            <Text style={styles.exportBtnText}>📤 CHIA SẺ</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </ScrollView>
   );
@@ -197,18 +251,38 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
   },
+  exportRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  exportFileBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(6, 182, 212, 0.15)',
+    borderWidth: 1,
+    borderColor: colors.secondary,
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  exportFileBtnText: {
+    color: colors.secondary,
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
   exportBtn: {
+    flex: 1,
     backgroundColor: 'rgba(99, 102, 241, 0.15)',
     borderWidth: 1,
     borderColor: colors.primaryLight,
     borderRadius: borderRadius.md,
     paddingVertical: 12,
     alignItems: 'center',
-    marginTop: spacing.sm,
   },
   exportBtnText: {
     color: colors.primaryLight,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.5,
   },

@@ -10,6 +10,8 @@ import {
   Alert,
   RefreshControl,
 } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
 import { colors, spacing, borderRadius } from '../constants/theme';
 import { SUPPORTED_LANGUAGES } from '../constants/config';
 import { apiService } from '../services/api';
@@ -177,6 +179,68 @@ export default function HomeScreen({ onNavigate }) {
     }
   };
 
+  // Upload file video/audio nội bộ từ điện thoại
+  const handleUploadFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['video/*', 'audio/*'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled) return;
+
+      const file = result.assets[0];
+      if (!file) return;
+
+      setLoading(true);
+      setLoadingStep('Đang tải lên file từ thiết bị...');
+
+      const baseUrl = await apiService.getBaseUrl();
+      const uploadResult = await FileSystem.uploadAsync(
+        `${baseUrl}/api/video/upload`,
+        file.uri,
+        {
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
+          fieldName: 'file',
+          parameters: {
+            target_language: targetLang,
+          },
+        }
+      );
+
+      if (uploadResult.status >= 200 && uploadResult.status < 300) {
+        const data = JSON.parse(uploadResult.body);
+        setLoading(false);
+        onNavigate('SyncPlayer', { lecture: data });
+      } else {
+        throw new Error(`Server trả về lỗi: ${uploadResult.status}`);
+      }
+    } catch (err) {
+      setLoading(false);
+      Alert.alert(
+        'Không thể upload file',
+        `${err.message}\n\nHãy đảm bảo Backend đang chạy và có endpoint /api/video/upload.`,
+        [
+          { text: 'Đóng', style: 'cancel' },
+          {
+            text: 'Xem bài mẫu',
+            onPress: () => onNavigate('SyncPlayer', { lecture: SAMPLE_LECTURES[0] }),
+          },
+        ]
+      );
+    }
+  };
+
+  // Tính thống kê tiến độ từ lịch sử
+  const totalLectures = recentLectures.length;
+  const totalMinutes = Math.round(
+    recentLectures.reduce((acc, l) => acc + (l.duration_seconds || 0), 0) / 60
+  );
+  const totalQuizzes = recentLectures.reduce(
+    (acc, l) => acc + ((l.quiz || l.full_data?.quiz)?.length || 0), 0
+  );
+
   return (
     <View style={styles.container}>
       <Header
@@ -255,6 +319,35 @@ export default function HomeScreen({ onNavigate }) {
               <Text style={styles.primaryActionBtnText}>⚡ BẮT ĐẦU TẠO PHỤ ĐỀ & TÓM TẮT</Text>
             )}
           </TouchableOpacity>
+
+          {/* Nút Upload File Nội bộ */}
+          <TouchableOpacity
+            style={[styles.uploadBtn, loading && styles.disabledBtn]}
+            onPress={handleUploadFile}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.uploadBtnText}>📁 UPLOAD FILE TỪ THIẾT BỊ (MP4 / MP3)</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Khối Thống kê Tiến độ Học */}
+        <View style={styles.cardSection}>
+          <Text style={styles.sectionHeader}>📊 THỐNG KÊ TIẾN ĐỘ HỌC TẬP</Text>
+          <View style={styles.statsRow}>
+            <View style={styles.statBox}>
+              <Text style={styles.statNumber}>{totalLectures}</Text>
+              <Text style={styles.statLabel}>Bài giảng</Text>
+            </View>
+            <View style={[styles.statBox, styles.statBoxAccent]}>
+              <Text style={[styles.statNumber, styles.statNumberAccent]}>{totalMinutes}</Text>
+              <Text style={styles.statLabel}>Phút học</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={styles.statNumber}>{totalQuizzes}</Text>
+              <Text style={styles.statLabel}>Câu quiz</Text>
+            </View>
+          </View>
         </View>
 
         {/* Khối Hoạt động Trực tiếp Giảng đường */}
@@ -480,5 +573,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textSecondary,
     lineHeight: 16,
+  },
+  uploadBtn: {
+    backgroundColor: 'rgba(6, 182, 212, 0.15)',
+    borderWidth: 1,
+    borderColor: colors.secondary,
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+  },
+  uploadBtnText: {
+    color: colors.secondary,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: colors.card,
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  statBoxAccent: {
+    borderColor: colors.primaryLight,
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+  },
+  statNumber: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: 2,
+  },
+  statNumberAccent: {
+    color: colors.primaryLight,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontWeight: '600',
   },
 });

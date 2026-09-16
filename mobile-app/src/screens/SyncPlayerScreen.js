@@ -5,10 +5,12 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  StyleSheet,
   Share,
+  Alert,
 } from 'react-native';
 import { Video } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { colors, spacing, borderRadius } from '../constants/theme';
 import Header from '../components/Header';
 import SubtitleItem from '../components/SubtitleItem';
@@ -79,6 +81,47 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
         message: `Bài giảng: ${title}\nTổng quan: ${lecture?.summary || ''}\nXem tại: ${lecture?.video_url || ''}`,
       });
     } catch (_) {}
+  };
+
+  // Xuất file phụ đề SRT chuẩn
+  const handleExportSRT = async () => {
+    if (segments.length === 0) {
+      Alert.alert('Không có dữ liệu', 'Bài giảng này chưa có phụ đề để xuất.');
+      return;
+    }
+    try {
+      const formatSRTTime = (sec) => {
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const s = Math.floor(sec % 60);
+        const ms = Math.round((sec % 1) * 1000);
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+      };
+
+      let srtContent = '';
+      segments.forEach((seg, idx) => {
+        srtContent += `${idx + 1}\n`;
+        srtContent += `${formatSRTTime(seg.start)} --> ${formatSRTTime(seg.end)}\n`;
+        srtContent += `${seg.text}\n\n`;
+      });
+
+      const safeTitle = (title || 'lecture').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
+      const filePath = `${FileSystem.cacheDirectory}${safeTitle}.srt`;
+      await FileSystem.writeAsStringAsync(filePath, srtContent, { encoding: FileSystem.EncodingType.UTF8 });
+
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(filePath, {
+          mimeType: 'application/x-subrip',
+          dialogTitle: 'Xuất file phụ đề SRT',
+          UTI: 'com.apple.subrip',
+        });
+      } else {
+        Alert.alert('Thành công', `File SRT đã được lưu tại:\n${filePath}`);
+      }
+    } catch (err) {
+      Alert.alert('Lỗi xuất SRT', err.message);
+    }
   };
 
   const formatTime = (sec) => {
@@ -169,6 +212,16 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
           <View style={styles.subtitleHeader}>
             <Text style={styles.subtitleHeaderText}>💬 PHỤ ĐỀ ĐỒNG BỘ THỜI GIAN THỰC</Text>
             <Text style={styles.hintText}>Chạm vào câu để nhảy đến mốc thời gian</Text>
+          </View>
+
+          {/* Thanh công cụ Xuất file */}
+          <View style={styles.exportToolbar}>
+            <TouchableOpacity style={styles.exportSrtBtn} onPress={handleExportSRT} activeOpacity={0.8}>
+              <Text style={styles.exportSrtBtnText}>📄 Xuất SRT</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.8}>
+              <Text style={styles.shareBtnText}>📤 Chia sẻ</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Danh sách phụ đề đồng bộ chạy theo giây */}
@@ -349,5 +402,40 @@ const styles = StyleSheet.create({
   emptyText: {
     color: colors.textMuted,
     fontSize: 13,
+  },
+  exportToolbar: {
+    flexDirection: 'row',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    gap: spacing.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+  },
+  exportSrtBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(6, 182, 212, 0.15)',
+    borderWidth: 1,
+    borderColor: colors.secondary,
+    borderRadius: borderRadius.sm,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  exportSrtBtnText: {
+    color: colors.secondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  shareBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    borderWidth: 1,
+    borderColor: colors.primaryLight,
+    borderRadius: borderRadius.sm,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  shareBtnText: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
