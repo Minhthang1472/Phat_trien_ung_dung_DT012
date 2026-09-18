@@ -9,10 +9,8 @@ python-multipart>=0.0.9
 faster-whisper>=1.0.0
 yt-dlp>=2024.3.10
 
-# Database & Cloud Storage
+# Database & Cloud Storage (Kho lưu trữ vĩnh cửu & Cache O(1))
 firebase-admin>=6.5.0
-motor>=3.3.2
-pymongo>=4.6.2
 
 # NLP & Summarization / Translation
 google-generativeai>=0.4.1

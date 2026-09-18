@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 
 from app.core.config import settings
-from app.database import connect_to_mongo, close_mongo_connection, db_instance
 from app.firebase_database import firebase_service
 from app.models.schemas import ProcessVideoRequest, ProcessVideoResponse, SubtitleSegment
 from app.services.audio_service import audio_service
@@ -21,13 +20,9 @@ logger = logging.getLogger("uvicorn")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Khởi động kết nối CSDL Firebase Firestore
+    # Khởi động kết nối Google Firebase Cloud Firestore
     firebase_service.init_firebase()
-    # Khởi động MongoDB song song (nếu có cấu hình)
-    await connect_to_mongo()
     yield
-    # Đóng kết nối khi tắt server
-    await close_mongo_connection()
 
 app = FastAPI(
     title="Lecture Caption & Summary AI API",
@@ -72,17 +67,11 @@ async def process_video(request: ProcessVideoRequest):
     if not url:
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp URL bài giảng hợp lệ.")
 
-    # 1. Kiểm tra cache trong Firebase Firestore trước (tiết kiệm 100% Token Gemini!)
+    # 1. Kiểm tra cache trong Firebase Firestore (tiết kiệm 100% Token Gemini!)
     cached_fb = firebase_service.get_lecture_cache(url)
     if cached_fb:
         logger.info(f"Tìm thấy kết quả trong FIREBASE CACHE cho video: {url}")
         return cached_fb
-    # Dự phòng kiểm tra thêm MongoDB nếu có
-    if db_instance.db is not None:
-        cached_mongo = await db_instance.db["lectures"].find_one({"video_url": url})
-        if cached_mongo:
-            logger.info(f"Tìm thấy kết quả trong MONGODB CACHE cho video: {url}")
-            return cached_mongo
 
     # 2. Bóc tách âm thanh siêu nhẹ bằng yt-dlp
     try:
@@ -140,17 +129,8 @@ async def process_video(request: ProcessVideoRequest):
         "quiz": summary_data.get("quiz", [])
     }
 
-    # 6. Lưu vào Firebase Firestore làm kho lưu vĩnh cửu (và MongoDB nếu có)
+    # 6. Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
     firebase_service.save_lecture_cache(url, result)
-    if db_instance.db is not None:
-        try:
-            await db_instance.db["lectures"].update_one(
-                {"video_url": url},
-                {"$set": result},
-                upsert=True
-            )
-        except Exception as e:
-            logger.warning(f"Không thể ghi vào MongoDB: {e}")
 
     return result
 
@@ -218,6 +198,9 @@ async def upload_video(
         "quiz": summary_data.get("quiz", [])
     }
 
+    # Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
+    firebase_service.save_lecture_cache(result["video_url"], result)
+
     return result
 
 @app.get("/api/video/export")
@@ -228,10 +211,8 @@ async def export_subtitles(
     """
     Xuất file phụ đề chuẩn quốc tế (.srt hoặc .vtt) để tải về máy hoặc phát trên web
     """
-    # Tra cứu dữ liệu phụ đề từ Firebase Firestore trước, sau đó fallback MongoDB
+    # Tra cứu dữ liệu phụ đề từ Firebase Firestore
     record = firebase_service.get_lecture_cache(video_url)
-    if not record and db_instance.db is not None:
-        record = await db_instance.db["lectures"].find_one({"video_url": video_url})
 
     if not record or "segments" not in record:
         raise HTTPException(status_code=404, detail="Không tìm thấy dữ liệu phụ đề cho video này trên Cloud. Hãy xử lý video trước.")
@@ -259,13 +240,7 @@ async def get_lecture_history(limit: int = 10):
     """
     Lấy danh sách các bài giảng người dùng đã xử lý gần đây từ Google Firebase Firestore Cloud
     """
-    # Lấy từ Firebase Firestore trước
     items = firebase_service.get_history(limit=limit)
-    
-    # Nếu Firestore trống, thử fallback sang MongoDB
-    if not items and db_instance.db is not None:
-        cursor = db_instance.db["lectures"].find({}, {"_id": 0, "video_url": 1, "title": 1, "duration_seconds": 1, "language": 1, "summary": 1}).limit(limit)
-        items = await cursor.to_list(length=limit)
 
     return {
         "items": items, 

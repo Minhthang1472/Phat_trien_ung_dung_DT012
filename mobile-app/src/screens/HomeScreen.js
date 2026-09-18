@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
@@ -17,7 +18,7 @@ import { SUPPORTED_LANGUAGES } from '../constants/config';
 import { apiService } from '../services/api';
 import Header from '../components/Header';
 import LectureCard from '../components/LectureCard';
-import ServerModal from '../components/ServerModal';
+import AboutModal from '../components/AboutModal';
 
 // Dữ liệu mẫu bài giảng nếu chưa kết nối server
 const SAMPLE_LECTURES = [
@@ -99,7 +100,7 @@ export default function HomeScreen({ onNavigate }) {
   const [recentLectures, setRecentLectures] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [serverStatus, setServerStatus] = useState({ online: false });
-  const [serverModalVisible, setServerModalVisible] = useState(false);
+  const [aboutModalVisible, setAboutModalVisible] = useState(false);
 
   useEffect(() => {
     checkHealthAndFetchHistory();
@@ -179,56 +180,109 @@ export default function HomeScreen({ onNavigate }) {
     }
   };
 
-  // Upload file video/audio nội bộ từ điện thoại
-  const handleUploadFile = async () => {
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: ['video/*', 'audio/*'],
-        copyToCacheDirectory: true,
-      });
-
-      if (result.canceled) return;
-
-      const file = result.assets[0];
-      if (!file) return;
-
-      setLoading(true);
-      setLoadingStep('Đang tải lên file từ thiết bị...');
-
-      const baseUrl = await apiService.getBaseUrl();
-      const uploadResult = await FileSystem.uploadAsync(
-        `${baseUrl}/api/video/upload`,
-        file.uri,
-        {
-          httpMethod: 'POST',
-          uploadType: FileSystem.FileSystemUploadType.MULTIPART,
-          fieldName: 'file',
-          parameters: {
-            target_language: targetLang,
-          },
+  // Upload file video/audio từ thiết bị (Tương thích 100% cả Web máy tính lẫn Điện thoại)
+  const handleUploadFile = () => {
+    if (Platform.OS === 'web') {
+      try {
+        let input = document.getElementById('lecture-file-picker');
+        if (!input) {
+          input = document.createElement('input');
+          input.id = 'lecture-file-picker';
+          input.type = 'file';
+          input.accept = 'video/*,audio/*,.mp4,.mp3,.wav,.m4a';
+          input.style.display = 'none';
+          document.body.appendChild(input);
         }
-      );
 
-      if (uploadResult.status >= 200 && uploadResult.status < 300) {
-        const data = JSON.parse(uploadResult.body);
-        setLoading(false);
-        onNavigate('SyncPlayer', { lecture: data });
-      } else {
-        throw new Error(`Server trả về lỗi: ${uploadResult.status}`);
+        input.onchange = async (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (!file) return;
+
+          setLoading(true);
+          setLoadingStep(`Đang tải file bài giảng lên AI...`);
+
+          try {
+            const baseUrl = await apiService.getBaseUrl();
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('target_language', targetLang);
+
+            setLoadingStep('AI đang bóc tách phụ đề & tóm tắt...');
+            const response = await fetch(`${baseUrl}/api/video/upload`, {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (!response.ok) {
+              const errBody = await response.text();
+              throw new Error(`Lỗi máy chủ (${response.status}): ${errBody || response.statusText}`);
+            }
+
+            const data = await response.json();
+            setLoading(false);
+            await apiService.saveLectureToLocal(data);
+            await checkHealthAndFetchHistory();
+            onNavigate('SyncPlayer', { lecture: data });
+          } catch (uploadErr) {
+            setLoading(false);
+            Alert.alert('Không thể xử lý file', uploadErr.message);
+          } finally {
+            input.value = '';
+          }
+        };
+
+        input.click();
+      } catch (err) {
+        Alert.alert('Lỗi mở file', err.message);
       }
-    } catch (err) {
-      setLoading(false);
-      Alert.alert(
-        'Không thể upload file',
-        `${err.message}\n\nHãy đảm bảo Backend đang chạy và có endpoint /api/video/upload.`,
-        [
-          { text: 'Đóng', style: 'cancel' },
-          {
-            text: 'Xem bài mẫu',
-            onPress: () => onNavigate('SyncPlayer', { lecture: SAMPLE_LECTURES[0] }),
-          },
-        ]
-      );
+    } else {
+      // Trên Điện thoại di động (Android / iOS)
+      (async () => {
+        try {
+          const result = await DocumentPicker.getDocumentAsync({
+            type: ['video/*', 'audio/*'],
+            copyToCacheDirectory: true,
+          });
+
+          if (result.canceled) return;
+          const file = result.assets && result.assets[0];
+          if (!file) return;
+
+          setLoading(true);
+          setLoadingStep('Đang gửi file lên Backend AI...');
+
+          const baseUrl = await apiService.getBaseUrl();
+          const formData = new FormData();
+          formData.append('file', {
+            uri: file.uri,
+            name: file.name || 'uploaded_lecture.mp4',
+            type: file.mimeType || 'video/mp4',
+          });
+          formData.append('target_language', targetLang);
+
+          setLoadingStep('AI đang bóc tách phụ đề & tóm tắt...');
+          const response = await fetch(`${baseUrl}/api/video/upload`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+              'Accept': 'application/json',
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error(`Server trả về lỗi: ${response.status}`);
+          }
+
+          const data = await response.json();
+          setLoading(false);
+          await apiService.saveLectureToLocal(data);
+          await checkHealthAndFetchHistory();
+          onNavigate('SyncPlayer', { lecture: data });
+        } catch (err) {
+          setLoading(false);
+          Alert.alert('Lỗi tải file', err.message);
+        }
+      })();
     }
   };
 
@@ -246,7 +300,7 @@ export default function HomeScreen({ onNavigate }) {
       <Header
         title="LECTURE AI CAPTION"
         serverStatus={serverStatus}
-        onOpenSettings={() => setServerModalVisible(true)}
+        onOpenSettings={() => setAboutModalVisible(true)}
       />
 
       <ScrollView
@@ -392,11 +446,10 @@ export default function HomeScreen({ onNavigate }) {
         </View>
       </ScrollView>
 
-      {/* Modal Cài đặt Server */}
-      <ServerModal
-        visible={serverModalVisible}
-        onClose={() => setServerModalVisible(false)}
-        onSaved={checkHealthAndFetchHistory}
+      {/* Modal Thông tin đồ án LHU */}
+      <AboutModal
+        visible={aboutModalVisible}
+        onClose={() => setAboutModalVisible(false)}
       />
     </View>
   );

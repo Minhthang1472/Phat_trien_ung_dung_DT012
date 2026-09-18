@@ -7,8 +7,9 @@ import {
   StyleSheet,
   Share,
   Alert,
+  Platform,
+  Image,
 } from 'react-native';
-import { Video } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { colors, spacing, borderRadius } from '../constants/theme';
@@ -33,6 +34,42 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
     (seg) => currentTime >= seg.start && currentTime <= seg.end
   );
 
+  const isYouTube =
+    lecture?.video_url &&
+    (lecture.video_url.includes('youtube.com') || lecture.video_url.includes('youtu.be'));
+  const youtubeId = isYouTube
+    ? lecture.video_url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/)?.[1]
+    : null;
+
+  // Bộ đếm thời gian tự động đồng bộ phụ đề khi bấm Play
+  useEffect(() => {
+    let timer = null;
+    if (isPlaying) {
+      timer = setInterval(() => {
+        setCurrentTime((prev) => {
+          if (prev >= duration) {
+            setIsPlaying(false);
+            return duration;
+          }
+          return Math.min(duration, prev + 1);
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isPlaying, duration]);
+
+  // Tự động cuộn xuống câu phụ đề đang phát
+  useEffect(() => {
+    if (activeSegmentIndex >= 0 && scrollRef.current) {
+      scrollRef.current.scrollTo({
+        y: Math.max(0, activeSegmentIndex * 75 - 100),
+        animated: true,
+      });
+    }
+  }, [activeSegmentIndex]);
+
   // Xử lý cập nhật trạng thái video
   const onPlaybackStatusUpdate = (status) => {
     if (status.isLoaded) {
@@ -43,35 +80,47 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
 
   // Tua đến giây bất kỳ khi sinh viên bấm vào câu phụ đề
   const handleSeek = async (seconds) => {
+    setCurrentTime(seconds);
+    setIsPlaying(true);
     if (videoRef.current) {
-      await videoRef.current.setPositionAsync(seconds * 1000);
-      if (!isPlaying) {
+      try {
+        await videoRef.current.setPositionAsync(seconds * 1000);
         await videoRef.current.playAsync();
-      }
+      } catch (_) {}
     }
   };
 
   const handleRewind = async () => {
+    const newTime = Math.max(0, currentTime - 10);
+    setCurrentTime(newTime);
     if (videoRef.current) {
-      const newTime = Math.max(0, currentTime - 10);
-      await videoRef.current.setPositionAsync(newTime * 1000);
+      try {
+        await videoRef.current.setPositionAsync(newTime * 1000);
+      } catch (_) {}
     }
   };
 
   const handleForward = async () => {
+    const newTime = Math.min(duration, currentTime + 10);
+    setCurrentTime(newTime);
     if (videoRef.current) {
-      const newTime = Math.min(duration, currentTime + 10);
-      await videoRef.current.setPositionAsync(newTime * 1000);
+      try {
+        await videoRef.current.setPositionAsync(newTime * 1000);
+      } catch (_) {}
     }
   };
 
   const togglePlay = async () => {
+    const nextPlayState = !isPlaying;
+    setIsPlaying(nextPlayState);
     if (videoRef.current) {
-      if (isPlaying) {
-        await videoRef.current.pauseAsync();
-      } else {
-        await videoRef.current.playAsync();
-      }
+      try {
+        if (nextPlayState) {
+          await videoRef.current.playAsync();
+        } else {
+          await videoRef.current.pauseAsync();
+        }
+      } catch (_) {}
     }
   };
 
@@ -173,16 +222,35 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
           {/* Khung Phát Video / Audio */}
           <View style={styles.playerBox}>
             <View style={styles.videoContainer}>
-              <Video
-                ref={videoRef}
-                style={styles.videoPlayer}
-                source={{
-                  uri: lecture?.video_url || 'https://d23dyxeqlo5psv.cloudfront.net/big_buck_bunny.mp4',
-                }}
-                useNativeControls={false}
-                resizeMode="contain"
-                onPlaybackStatusUpdate={onPlaybackStatusUpdate}
-              />
+              {Platform.OS === 'web' && isYouTube && youtubeId ? (
+                <iframe
+                  src={`https://www.youtube.com/embed/${youtubeId}?enablejsapi=1`}
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  title={title}
+                />
+              ) : youtubeId ? (
+                <View style={styles.thumbnailContainer}>
+                  <Image
+                    source={{ uri: `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg` }}
+                    style={styles.thumbnailImage}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.thumbnailOverlay}>
+                    <View style={styles.playStatusBadge}>
+                      <Text style={styles.playStatusText}>{isPlaying ? '🟢 ĐANG ĐỒNG BỘ' : '⏸ TẠM DỪNG'}</Text>
+                    </View>
+                    <Text style={styles.thumbnailTitle} numberOfLines={2}>{title}</Text>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.mediaPlaceholder}>
+                  <Text style={styles.mediaIcon}>🎓</Text>
+                  <Text style={styles.mediaTitle} numberOfLines={2}>{title}</Text>
+                  <Text style={styles.mediaStatus}>{isPlaying ? 'Đang phát...' : 'Nhấn ▶ để bắt đầu'}</Text>
+                </View>
+              )}
             </View>
 
             {/* Thanh tiến trình Timeline */}
@@ -312,9 +380,61 @@ const styles = StyleSheet.create({
     borderColor: colors.cardBorder,
     marginBottom: spacing.sm,
   },
-  videoPlayer: {
+  thumbnailContainer: {
     width: '100%',
     height: '100%',
+    position: 'relative',
+  },
+  thumbnailImage: {
+    width: '100%',
+    height: '100%',
+  },
+  thumbnailOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'space-between',
+    padding: spacing.md,
+  },
+  playStatusBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: borderRadius.sm,
+  },
+  playStatusText: {
+    color: '#38BDF8',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  thumbnailTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  mediaPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.md,
+  },
+  mediaIcon: {
+    fontSize: 32,
+    marginBottom: spacing.xs,
+  },
+  mediaTitle: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  mediaStatus: {
+    color: colors.textMuted,
+    fontSize: 11,
   },
   timelineRow: {
     flexDirection: 'row',

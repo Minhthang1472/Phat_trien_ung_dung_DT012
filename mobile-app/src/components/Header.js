@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, spacing, borderRadius } from '../constants/theme';
 
@@ -45,7 +45,7 @@ export default function Header({
             onPress={onOpenSettings}
             activeOpacity={0.7}
           >
-            <Text style={styles.settingsIcon}>⚙️</Text>
+            <Text style={styles.settingsIcon}>ℹ️</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -124,3 +124,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 });
+

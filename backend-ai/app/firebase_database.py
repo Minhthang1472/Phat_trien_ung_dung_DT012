@@ -3,6 +3,14 @@ import hashlib
 import logging
 from typing import Optional, List, Dict, Any
 
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+except ImportError:
+    firebase_admin = None
+    credentials = None
+    firestore = None
+
 logger = logging.getLogger("uvicorn")
 
 class FirebaseService:
@@ -118,7 +126,11 @@ class FirebaseService:
                     "title": data.get("title"),
                     "duration_seconds": data.get("duration_seconds"),
                     "language": data.get("language"),
-                    "summary": data.get("summary")
+                    "summary": data.get("summary"),
+                    "segments": data.get("segments", []),
+                    "key_points": data.get("key_points", []),
+                    "formulas_and_terms": data.get("formulas_and_terms", []),
+                    "quiz": data.get("quiz", [])
                 })
             return history
         except Exception as e:
