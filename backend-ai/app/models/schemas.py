@@ -15,9 +15,11 @@ class ProcessVideoRequest(BaseModel):
     max_duration_seconds: Optional[int] = Field(None, description="Số giây tối đa muốn xử lý thử nghiệm (ví dụ: 10, 30, 60). Để trống hoặc null để xử lý 100% toàn bộ video.")
     source_language: Optional[str] = Field("auto", description="Ngôn ngữ gốc của video bài giảng")
     target_language: Optional[str] = Field("vi", description="Ngôn ngữ phụ đề muốn xuất ra (vi, en, ja, zh, ko...)")
+    include_quiz: Optional[bool] = Field(True, description="Tùy chọn tạo câu hỏi trắc nghiệm ôn tập hay không")
 
 class ProcessVideoResponse(BaseModel):
     video_url: str
+    media_url: Optional[str] = None
     title: str
     duration_seconds: float
     language: str

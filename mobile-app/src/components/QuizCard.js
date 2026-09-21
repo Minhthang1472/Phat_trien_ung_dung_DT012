@@ -7,7 +7,10 @@ export default function QuizCard({ quiz, index }) {
   const [submitted, setSubmitted] = useState(false);
 
   const options = quiz.options || ['A', 'B', 'C', 'D'];
-  const correctAnswer = quiz.correct_answer || 'A';
+  const rawCorrect = quiz.correct_answer || quiz.answer || 'A';
+  const correctLetter = typeof rawCorrect === 'string'
+    ? (rawCorrect.trim().match(/^[A-E]/i) ? rawCorrect.trim()[0].toUpperCase() : rawCorrect.trim().toUpperCase())
+    : 'A';
 
   const handleSelect = (letter) => {
     if (submitted) return;
@@ -24,7 +27,7 @@ export default function QuizCard({ quiz, index }) {
     return prefixes[idx] || `${idx + 1}`;
   };
 
-  const isCorrect = selectedOption === correctAnswer;
+  const isCorrect = selectedOption === correctLetter;
 
   return (
     <View style={styles.card}>
@@ -45,7 +48,7 @@ export default function QuizCard({ quiz, index }) {
         {options.map((opt, idx) => {
           const letter = getOptionLetter(opt, idx);
           const isThisSelected = selectedOption === letter;
-          const isThisCorrect = correctAnswer === letter;
+          const isThisCorrect = correctLetter === letter;
 
           let btnStyle = styles.optionBtn;
           let textStyle = styles.optionText;

@@ -95,6 +95,7 @@ const SAMPLE_LECTURES = [
 export default function HomeScreen({ onNavigate }) {
   const [videoUrl, setVideoUrl] = useState('');
   const [targetLang, setTargetLang] = useState('vi');
+  const [includeQuiz, setIncludeQuiz] = useState(true);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [recentLectures, setRecentLectures] = useState([]);
@@ -136,7 +137,7 @@ export default function HomeScreen({ onNavigate }) {
 
     try {
       setLoadingStep('Kiểm tra bộ đệm Cache & Tải Audio...');
-      const result = await apiService.processVideo(trimmed, targetLang);
+      const result = await apiService.processVideo(trimmed, targetLang, 'auto', null, includeQuiz);
       setLoading(false);
       // Chuyển sang màn hình Sync Player với kết quả
       onNavigate('SyncPlayer', { lecture: result });
@@ -198,6 +199,14 @@ export default function HomeScreen({ onNavigate }) {
           const file = e.target.files && e.target.files[0];
           if (!file) return;
 
+          // Tạo URL phát trực tiếp từ bộ nhớ trình duyệt cho video/audio
+          let localMediaUrl = null;
+          try {
+            if (typeof URL !== 'undefined' && URL.createObjectURL) {
+              localMediaUrl = URL.createObjectURL(file);
+            }
+          } catch (_) {}
+
           setLoading(true);
           setLoadingStep(`Đang tải file bài giảng lên AI...`);
 
@@ -206,6 +215,7 @@ export default function HomeScreen({ onNavigate }) {
             const formData = new FormData();
             formData.append('file', file);
             formData.append('target_language', targetLang);
+            formData.append('include_quiz', includeQuiz ? 'true' : 'false');
 
             setLoadingStep('AI đang bóc tách phụ đề & tóm tắt...');
             const response = await fetch(`${baseUrl}/api/video/upload`, {
@@ -219,6 +229,10 @@ export default function HomeScreen({ onNavigate }) {
             }
 
             const data = await response.json();
+            if (localMediaUrl) {
+              data.media_stream_url = localMediaUrl;
+              data.media_mime_type = file.type || '';
+            }
             setLoading(false);
             await apiService.saveLectureToLocal(data);
             await checkHealthAndFetchHistory();
@@ -259,6 +273,7 @@ export default function HomeScreen({ onNavigate }) {
             type: file.mimeType || 'video/mp4',
           });
           formData.append('target_language', targetLang);
+          formData.append('include_quiz', includeQuiz ? 'true' : 'false');
 
           setLoadingStep('AI đang bóc tách phụ đề & tóm tắt...');
           const response = await fetch(`${baseUrl}/api/video/upload`, {
@@ -333,7 +348,7 @@ export default function HomeScreen({ onNavigate }) {
           </View>
 
           {/* Chọn Ngôn ngữ Dịch */}
-          <Text style={styles.subLabel}>Ngôn ngữ phụ đề mong muốn:</Text>
+          <Text style={styles.subLabel}>Dịch phụ đề sang (Ngôn ngữ hiển thị):</Text>
           <View style={styles.langRow}>
             {SUPPORTED_LANGUAGES.map((lang) => (
               <TouchableOpacity
@@ -356,6 +371,29 @@ export default function HomeScreen({ onNavigate }) {
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Tùy chọn Bật/Tắt Quiz */}
+          <TouchableOpacity
+            style={[styles.quizToggleBox, includeQuiz && styles.quizToggleBoxActive]}
+            onPress={() => setIncludeQuiz(!includeQuiz)}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
+            <View style={styles.quizToggleLeft}>
+              <Text style={styles.quizToggleIcon}>{includeQuiz ? '🎯' : '⚡'}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.quizToggleTitle}>
+                  {includeQuiz ? 'Tạo câu hỏi trắc nghiệm ôn tập (Quiz)' : 'Bỏ qua trắc nghiệm (Chế độ siêu tốc)'}
+                </Text>
+                <Text style={styles.quizToggleDesc}>
+                  {includeQuiz ? 'AI tự động tạo bộ trắc nghiệm 4 lựa chọn có giải thích' : 'Chỉ bóc tách phụ đề & tóm tắt, tiết kiệm thời gian xử lý'}
+                </Text>
+              </View>
+            </View>
+            <View style={[styles.switchTrack, includeQuiz && styles.switchTrackActive]}>
+              <View style={[styles.switchThumb, includeQuiz && styles.switchThumbActive]} />
+            </View>
+          </TouchableOpacity>
 
           {/* Nút Bắt đầu Tạo Phụ đề */}
           <TouchableOpacity
@@ -673,5 +711,62 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textMuted,
     fontWeight: '600',
+  },
+  quizToggleBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: spacing.sm + 2,
+    marginBottom: spacing.md,
+  },
+  quizToggleBoxActive: {
+    backgroundColor: 'rgba(99, 102, 241, 0.08)',
+    borderColor: 'rgba(99, 102, 241, 0.3)',
+  },
+  quizToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  quizToggleIcon: {
+    fontSize: 20,
+  },
+  quizToggleTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  quizToggleDesc: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  switchTrack: {
+    width: 44,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#334155',
+    padding: 2,
+    justifyContent: 'center',
+  },
+  switchTrackActive: {
+    backgroundColor: colors.primaryLight,
+  },
+  switchThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#94a3b8',
+  },
+  switchThumbActive: {
+    backgroundColor: '#ffffff',
+    alignSelf: 'flex-end',
   },
 });

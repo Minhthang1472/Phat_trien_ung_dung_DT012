@@ -17,6 +17,7 @@ class AudioService:
 
         ydl_opts = {
             'format': 'bestaudio/best',
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'wav',

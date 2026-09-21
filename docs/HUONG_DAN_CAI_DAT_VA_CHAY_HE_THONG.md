@@ -21,14 +21,12 @@ Toàn bộ hệ thống Backend AI Core đã được thiết lập hoàn chỉn
 * **`faster-whisper`:** Lõi Trí tuệ nhân tạo (ASR) nhận diện giọng nói và gán mốc thời gian (timestamps) chuẩn xác, tối ưu chạy trên CPU (`int8`) hoặc GPU NVIDIA.
 * **`yt-dlp`:** Bóc tách stream âm thanh siêu nhẹ trực tiếp từ URL (YouTube, Drive, LMS) mà không cần tải cả video nặng.
 * **`firebase-admin` (>=7.5.0):** Kết nối **Google Firebase Cloud Firestore** làm kho lưu trữ vĩnh cửu và bộ nhớ đệm Cache $O(1)$ tiết kiệm 100% Token AI.
-* **`google-generativeai`:** Kết nối mô hình **Gemini 2.5 Flash** tóm tắt bài học 4 phần (Tổng quan, Điểm cốt lõi, Thuật ngữ, Trắc nghiệm).
-* **`requests`:** Module dịch thuật đa ngôn ngữ đồng bộ giữ nguyên mốc thời gian của từng câu.
-* **`motor` & `pymongo`:** Kết nối dự phòng với MongoDB Atlas Cloud.
+* **`google-generativeai`:** Kết nối mô hình **Gemini 2.5 Flash** (kèm fallback **Gemini 2.0 Flash**) tóm tắt bài học (Tổng quan, Điểm cốt lõi, Thuật ngữ, Trắc nghiệm).
+* **`requests`:** Module dịch thuật đa ngôn ngữ song ngữ song song, giữ nguyên mốc thời gian của từng câu.
 
 ### 3. Các dịch vụ Đám mây (Cloud Services) đã kích hoạt
-* **Google Firebase Firestore:** Dự án `ptud-dt012`, kết nối thông qua file khóa `backend-ai/serviceAccountKey.json`.
-* **Google Gemini AI:** Đã cấu hình khóa `GEMINI_API_KEY` sử dụng mô hình `gemini-2.5-flash`.
-* **MongoDB Atlas:** Cụm `Cluster0` (kết nối dự phòng).
+* **Google Firebase Cloud Firestore:** Dự án `ptud-dt012`, kết nối thông qua file khóa `backend-ai/serviceAccountKey.json`.
+* **Google Gemini AI:** Đã cấu hình khóa `GEMINI_API_KEY` sử dụng mô hình `gemini-2.5-flash` và tự động fallback `gemini-2.0-flash`.
 
 ---
 

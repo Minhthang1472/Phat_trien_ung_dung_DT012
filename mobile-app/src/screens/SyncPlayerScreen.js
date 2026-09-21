@@ -9,6 +9,7 @@ import {
   Alert,
   Platform,
   Image,
+  TextInput,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -21,46 +22,121 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
   const [currentTab, setCurrentTab] = useState('subtitles'); // 'subtitles' | 'summary'
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showCC, setShowCC] = useState(true);
+  const [subMode, setSubMode] = useState('bilingual'); // 'bilingual' | 'vi' | 'en'
   const scrollRef = useRef(null);
-  const videoRef = useRef(null);
+  const ytPlayerRef = useRef(null);
+  const htmlMediaRef = useRef(null);
+  const pollTimerRef = useRef(null);
 
   const duration = lecture?.duration_seconds || 300;
   const segments = lecture?.segments || [];
   const title = lecture?.title || 'Bài giảng đồng bộ phụ đề AI';
   const language = (lecture?.language || 'vi').toUpperCase();
 
-  // Tìm segment đang phát khớp với currentTime
+  // Tìm câu phụ đề đang phát tương ứng với giây hiện tại của video
   const activeSegmentIndex = segments.findIndex(
     (seg) => currentTime >= seg.start && currentTime <= seg.end
   );
+  const activeSegment = segments[activeSegmentIndex] || null;
+
+  // Lọc phụ đề theo từ khóa tìm kiếm
+  const filteredSegments = searchQuery.trim() === ''
+    ? segments
+    : segments.filter((seg) => {
+        const q = searchQuery.toLowerCase();
+        const textMatch = seg.text && seg.text.toLowerCase().includes(q);
+        const origMatch = seg.original_text && seg.original_text.toLowerCase().includes(q);
+        return textMatch || origMatch;
+      });
 
   const isYouTube =
-    lecture?.video_url &&
-    (lecture.video_url.includes('youtube.com') || lecture.video_url.includes('youtu.be'));
+    Boolean(lecture?.video_url &&
+    (lecture.video_url.includes('youtube.com') || lecture.video_url.includes('youtu.be')));
+
   const youtubeId = isYouTube
     ? lecture.video_url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/)?.[1]
     : null;
 
-  // Bộ đếm thời gian tự động đồng bộ phụ đề khi bấm Play
-  useEffect(() => {
-    let timer = null;
-    if (isPlaying) {
-      timer = setInterval(() => {
-        setCurrentTime((prev) => {
-          if (prev >= duration) {
-            setIsPlaying(false);
-            return duration;
-          }
-          return Math.min(duration, prev + 1);
-        });
-      }, 1000);
-    }
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [isPlaying, duration]);
+  // Nguồn phát file thực tế (từ bộ nhớ upload, link server /uploads/ hoặc link trực tiếp)
+  const mediaSrc =
+    lecture?.media_stream_url ||
+    (lecture?.media_url ? `http://127.0.0.1:8000${lecture.media_url}` : null) ||
+    (lecture?.video_url && !lecture.video_url.startsWith('local_file://') ? lecture.video_url : null);
 
-  // Tự động cuộn xuống câu phụ đề đang phát
+  const isAudioOnly = Boolean(
+    (lecture?.media_mime_type && lecture.media_mime_type.startsWith('audio/')) ||
+    (lecture?.video_url && (lecture.video_url.endsWith('.mp3') || lecture.video_url.endsWith('.wav') || lecture.video_url.endsWith('.m4a')))
+  );
+
+  // Khởi tạo YouTube Iframe API để đồng bộ thời gian thực chuẩn 100%
+  useEffect(() => {
+    if (Platform.OS === 'web' && isYouTube && youtubeId) {
+      let playerInstance = null;
+
+      const bindPlayer = () => {
+        if (!window.YT || !window.YT.Player) return;
+        try {
+          playerInstance = new window.YT.Player('yt-sync-iframe', {
+            events: {
+              onReady: (event) => {
+                ytPlayerRef.current = event.target;
+              },
+              onStateChange: (event) => {
+                // 1: Đang phát (PLAYING), 2: Tạm dừng (PAUSED), 0: Kết thúc (ENDED)
+                if (event.data === 1) {
+                  setIsPlaying(true);
+                  if (!pollTimerRef.current) {
+                    pollTimerRef.current = setInterval(() => {
+                      if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+                        const sec = ytPlayerRef.current.getCurrentTime();
+                        setCurrentTime(sec);
+                      }
+                    }, 250);
+                  }
+                } else {
+                  setIsPlaying(false);
+                  if (pollTimerRef.current) {
+                    clearInterval(pollTimerRef.current);
+                    pollTimerRef.current = null;
+                  }
+                  if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
+                    setCurrentTime(ytPlayerRef.current.getCurrentTime());
+                  }
+                }
+              },
+            },
+          });
+        } catch (err) {
+          console.warn('Lỗi kết nối YouTube Player:', err);
+        }
+      };
+
+      if (!window.YT) {
+        const script = document.createElement('script');
+        script.src = 'https://www.youtube.com/iframe_api';
+        window.onYouTubeIframeAPIReady = () => {
+          bindPlayer();
+        };
+        document.body.appendChild(script);
+      } else {
+        bindPlayer();
+      }
+
+      return () => {
+        if (pollTimerRef.current) {
+          clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+        if (playerInstance && typeof playerInstance.destroy === 'function') {
+          try { playerInstance.destroy(); } catch (_) {}
+        }
+      };
+    }
+  }, [isYouTube, youtubeId]);
+
+  // Tự động cuộn đến câu phụ đề đang phát
   useEffect(() => {
     if (activeSegmentIndex >= 0 && scrollRef.current) {
       scrollRef.current.scrollTo({
@@ -70,57 +146,20 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
     }
   }, [activeSegmentIndex]);
 
-  // Xử lý cập nhật trạng thái video
-  const onPlaybackStatusUpdate = (status) => {
-    if (status.isLoaded) {
-      setCurrentTime(status.positionMillis / 1000);
-      setIsPlaying(status.isPlaying);
-    }
-  };
-
-  // Tua đến giây bất kỳ khi sinh viên bấm vào câu phụ đề
-  const handleSeek = async (seconds) => {
+  // Khi người dùng bấm vào một câu phụ đề -> Video lập tức nhảy đến đúng giây đó và phát tiếp có tiếng
+  const handleSeek = (seconds) => {
     setCurrentTime(seconds);
-    setIsPlaying(true);
-    if (videoRef.current) {
-      try {
-        await videoRef.current.setPositionAsync(seconds * 1000);
-        await videoRef.current.playAsync();
-      } catch (_) {}
+    // Nếu là video YouTube
+    if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+      ytPlayerRef.current.seekTo(seconds, true);
+      if (typeof ytPlayerRef.current.playVideo === 'function') {
+        ytPlayerRef.current.playVideo();
+      }
     }
-  };
-
-  const handleRewind = async () => {
-    const newTime = Math.max(0, currentTime - 10);
-    setCurrentTime(newTime);
-    if (videoRef.current) {
-      try {
-        await videoRef.current.setPositionAsync(newTime * 1000);
-      } catch (_) {}
-    }
-  };
-
-  const handleForward = async () => {
-    const newTime = Math.min(duration, currentTime + 10);
-    setCurrentTime(newTime);
-    if (videoRef.current) {
-      try {
-        await videoRef.current.setPositionAsync(newTime * 1000);
-      } catch (_) {}
-    }
-  };
-
-  const togglePlay = async () => {
-    const nextPlayState = !isPlaying;
-    setIsPlaying(nextPlayState);
-    if (videoRef.current) {
-      try {
-        if (nextPlayState) {
-          await videoRef.current.playAsync();
-        } else {
-          await videoRef.current.pauseAsync();
-        }
-      } catch (_) {}
+    // Nếu là Video/Audio HTML5 từ thiết bị
+    if (htmlMediaRef.current) {
+      htmlMediaRef.current.currentTime = seconds;
+      htmlMediaRef.current.play().catch(() => {});
     }
   };
 
@@ -180,14 +219,13 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
-
   return (
     <View style={styles.container}>
       <Header
         title="ĐỒNG BỘ PHỤ ĐỀ"
         showBack
         onBack={onBack}
+        serverStatus={{ online: true }}
         rightElement={
           <View style={styles.langBadge}>
             <Text style={styles.langBadgeText}>{language}</Text>
@@ -219,17 +257,71 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
         <SummaryQuizScreen lecture={lecture} onShare={handleShare} />
       ) : (
         <View style={styles.playerContent}>
-          {/* Khung Phát Video / Audio */}
+          {/* Khung Phát Video / Audio Thật */}
           <View style={styles.playerBox}>
             <View style={styles.videoContainer}>
               {Platform.OS === 'web' && isYouTube && youtubeId ? (
                 <iframe
-                  src={`https://www.youtube.com/embed/${youtubeId}?enablejsapi=1`}
-                  style={{ width: '100%', height: '100%', border: 'none' }}
+                  id="yt-sync-iframe"
+                  src={`https://www.youtube.com/embed/${youtubeId}?enablejsapi=1&origin=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
+                  style={{ width: '100%', height: '100%', minHeight: 220, border: 'none', borderRadius: 12 }}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                   title={title}
                 />
+              ) : Platform.OS === 'web' && mediaSrc ? (
+                !isAudioOnly ? (
+                  <video
+                    ref={htmlMediaRef}
+                    src={mediaSrc}
+                    controls
+                    playsInline
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      minHeight: 220,
+                      maxHeight: 260,
+                      backgroundColor: '#000',
+                      borderRadius: 12,
+                      objectFit: 'contain',
+                    }}
+                    onTimeUpdate={(e) => {
+                      if (e.target) setCurrentTime(e.target.currentTime);
+                    }}
+                    onPlay={() => setIsPlaying(true)}
+                    onPause={() => setIsPlaying(false)}
+                  />
+                ) : (
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    padding: '24px 16px',
+                    backgroundColor: '#0f172a',
+                    borderRadius: 12,
+                    width: '100%',
+                    height: '100%',
+                    minHeight: 200,
+                    boxSizing: 'border-box'
+                  }}>
+                    <div style={{ fontSize: 36, marginBottom: 8 }}>🎙️</div>
+                    <div style={{ color: '#f8fafc', fontSize: 14, fontWeight: '600', marginBottom: 16, textAlign: 'center', maxWidth: '90%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {title}
+                    </div>
+                    <audio
+                      ref={htmlMediaRef}
+                      src={mediaSrc}
+                      controls
+                      style={{ width: '100%', maxWidth: 400 }}
+                      onTimeUpdate={(e) => {
+                        if (e.target) setCurrentTime(e.target.currentTime);
+                      }}
+                      onPlay={() => setIsPlaying(true)}
+                      onPause={() => setIsPlaying(false)}
+                    />
+                  </div>
+                )
               ) : youtubeId ? (
                 <View style={styles.thumbnailContainer}>
                   <Image
@@ -238,9 +330,6 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
                     resizeMode="cover"
                   />
                   <View style={styles.thumbnailOverlay}>
-                    <View style={styles.playStatusBadge}>
-                      <Text style={styles.playStatusText}>{isPlaying ? '🟢 ĐANG ĐỒNG BỘ' : '⏸ TẠM DỪNG'}</Text>
-                    </View>
                     <Text style={styles.thumbnailTitle} numberOfLines={2}>{title}</Text>
                   </View>
                 </View>
@@ -248,38 +337,96 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
                 <View style={styles.mediaPlaceholder}>
                   <Text style={styles.mediaIcon}>🎓</Text>
                   <Text style={styles.mediaTitle} numberOfLines={2}>{title}</Text>
-                  <Text style={styles.mediaStatus}>{isPlaying ? 'Đang phát...' : 'Nhấn ▶ để bắt đầu'}</Text>
+                  <Text style={styles.mediaStatus}>Bài giảng mẫu • {formatTime(duration)}</Text>
+                </View>
+              )}
+
+              {/* Lớp phủ phụ đề nổi trên video (Overlay CC) */}
+              {showCC && activeSegment && (
+                <View style={styles.ccOverlayContainer} pointerEvents="none">
+                  <View style={styles.ccOverlayBox}>
+                    <Text style={styles.ccOverlayText}>
+                      {subMode === 'en' ? (activeSegment.original_text || activeSegment.text) : activeSegment.text}
+                    </Text>
+                    {subMode === 'bilingual' && activeSegment.original_text && activeSegment.original_text.trim() !== activeSegment.text.trim() && (
+                      <Text style={styles.ccOverlaySubText}>{activeSegment.original_text}</Text>
+                    )}
+                  </View>
                 </View>
               )}
             </View>
 
-            {/* Thanh tiến trình Timeline */}
-            <View style={styles.timelineRow}>
-              <Text style={styles.timeLabel}>{formatTime(currentTime)}</Text>
-              <View style={styles.progressBarTrack}>
-                <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />
+            {/* Thanh Trạng thái Đồng bộ Thời gian thực */}
+            <View style={styles.realtimeStatusBar}>
+              <View style={styles.liveIndicator}>
+                <View style={[styles.liveDot, isPlaying && styles.liveDotActive]} />
+                <Text style={styles.liveText}>
+                  {isPlaying ? 'ĐANG PHÁT & ĐỒNG BỘ' : 'ĐỒNG BỘ SẴN SÀNG'}
+                </Text>
               </View>
-              <Text style={styles.timeLabel}>{formatTime(duration)}</Text>
+              <View style={styles.statusRightGroup}>
+                <TouchableOpacity
+                  style={[styles.ccBtn, showCC && styles.ccBtnActive]}
+                  onPress={() => setShowCC(!showCC)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.ccBtnText, showCC && styles.ccBtnTextActive]}>CC</Text>
+                </TouchableOpacity>
+                <Text style={styles.liveTimerText}>
+                  {formatTime(currentTime)} / {formatTime(duration)}
+                </Text>
+              </View>
             </View>
+          </View>
 
-            {/* Nút Điều khiển Player */}
-            <View style={styles.controlsRow}>
-              <TouchableOpacity style={styles.controlBtn} onPress={handleRewind}>
-                <Text style={styles.controlIcon}>⏪ 10s</Text>
+          {/* Thanh chọn chế độ Ngôn ngữ & Chế độ Song ngữ */}
+          <View style={styles.langModeBar}>
+            <Text style={styles.langModeLabel}>Phụ đề:</Text>
+            <View style={styles.langModeButtons}>
+              <TouchableOpacity
+                style={[styles.langModeBtn, subMode === 'bilingual' && styles.langModeBtnActive]}
+                onPress={() => setSubMode('bilingual')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.langModeBtnText, subMode === 'bilingual' && styles.langModeBtnTextActive]}>
+                  🌐 Song ngữ
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.playPauseBtn} onPress={togglePlay}>
-                <Text style={styles.playPauseIcon}>{isPlaying ? '⏸' : '▶'}</Text>
+              <TouchableOpacity
+                style={[styles.langModeBtn, subMode === 'vi' && styles.langModeBtnActive]}
+                onPress={() => setSubMode('vi')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.langModeBtnText, subMode === 'vi' && styles.langModeBtnTextActive]}>
+                  🇻🇳 Tiếng Việt
+                </Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.controlBtn} onPress={handleForward}>
-                <Text style={styles.controlIcon}>10s ⏩</Text>
+              <TouchableOpacity
+                style={[styles.langModeBtn, subMode === 'en' && styles.langModeBtnActive]}
+                onPress={() => setSubMode('en')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.langModeBtnText, subMode === 'en' && styles.langModeBtnTextActive]}>
+                  🇺🇸 Tiếng Anh
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
 
-          {/* Tiêu đề vùng phụ đề */}
-          <View style={styles.subtitleHeader}>
-            <Text style={styles.subtitleHeaderText}>💬 PHỤ ĐỀ ĐỒNG BỘ THỜI GIAN THỰC</Text>
-            <Text style={styles.hintText}>Chạm vào câu để nhảy đến mốc thời gian</Text>
+          {/* Thanh tìm kiếm phụ đề và mốc thời gian */}
+          <View style={styles.searchBar}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="🔍 Tìm câu / thuật ngữ trong bài giảng..."
+              placeholderTextColor={colors.textMuted}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearSearchBtn}>
+                <Text style={styles.clearSearchText}>✕</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Thanh công cụ Xuất file */}
@@ -298,18 +445,21 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
             style={styles.subtitlesScroll}
             contentContainerStyle={styles.subtitlesScrollContent}
           >
-            {segments.length > 0 ? (
-              segments.map((seg, idx) => (
+            {filteredSegments.length > 0 ? (
+              filteredSegments.map((seg, idx) => (
                 <SubtitleItem
                   key={idx}
                   segment={seg}
-                  isActive={idx === activeSegmentIndex}
+                  isActive={segments[activeSegmentIndex] === seg}
                   onSeek={handleSeek}
+                  subMode={subMode}
                 />
               ))
             ) : (
               <View style={styles.emptyBox}>
-                <Text style={styles.emptyText}>Chưa có phụ đề bóc tách cho bài giảng này.</Text>
+                <Text style={styles.emptyText}>
+                  {searchQuery ? `Không tìm thấy câu nào khớp với "${searchQuery}"` : 'Chưa có phụ đề bóc tách cho bài giảng này.'}
+                </Text>
               </View>
             )}
           </ScrollView>
@@ -354,13 +504,12 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.primaryLight,
   },
   tabBtnText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: colors.textSecondary,
+    color: colors.textMuted,
   },
   activeTabBtnText: {
     color: colors.primaryLight,
-    fontWeight: '700',
   },
   playerContent: {
     flex: 1,
@@ -372,13 +521,13 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.cardBorder,
   },
   videoContainer: {
-    backgroundColor: '#0F172A',
+    width: '100%',
+    height: 220,
+    backgroundColor: '#000',
     borderRadius: borderRadius.md,
     overflow: 'hidden',
-    height: 200,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    marginBottom: spacing.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   thumbnailContainer: {
     width: '100%',
@@ -390,172 +539,266 @@ const styles = StyleSheet.create({
     height: '100%',
   },
   thumbnailOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
-    justifyContent: 'space-between',
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     padding: spacing.md,
-  },
-  playStatusBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: borderRadius.sm,
-  },
-  playStatusText: {
-    color: '#38BDF8',
-    fontSize: 10,
-    fontWeight: '700',
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
   thumbnailTitle: {
-    color: '#FFFFFF',
+    color: '#ffffff',
     fontSize: 13,
-    fontWeight: '700',
-    textShadowColor: 'rgba(0, 0, 0, 0.8)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    fontWeight: '600',
   },
   mediaPlaceholder: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
-    padding: spacing.md,
+    justifyContent: 'center',
+    padding: spacing.lg,
   },
   mediaIcon: {
-    fontSize: 32,
+    fontSize: 48,
     marginBottom: spacing.xs,
   },
   mediaTitle: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
     textAlign: 'center',
     marginBottom: 4,
   },
   mediaStatus: {
-    color: colors.textMuted,
-    fontSize: 11,
-  },
-  timelineRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginVertical: spacing.sm,
-  },
-  timeLabel: {
-    fontSize: 11,
-    color: colors.textMuted,
-    fontVariant: ['tabular-nums'],
-    width: 38,
-  },
-  progressBarTrack: {
-    flex: 1,
-    height: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: colors.primaryLight,
-  },
-  controlsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.lg,
-  },
-  controlBtn: {
-    padding: spacing.sm,
-  },
-  controlIcon: {
     fontSize: 12,
-    color: colors.textSecondary,
-    fontWeight: '600',
+    color: colors.textMuted,
   },
-  playPauseBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 6,
-  },
-  playPauseIcon: {
-    fontSize: 18,
-    color: '#fff',
-    marginLeft: 2,
-  },
-  subtitleHeader: {
+  realtimeStatusBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginTop: spacing.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  liveIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#64748b',
+    marginRight: 6,
+  },
+  liveDotActive: {
+    backgroundColor: '#10b981',
+    boxShadow: '0 0 8px #10b981',
+  },
+  liveText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    letterSpacing: 0.5,
+  },
+  liveTimerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primaryLight,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  subtitleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    paddingTop: spacing.sm,
+    paddingBottom: 4,
   },
   subtitleHeaderText: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.textSecondary,
+    color: colors.textMuted,
     letterSpacing: 0.5,
   },
   hintText: {
-    fontSize: 10,
+    fontSize: 11,
     color: colors.textMuted,
-  },
-  subtitlesScroll: {
-    flex: 1,
-  },
-  subtitlesScrollContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xl * 2,
-  },
-  emptyBox: {
-    padding: spacing.xl,
-    alignItems: 'center',
-  },
-  emptyText: {
-    color: colors.textMuted,
-    fontSize: 13,
+    fontStyle: 'italic',
   },
   exportToolbar: {
     flexDirection: 'row',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     gap: spacing.sm,
-    backgroundColor: 'rgba(255, 255, 255, 0.02)',
   },
   exportSrtBtn: {
     flex: 1,
-    backgroundColor: 'rgba(6, 182, 212, 0.15)',
+    backgroundColor: 'rgba(56, 189, 248, 0.1)',
     borderWidth: 1,
-    borderColor: colors.secondary,
+    borderColor: 'rgba(56, 189, 248, 0.4)',
+    paddingVertical: 6,
     borderRadius: borderRadius.sm,
-    paddingVertical: 8,
     alignItems: 'center',
   },
   exportSrtBtnText: {
-    color: colors.secondary,
+    color: '#38bdf8',
     fontSize: 12,
     fontWeight: '700',
   },
   shareBtn: {
     flex: 1,
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    backgroundColor: 'rgba(168, 85, 247, 0.1)',
     borderWidth: 1,
-    borderColor: colors.primaryLight,
+    borderColor: 'rgba(168, 85, 247, 0.4)',
+    paddingVertical: 6,
     borderRadius: borderRadius.sm,
-    paddingVertical: 8,
     alignItems: 'center',
   },
   shareBtnText: {
-    color: colors.primaryLight,
+    color: '#c084fc',
     fontSize: 12,
     fontWeight: '700',
+  },
+  subtitlesScroll: {
+    flex: 1,
+  },
+  subtitlesScrollContent: {
+    padding: spacing.md,
+    paddingBottom: 40,
+  },
+  emptyBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  emptyText: {
+    color: colors.textMuted,
+    fontSize: 13,
+  },
+  statusRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  ccBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+  },
+  ccBtnActive: {
+    backgroundColor: colors.primaryLight,
+    borderColor: colors.primaryLight,
+  },
+  ccBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.textMuted,
+  },
+  ccBtnTextActive: {
+    color: '#ffffff',
+  },
+  ccOverlayContainer: {
+    position: 'absolute',
+    bottom: 10,
+    left: 10,
+    right: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+  },
+  ccOverlayBox: {
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    maxWidth: '94%',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  ccOverlayText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  ccOverlaySubText: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  langModeBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs + 2,
+    paddingBottom: spacing.xs,
+    gap: spacing.sm,
+  },
+  langModeLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
+  },
+  langModeButtons: {
+    flexDirection: 'row',
+    gap: 6,
+    flex: 1,
+  },
+  langModeBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: borderRadius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  langModeBtnActive: {
+    backgroundColor: 'rgba(99, 102, 241, 0.25)',
+    borderColor: colors.primaryLight,
+  },
+  langModeBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
+  langModeBtnTextActive: {
+    color: colors.primaryLight,
+    fontWeight: '700',
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: spacing.md,
+    marginVertical: spacing.xs,
+    backgroundColor: colors.card,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    paddingHorizontal: 10,
+  },
+  searchInput: {
+    flex: 1,
+    height: 36,
+    color: colors.textPrimary,
+    fontSize: 13,
+  },
+  clearSearchBtn: {
+    padding: 4,
+  },
+  clearSearchText: {
+    color: colors.textMuted,
+    fontSize: 13,
+    fontWeight: 'bold',
   },
 });

@@ -54,13 +54,14 @@ class ApiService {
     }
   }
 
-  async processVideo(videoUrl, targetLanguage = 'vi', sourceLanguage = 'auto', maxDuration = null) {
+  async processVideo(videoUrl, targetLanguage = 'vi', sourceLanguage = 'auto', maxDuration = null, includeQuiz = true) {
     const baseUrl = await this.getBaseUrl();
     const payload = {
       video_url: videoUrl,
       target_language: targetLanguage,
       source_language: sourceLanguage,
       max_duration_seconds: maxDuration,
+      include_quiz: includeQuiz,
     };
 
     const response = await fetch(`${baseUrl}/api/video/process`, {

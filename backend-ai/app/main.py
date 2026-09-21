@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import uuid
 import logging
 
 from app.core.config import settings
@@ -43,6 +45,12 @@ app.add_middleware(
 # Kênh WebSocket Live-Caption Realtime
 app.include_router(ws_router)
 
+# Thư mục lưu và phát video tĩnh tải lên từ máy tính
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
 @app.get("/")
 def read_root():
     return {
@@ -68,10 +76,26 @@ async def process_video(request: ProcessVideoRequest):
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp URL bài giảng hợp lệ.")
 
     # 1. Kiểm tra cache trong Firebase Firestore (tiết kiệm 100% Token Gemini!)
+    target_lang = (request.target_language or "vi").lower().strip()
     cached_fb = firebase_service.get_lecture_cache(url)
     if cached_fb:
-        logger.info(f"Tìm thấy kết quả trong FIREBASE CACHE cho video: {url}")
-        return cached_fb
+        cached_lang = (cached_fb.get("language") or "").lower().strip()
+        segs = cached_fb.get("segments", [])
+        # Nếu cache đã đúng ngôn ngữ đích và đã có tiếng Việt
+        if cached_lang == target_lang:
+            logger.info(f"Tìm thấy kết quả trong FIREBASE CACHE đúng ngôn ngữ ({target_lang}): {url}")
+            return cached_fb
+        elif segs:
+            logger.info(f"Bản cache có ngôn ngữ '{cached_lang}', tiến hành dịch thuật sang '{target_lang}' bằng Gemini AI...")
+            src_lang = cached_fb.get("detected_language") or cached_lang or "en"
+            cached_fb["segments"] = translation_service.translate_segments(
+                segs,
+                source_lang=src_lang,
+                target_lang=target_lang
+            )
+            cached_fb["language"] = target_lang
+            firebase_service.save_lecture_cache(url, cached_fb)
+            return cached_fb
 
     # 2. Bóc tách âm thanh siêu nhẹ bằng yt-dlp
     try:
@@ -87,14 +111,11 @@ async def process_video(request: ProcessVideoRequest):
 
     # 3. Chạy mô hình Whisper để nhận diện giọng nói và timestamps
     try:
-        # Nếu muốn dịch sang tiếng Anh trực tiếp, dùng task translate của Whisper
         target_lang = (request.target_language or "vi").lower().strip()
-        task = "translate" if target_lang == "en" and request.source_language not in ("en", "english") else "transcribe"
-        
         segments, detected_lang = whisper_service.transcribe_audio(
             audio_path=audio_path,
             language=None if request.source_language == "auto" else request.source_language,
-            task=task
+            task="transcribe"
         )
     except Exception as e:
         logger.error(f"Lỗi khi chạy mô hình Whisper: {e}")
@@ -105,23 +126,30 @@ async def process_video(request: ProcessVideoRequest):
             try: os.remove(audio_path)
             except Exception: pass
 
-    # 4. Dịch thuật đồng bộ nếu ngôn ngữ đích khác ngôn ngữ phát hiện được (ví dụ dịch sang tiếng Việt vi)
-    if target_lang != "en" and target_lang != detected_lang:
+    # Lưu giữ nguyên văn lời người nói vào original_text để phục vụ chế độ song ngữ
+    for seg in segments:
+        if "original_text" not in seg or not seg["original_text"]:
+            seg["original_text"] = seg.get("text", "")
+
+    # 4. Dịch thuật đồng bộ nếu ngôn ngữ đích khác ngôn ngữ phát hiện được
+    if target_lang != detected_lang:
         segments = translation_service.translate_segments(
             segments, 
             source_lang=detected_lang, 
             target_lang=target_lang
         )
 
-    # 5. Tóm tắt nội dung bài giảng 4 phần (Tổng quan, Điểm chính, Thuật ngữ, Trắc nghiệm)
+    # 5. Tóm tắt nội dung bài giảng (Tổng quan, Điểm chính, Thuật ngữ, Trắc nghiệm nếu bật)
     full_transcript = " ".join([seg.get("text", "") for seg in segments])
-    summary_data = summary_service.summarize_transcript(full_transcript)
+    include_quiz = True if request.include_quiz is None else request.include_quiz
+    summary_data = summary_service.summarize_transcript(full_transcript, include_quiz=include_quiz)
 
     result = {
         "video_url": url,
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],
-        "language": detected_lang,
+        "language": target_lang,
+        "detected_language": detected_lang,
         "segments": segments,
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
@@ -139,13 +167,22 @@ async def upload_video(
     file: UploadFile = File(..., description="File bài giảng tải lên (.mp3, .wav, .mp4, .m4a)"),
     max_duration_seconds: Optional[int] = Form(None, description="Số giây muốn test (để trống để chạy hết)"),
     source_language: Optional[str] = Form("auto", description="Ngôn ngữ nguồn (auto, vi, en, ja...)"),
-    target_language: Optional[str] = Form("vi", description="Ngôn ngữ phụ đề muốn xuất (vi, en, ja...)")
+    target_language: Optional[str] = Form("vi", description="Ngôn ngữ phụ đề muốn xuất (vi, en, ja...)"),
+    include_quiz: Optional[bool] = Form(True, description="Tùy chọn tạo bài trắc nghiệm hay không")
 ):
     """
     Tiếp nhận file ghi âm hoặc video bài giảng tải trực tiếp từ máy tính
     """
     try:
         contents = await file.read()
+        # Lưu file để có thể phát trực tiếp trên Web / App
+        safe_fname = file.filename or "lecture.mp4"
+        unique_name = f"{uuid.uuid4().hex[:12]}_{safe_fname}"
+        saved_file_path = os.path.join(UPLOAD_DIR, unique_name)
+        with open(saved_file_path, "wb") as f_saved:
+            f_saved.write(contents)
+        media_stream_url = f"/uploads/{unique_name}"
+
         audio_info = audio_service.extract_audio_from_file(
             file_bytes=contents,
             filename=file.filename or "upload_audio.mp4",
@@ -159,12 +196,10 @@ async def upload_video(
 
     try:
         target_lang = (target_language or "vi").lower().strip()
-        task = "translate" if target_lang == "en" and source_language not in ("en", "english") else "transcribe"
-        
         segments, detected_lang = whisper_service.transcribe_audio(
             audio_path=audio_path,
             language=None if source_language == "auto" else source_language,
-            task=task
+            task="transcribe"
         )
     except Exception as e:
         logger.error(f"Lỗi khi nhận diện giọng nói: {e}")
@@ -174,8 +209,13 @@ async def upload_video(
             try: os.remove(audio_path)
             except Exception: pass
 
-    # Dịch thuật nếu cần
-    if target_lang != "en" and target_lang != detected_lang:
+    # Lưu giữ nguyên văn lời người nói vào original_text để phục vụ chế độ song ngữ
+    for seg in segments:
+        if "original_text" not in seg or not seg["original_text"]:
+            seg["original_text"] = seg.get("text", "")
+
+    # Dịch thuật nếu ngôn ngữ đích khác ngôn ngữ phát hiện được
+    if target_lang != detected_lang:
         segments = translation_service.translate_segments(
             segments, 
             source_lang=detected_lang, 
@@ -184,13 +224,16 @@ async def upload_video(
 
     # Tóm tắt
     full_transcript = " ".join([seg.get("text", "") for seg in segments])
-    summary_data = summary_service.summarize_transcript(full_transcript)
+    include_q = True if include_quiz is None else include_quiz
+    summary_data = summary_service.summarize_transcript(full_transcript, include_quiz=include_q)
 
     result = {
         "video_url": f"local_file://{file.filename}",
+        "media_url": media_stream_url,
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],
-        "language": detected_lang,
+        "language": target_lang,
+        "detected_language": detected_lang,
         "segments": segments,
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
