@@ -15,5 +15,6 @@ class Settings:
     
     # Gemini API
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    FFMPEG_PATH: str = os.getenv("FFMPEG_PATH", "ffmpeg")
 
 settings = Settings()

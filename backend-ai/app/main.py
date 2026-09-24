@@ -2,19 +2,23 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uuid
 import logging
+import shutil
+import subprocess
 
 from app.core.config import settings
 from app.firebase_database import firebase_service
-from app.models.schemas import ProcessVideoRequest, ProcessVideoResponse, SubtitleSegment
+from app.models.schemas import ProcessVideoRequest, ProcessVideoResponse, SubtitleSegment, LookaheadSubtitleRequest, BurnSubtitlesRequest
 from app.services.audio_service import audio_service
 from app.services.whisper_service import whisper_service
 from app.services.summary_service import summary_service
 from app.services.translation_service import translation_service
 from app.services.subtitle_exporter import subtitle_exporter
+from app.services.subtitle_parser import parse_subtitle
 from app.api.websocket_router import ws_router
 
 logging.basicConfig(level=logging.INFO)
@@ -103,6 +107,8 @@ async def process_video(request: ProcessVideoRequest):
             url, 
             duration_limit_sec=request.max_duration_seconds
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Lỗi khi bóc tách âm thanh: {e}")
         raise HTTPException(status_code=500, detail=f"Không thể bóc tách âm thanh từ URL ({e})")
@@ -162,6 +168,56 @@ async def process_video(request: ProcessVideoRequest):
 
     return result
 
+@app.post("/api/video/lookahead")
+async def process_lookahead_window(request: LookaheadSubtitleRequest):
+    """Return captions for the next short playback window without blocking the player."""
+    audio_path = None
+    try:
+        audio_info = audio_service.extract_audio_from_url(
+            request.video_url.strip(),
+            duration_limit_sec=request.window_seconds,
+            start_time_sec=request.start_seconds,
+        )
+        audio_path = audio_info["audio_path"]
+        requested_source = (request.source_language or "auto").lower().strip()
+        segments, detected_language = whisper_service.transcribe_audio(
+            audio_path=audio_path,
+            language=None if requested_source == "auto" else requested_source,
+            task="transcribe",
+        )
+    except Exception as exc:
+        logger.error("Could not process lookahead window: %s", exc)
+        raise HTTPException(status_code=500, detail="Khong the xu ly cua so audio tiep theo.")
+    finally:
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
+
+    for index, segment in enumerate(segments):
+        segment["id"] = index
+        segment["start"] = float(segment.get("start", 0)) + request.start_seconds
+        segment["end"] = float(segment.get("end", 0)) + request.start_seconds
+        segment["original_text"] = segment.get("text", "")
+
+    target_lang = (request.target_language or "vi").lower().strip()
+    if target_lang != detected_language:
+        segments = translation_service.translate_segments(
+            segments,
+            source_lang=detected_language,
+            target_lang=target_lang,
+        )
+
+    return {
+        "window_start": request.start_seconds,
+        "window_end": request.start_seconds + request.window_seconds,
+        "language": target_lang,
+        "detected_language": detected_language,
+        "segments": segments,
+    }
+
+
 @app.post("/api/video/upload", response_model=ProcessVideoResponse)
 async def upload_video(
     file: UploadFile = File(..., description="File bài giảng tải lên (.mp3, .wav, .mp4, .m4a)"),
@@ -176,7 +232,9 @@ async def upload_video(
     try:
         contents = await file.read()
         # Lưu file để có thể phát trực tiếp trên Web / App
-        safe_fname = file.filename or "lecture.mp4"
+        safe_fname = os.path.basename(file.filename or "lecture.mp4")
+        if not safe_fname.lower().endswith((".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")):
+            raise HTTPException(status_code=415, detail="Chỉ hỗ trợ file video để tạo MP4 phụ đề.")
         unique_name = f"{uuid.uuid4().hex[:12]}_{safe_fname}"
         saved_file_path = os.path.join(UPLOAD_DIR, unique_name)
         with open(saved_file_path, "wb") as f_saved:
@@ -188,6 +246,8 @@ async def upload_video(
             filename=file.filename or "upload_audio.mp4",
             duration_limit_sec=max_duration_seconds
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Lỗi khi đọc file upload: {e}")
         raise HTTPException(status_code=400, detail=f"Không thể xử lý file tải lên: {e}")
@@ -245,6 +305,128 @@ async def upload_video(
     firebase_service.save_lecture_cache(result["video_url"], result)
 
     return result
+
+@app.post("/api/video/burn-subtitles")
+async def burn_subtitles_into_video(request: BurnSubtitlesRequest):
+    """Render translated subtitle timestamps directly into an uploaded MP4."""
+    if not request.media_url.startswith("/uploads/"):
+        raise HTTPException(status_code=400, detail="Chi co the chen phu de vao video da upload len he thong.")
+
+    source_name = os.path.basename(request.media_url)
+    source_path = os.path.abspath(os.path.join(UPLOAD_DIR, source_name))
+    if not source_path.startswith(os.path.abspath(UPLOAD_DIR) + os.sep) or not os.path.isfile(source_path):
+        raise HTTPException(status_code=404, detail="Khong tim thay file video da upload.")
+
+    ffmpeg_path = shutil.which(settings.FFMPEG_PATH) or (
+        settings.FFMPEG_PATH if os.path.isfile(settings.FFMPEG_PATH) else None
+    )
+    if not ffmpeg_path:
+        raise HTTPException(status_code=503, detail="May chu chua cai FFmpeg, khong the ghi cung phu de vao MP4.")
+
+    job_id = uuid.uuid4().hex[:12]
+    subtitle_path = os.path.join(UPLOAD_DIR, f"burn_{job_id}.srt")
+    output_name = f"captioned_{job_id}.mp4"
+    output_path = os.path.join(UPLOAD_DIR, output_name)
+    try:
+        with open(subtitle_path, "w", encoding="utf-8") as subtitle_file:
+            subtitle_file.write(subtitle_exporter.to_srt([segment.model_dump() for segment in request.segments]))
+
+        # FFmpeg subtitles filter accepts POSIX separators; escape Windows drive separators.
+        escaped_subtitle_path = subtitle_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        subtitle_filter = (
+            f"subtitles=filename='{escaped_subtitle_path}':"
+            "force_style='FontName=Arial,FontSize=20,Outline=2,Shadow=1,Alignment=2'"
+        )
+        command = [
+            ffmpeg_path, "-y", "-i", source_path,
+            "-map", "0:v:0", "-map", "0:a?",
+            "-vf", subtitle_filter,
+            "-c:v", "libx264", "-crf", "20", "-preset", "medium", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", output_path,
+        ]
+        completed = await run_in_threadpool(
+            subprocess.run,
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0 or not os.path.isfile(output_path):
+            logger.error("FFmpeg subtitle burn failed: %s", completed.stderr[-1000:])
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            raise HTTPException(status_code=500, detail="FFmpeg khong the render phu de vao video.")
+    finally:
+        if os.path.exists(subtitle_path):
+            try:
+                os.remove(subtitle_path)
+            except OSError:
+                pass
+
+    return {
+        "media_url": f"/uploads/{output_name}",
+        "filename": output_name,
+        "message": "Da tao MP4 co phu de ghi cung.",
+    }
+
+
+@app.post("/api/subtitles/process", response_model=ProcessVideoResponse)
+async def process_subtitle_file(
+    file: UploadFile = File(..., description="Subtitle file in SRT or VTT format"),
+    video_url: Optional[str] = Form(None, description="Video URL for subtitle synchronization"),
+    title: Optional[str] = Form(None, description="Lecture title"),
+    source_language: Optional[str] = Form("auto"),
+    target_language: Optional[str] = Form("vi"),
+    include_quiz: Optional[bool] = Form(True),
+):
+    """Translate an existing subtitle file without re-transcribing its matching video."""
+    filename = file.filename or "subtitles.srt"
+    if not filename.lower().endswith((".srt", ".vtt")):
+        raise HTTPException(status_code=400, detail="Chi ho tro tep phu de .srt hoac .vtt.")
+
+    content = await file.read()
+    if not content or len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Tep phu de trong hoac vuot qua 10 MB.")
+
+    segments = parse_subtitle(content)
+    if not segments:
+        raise HTTPException(status_code=400, detail="Khong doc duoc moc thoi gian hop le tu tep phu de.")
+
+    transcript = " ".join(segment["text"] for segment in segments)
+    requested_source = (source_language or "auto").lower().strip()
+    detected_language = (
+        translation_service.detect_language(transcript)
+        if requested_source == "auto"
+        else requested_source
+    )
+    target_lang = (target_language or "vi").lower().strip()
+    if target_lang != detected_language:
+        segments = translation_service.translate_segments(
+            segments,
+            source_lang=detected_language,
+            target_lang=target_lang,
+        )
+
+    summary_data = summary_service.summarize_transcript(
+        " ".join(segment["text"] for segment in segments),
+        include_quiz=True if include_quiz is None else include_quiz,
+    )
+    lecture_url = (video_url or f"subtitle_file://{filename}").strip()
+    result = {
+        "video_url": lecture_url,
+        "title": title or os.path.splitext(filename)[0],
+        "duration_seconds": max(segment["end"] for segment in segments),
+        "language": target_lang,
+        "detected_language": detected_language,
+        "segments": segments,
+        "summary": summary_data.get("summary", ""),
+        "key_points": summary_data.get("key_points", []),
+        "formulas_and_terms": summary_data.get("formulas_and_terms", []),
+        "quiz": summary_data.get("quiz", []),
+    }
+    firebase_service.save_lecture_cache(lecture_url, result)
+    return result
+
 
 @app.get("/api/video/export")
 async def export_subtitles(

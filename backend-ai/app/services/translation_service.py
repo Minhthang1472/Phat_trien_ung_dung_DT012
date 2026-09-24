@@ -11,6 +11,26 @@ class TranslationService:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
+    def detect_language(self, text: str) -> str:
+        """Detect the source language before translating subtitle batches."""
+        if not text.strip():
+            return "auto"
+        try:
+            response = requests.get(
+                self.endpoint,
+                params={"client": "dict-chrome-ex", "sl": "auto", "tl": "en", "dt": "t", "q": text[:4000]},
+                headers=self.headers,
+                timeout=8,
+            )
+            if response.ok:
+                data = response.json()
+                detected = data[2] if len(data) > 2 else None
+                if isinstance(detected, str) and detected:
+                    return detected.lower()
+        except Exception as exc:
+            logger.warning("Could not detect subtitle language: %s", exc)
+        return "auto"
+
     def translate_segments(
         self,
         segments: List[Dict[str, Any]],

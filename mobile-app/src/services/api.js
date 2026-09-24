@@ -87,6 +87,57 @@ class ApiService {
     return data;
   }
 
+  async processSubtitleFile(file, options = {}) {
+    const baseUrl = await this.getBaseUrl();
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('video_url', options.videoUrl || '');
+    formData.append('title', options.title || '');
+    formData.append('source_language', options.sourceLanguage || 'auto');
+    formData.append('target_language', options.targetLanguage || 'vi');
+    formData.append('include_quiz', options.includeQuiz ? 'true' : 'false');
+
+    const response = await fetch(`${baseUrl}/api/subtitles/process`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      let message = `Loi HTTP ${response.status}`;
+      try {
+        const body = await response.json();
+        message = body.detail || message;
+      } catch (_) {}
+      throw new Error(message);
+    }
+    const data = await response.json();
+    await this.saveToLocalHistory(data);
+    return data;
+  }
+
+  async burnSubtitlesIntoVideo(mediaUrl, segments) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/video/burn-subtitles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ media_url: mediaUrl, segments }),
+    });
+    if (!response.ok) {
+      let message = `Lỗi HTTP ${response.status}`;
+      try {
+        const body = await response.json();
+        message = body.detail || message;
+      } catch (_) {}
+      throw new Error(message);
+    }
+    const data = await response.json();
+    return {
+      ...data,
+      media_url: data.media_url.startsWith('http')
+        ? data.media_url
+        : `${baseUrl}${data.media_url}`,
+    };
+  }
+
   async getLectureHistory(limit = 10) {
     try {
       const baseUrl = await this.getBaseUrl();

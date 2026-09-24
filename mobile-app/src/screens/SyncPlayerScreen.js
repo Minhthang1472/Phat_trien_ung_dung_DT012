@@ -17,11 +17,15 @@ import { colors, spacing, borderRadius } from '../constants/theme';
 import Header from '../components/Header';
 import SubtitleItem from '../components/SubtitleItem';
 import SummaryQuizScreen from './SummaryQuizScreen';
+import { apiService } from '../services/api';
 
 export default function SyncPlayerScreen({ lecture, onBack }) {
   const [currentTab, setCurrentTab] = useState('subtitles'); // 'subtitles' | 'summary'
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [burningSubtitles, setBurningSubtitles] = useState(false);
+  const [burnedMediaUrl, setBurnedMediaUrl] = useState(null);
+  const [serverBaseUrl, setServerBaseUrl] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showCC, setShowCC] = useState(true);
   const [subMode, setSubMode] = useState('bilingual'); // 'bilingual' | 'vi' | 'en'
@@ -29,6 +33,10 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
   const ytPlayerRef = useRef(null);
   const htmlMediaRef = useRef(null);
   const pollTimerRef = useRef(null);
+
+  useEffect(() => {
+    apiService.getBaseUrl().then(setServerBaseUrl).catch(() => {});
+  }, []);
 
   const duration = lecture?.duration_seconds || 300;
   const segments = lecture?.segments || [];
@@ -61,8 +69,17 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
 
   // Nguồn phát file thực tế (từ bộ nhớ upload, link server /uploads/ hoặc link trực tiếp)
   const mediaSrc =
-    lecture?.media_stream_url ||
-    (lecture?.media_url ? `http://127.0.0.1:8000${lecture.media_url}` : null) ||
+    burnedMediaUrl ||
+    (lecture?.media_stream_url
+      ? (lecture.media_stream_url.startsWith('http')
+        ? lecture.media_stream_url
+        : `${serverBaseUrl}${lecture.media_stream_url}`)
+      : null) ||
+    (lecture?.media_url
+      ? (lecture.media_url.startsWith('http')
+        ? lecture.media_url
+        : `${serverBaseUrl}${lecture.media_url}`)
+      : null) ||
     (lecture?.video_url && !lecture.video_url.startsWith('local_file://') ? lecture.video_url : null);
 
   const isAudioOnly = Boolean(
@@ -169,6 +186,26 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
         message: `Bài giảng: ${title}\nTổng quan: ${lecture?.summary || ''}\nXem tại: ${lecture?.video_url || ''}`,
       });
     } catch (_) {}
+  };
+
+  const handleBurnSubtitles = async () => {
+    if (!lecture?.media_url || segments.length === 0) {
+      Alert.alert('Chưa sẵn sàng', 'Chỉ có thể ghi cứng phụ đề cho video đã upload và có phụ đề.');
+      return;
+    }
+    setBurningSubtitles(true);
+    try {
+      const result = await apiService.burnSubtitlesIntoVideo(lecture.media_url, segments);
+      setBurnedMediaUrl(result.media_url);
+      Alert.alert('Đã hoàn tất', 'MP4 mới đã được tạo với phụ đề ghi cứng.', [
+        { text: 'Mở video', onPress: () => onBack && onBack() },
+        { text: 'Đóng', style: 'cancel' },
+      ]);
+    } catch (error) {
+      Alert.alert('Không thể ghi cứng phụ đề', error.message);
+    } finally {
+      setBurningSubtitles(false);
+    }
   };
 
   // Xuất file phụ đề SRT chuẩn
@@ -437,6 +474,14 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
             <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.8}>
               <Text style={styles.shareBtnText}>📤 Chia sẻ</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.burnBtn, burningSubtitles && styles.disabledBtn]}
+              onPress={handleBurnSubtitles}
+              disabled={burningSubtitles}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.burnBtnText}>{burningSubtitles ? '⏳ Đang xử lý' : '🎞️ Ghi cứng MP4'}</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Danh sách phụ đề đồng bộ chạy theo giây */}
@@ -662,6 +707,23 @@ const styles = StyleSheet.create({
     color: '#c084fc',
     fontSize: 12,
     fontWeight: '700',
+  },
+  burnBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(34, 197, 94, 0.45)',
+    paddingVertical: 6,
+    borderRadius: borderRadius.sm,
+    alignItems: 'center',
+  },
+  burnBtnText: {
+    color: '#4ade80',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  disabledBtn: {
+    opacity: 0.55,
   },
   subtitlesScroll: {
     flex: 1,

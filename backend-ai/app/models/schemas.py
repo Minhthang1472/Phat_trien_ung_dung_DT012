@@ -17,12 +17,26 @@ class ProcessVideoRequest(BaseModel):
     target_language: Optional[str] = Field("vi", description="Ngôn ngữ phụ đề muốn xuất ra (vi, en, ja, zh, ko...)")
     include_quiz: Optional[bool] = Field(True, description="Tùy chọn tạo câu hỏi trắc nghiệm ôn tập hay không")
 
+class LookaheadSubtitleRequest(BaseModel):
+    video_url: str = Field(..., description="URL video dang phat tren trinh duyet")
+    start_seconds: float = Field(..., ge=0, description="Moc bat dau cua cua so audio")
+    window_seconds: float = Field(15, gt=0, le=20, description="Do dai cua so dem phu de")
+    source_language: Optional[str] = Field("auto")
+    target_language: Optional[str] = Field("vi")
+
+
+class BurnSubtitlesRequest(BaseModel):
+    media_url: str = Field(..., description="Duong dan /uploads cua video da tai len")
+    segments: List[SubtitleSegment] = Field(..., min_length=1)
+
+
 class ProcessVideoResponse(BaseModel):
     video_url: str
     media_url: Optional[str] = None
     title: str
     duration_seconds: float
     language: str
+    detected_language: Optional[str] = None
     segments: List[SubtitleSegment]
     summary: Optional[str] = None
     key_points: Optional[List[str]] = []

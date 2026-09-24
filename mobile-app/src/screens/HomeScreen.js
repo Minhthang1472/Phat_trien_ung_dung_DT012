@@ -302,6 +302,42 @@ export default function HomeScreen({ onNavigate }) {
   };
 
   // Tính thống kê tiến độ từ lịch sử
+  const handleUploadSubtitle = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/x-subrip', 'text/vtt', 'text/plain', 'application/octet-stream'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+
+      const subtitle = result.assets && result.assets[0];
+      if (!subtitle || !/\.(srt|vtt)$/i.test(subtitle.name || '')) {
+        Alert.alert('Tep khong hop le', 'Vui long chon tep phu de .srt hoac .vtt.');
+        return;
+      }
+
+      setLoading(true);
+      setLoadingStep('Dang doc timestamp va nhan dien ngon ngu...');
+      const uploadFile = subtitle.file || {
+        uri: subtitle.uri,
+        name: subtitle.name,
+        type: subtitle.mimeType || 'text/plain',
+      };
+      const data = await apiService.processSubtitleFile(uploadFile, {
+        videoUrl: videoUrl.trim(),
+        title: subtitle.name.replace(/\.(srt|vtt)$/i, ''),
+        targetLanguage: targetLang,
+        includeQuiz,
+      });
+      setLoading(false);
+      await checkHealthAndFetchHistory();
+      onNavigate('SyncPlayer', { lecture: data });
+    } catch (err) {
+      setLoading(false);
+      Alert.alert('Khong the xu ly phu de', err.message);
+    }
+  };
+
   const totalLectures = recentLectures.length;
   const totalMinutes = Math.round(
     recentLectures.reduce((acc, l) => acc + (l.duration_seconds || 0), 0) / 60
@@ -420,6 +456,14 @@ export default function HomeScreen({ onNavigate }) {
             activeOpacity={0.8}
           >
             <Text style={styles.uploadBtnText}>📁 UPLOAD FILE TỪ THIẾT BỊ (MP4 / MP3)</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.subtitleUploadBtn, loading && styles.disabledBtn]}
+            onPress={handleUploadSubtitle}
+            disabled={loading}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.subtitleUploadBtnText}>NHAP PHU DE CO SAN (SRT / VTT)</Text>
           </TouchableOpacity>
         </View>
 
@@ -677,6 +721,22 @@ const styles = StyleSheet.create({
   },
   uploadBtnText: {
     color: colors.secondary,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  subtitleUploadBtn: {
+    backgroundColor: 'rgba(34, 197, 94, 0.12)',
+    borderWidth: 1,
+    borderColor: '#22C55E',
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+  },
+  subtitleUploadBtnText: {
+    color: '#4ADE80',
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 0.5,

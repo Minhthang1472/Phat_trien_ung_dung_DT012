@@ -1,4 +1,5 @@
 import os
+import glob
 import tempfile
 import yt_dlp
 import logging
@@ -7,7 +8,7 @@ logger = logging.getLogger("uvicorn")
 
 class AudioService:
     @staticmethod
-    def extract_audio_from_url(video_url: str, duration_limit_sec: int = None) -> dict:
+    def extract_audio_from_url(video_url: str, duration_limit_sec: int = None, start_time_sec: float = 0) -> dict:
         """
         Bóc tách stream âm thanh từ link video (YouTube, Drive, etc.) mà không tải toàn bộ video nặng.
         Trả về: filepath âm thanh tạm và thông tin metadata (title, duration)
@@ -30,7 +31,13 @@ class AudioService:
 
         # Nếu truyền số giây giới hạn thì cấu hình FFmpeg chỉ lấy đúng số giây đầu
         if duration_limit_sec and duration_limit_sec > 0:
-            ydl_opts['postprocessor_args'] = ['-t', str(duration_limit_sec)]
+            # Ask yt-dlp/ffmpeg for only the upcoming playback range. This avoids
+            # downloading a whole lecture every time the lookahead buffer advances.
+            ydl_opts['download_ranges'] = yt_dlp.utils.download_range_func(
+                None,
+                [(start_time_sec, start_time_sec + duration_limit_sec)],
+            )
+            ydl_opts['force_keyframes_at_cuts'] = True
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             logger.info(f"Đang phân tích thông tin từ URL: {video_url} (Giới hạn: {duration_limit_sec or 'Toàn bộ'} giây)")
@@ -40,7 +47,8 @@ class AudioService:
             duration = info.get('duration', 0)
             
             # File wav được FFmpeg xuất ra
-            audio_path = os.path.join(temp_dir, f"{video_id}.wav")
+            wav_candidates = glob.glob(os.path.join(temp_dir, f"{video_id}*.wav"))
+            audio_path = max(wav_candidates, key=os.path.getmtime) if wav_candidates else os.path.join(temp_dir, f"{video_id}.wav")
             
             return {
                 "audio_path": audio_path,

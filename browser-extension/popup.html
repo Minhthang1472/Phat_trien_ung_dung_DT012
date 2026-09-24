@@ -27,9 +27,19 @@
       </select>
     </div>
 
+    <div class="field">
+      <label for="subtitleFile">Upload existing subtitles (optional)</label>
+      <input id="subtitleFile" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip">
+    </div>
+    <div class="field checkbox-field">
+      <label><input id="includeQuiz" type="checkbox"> Generate review quiz after translation</label>
+    </div>
     <div class="button-group">
       <button id="btnProcessTab" class="btn-primary">
         ⚡ Bắt đầu tạo phụ đề cho Tab này
+      </button>
+      <button id="btnProcessSubtitle" class="btn-secondary">
+        Translate uploaded subtitles
       </button>
       <button id="btnToggleOverlay" class="btn-secondary">
         Ẩn/Hiện lớp phủ phụ đề
