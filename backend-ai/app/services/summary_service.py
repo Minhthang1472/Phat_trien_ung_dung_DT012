@@ -6,6 +6,43 @@ from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
 
+def normalize_quiz(raw_quiz) -> list:
+    """Đảm bảo mọi phần tử trong quiz đều là dictionary hợp lệ theo schema Pydantic."""
+    if not isinstance(raw_quiz, list):
+        return []
+    clean_quiz = []
+    for item in raw_quiz:
+        if isinstance(item, dict):
+            q_text = item.get("question") or item.get("title") or "Câu hỏi ôn tập"
+            opts = item.get("options")
+            if not isinstance(opts, list) or len(opts) < 2:
+                opts = ["A. Đúng", "B. Sai", "C. Cần xem xét thêm", "D. Ý kiến khác"]
+            ans = item.get("correct_answer") or item.get("answer") or "A"
+            exp = item.get("explanation") or "Dựa trên nội dung bài giảng."
+            clean_quiz.append({
+                "question": str(q_text).strip(),
+                "options": [str(o) for o in opts],
+                "correct_answer": str(ans).strip(),
+                "answer": str(ans).strip(),
+                "explanation": str(exp).strip()
+            })
+        elif isinstance(item, str) and item.strip():
+            # Nếu LLM trả về dạng chuỗi câu hỏi tự luận, tự động chuyển thành format trắc nghiệm chuẩn
+            clean_quiz.append({
+                "question": item.strip(),
+                "options": [
+                    "A. Hoàn toàn đồng ý",
+                    "B. Cần thêm cơ sở phân tích",
+                    "C. Không phù hợp với ngữ cảnh",
+                    "D. Góc nhìn khác"
+                ],
+                "correct_answer": "A",
+                "answer": "A",
+                "explanation": "Câu hỏi gợi mở củng cố kiến thức từ bài giảng."
+            })
+    return clean_quiz
+
+
 class SummaryService:
     def __init__(self):
         self.model = None
@@ -13,8 +50,9 @@ class SummaryService:
         if settings.GEMINI_API_KEY:
             try:
                 genai.configure(api_key=settings.GEMINI_API_KEY)
-                self.model = genai.GenerativeModel('gemini-2.5-flash')
-                self.fallback_model = genai.GenerativeModel('gemini-2.0-flash')
+                json_config = {"response_mime_type": "application/json"}
+                self.model = genai.GenerativeModel('gemini-2.5-flash', generation_config=json_config)
+                self.fallback_model = genai.GenerativeModel('gemini-3.8-flash', generation_config=json_config)
             except Exception as e:
                 logger.warning(f"Không thể khởi tạo Gemini AI: {e}")
                 self.model = None
@@ -47,6 +85,7 @@ class SummaryService:
                 {
                     "question": "Mô hình AI nào được dùng để bóc tách phụ đề và mốc thời gian trong ứng dụng?",
                     "options": ["A. Whisper AI", "B. ResNet-50", "C. YOLOv8", "D. BERT"],
+                    "correct_answer": "A",
                     "answer": "A. Whisper AI",
                     "explanation": "Hệ thống sử dụng lõi faster-whisper để nhận diện giọng nói chính xác."
                 }
@@ -63,7 +102,7 @@ class SummaryService:
                     "Speech-to-Text (ASR): Nhận diện lời nói thành phụ đề",
                     "Timestamps Alignment: Đồng bộ mốc thời gian giây"
                 ],
-                "quiz": default_quiz
+                "quiz": normalize_quiz(default_quiz)
             }
 
         quiz_schema = """
@@ -71,7 +110,7 @@ class SummaryService:
                 {
                     "question": "Nội dung câu hỏi trắc nghiệm tự kiểm tra kiến thức?",
                     "options": ["A. Lựa chọn 1", "B. Lựa chọn 2", "C. Lựa chọn 3", "D. Lựa chọn 4"],
-                    "answer": "A. Lựa chọn 1",
+                    "correct_answer": "A",
                     "explanation": "Giải thích ngắn gọn lý do đúng"
                 }
             ]
@@ -82,7 +121,7 @@ class SummaryService:
         ---
         {full_text}
         ---
-        Hãy phân tích nội dung trên và trả về kết quả ĐÚNG ĐỊNH DẠNG JSON sau (không bọc trong markdown hay text thừa):
+        Hãy phân tích nội dung trên và trả về kết quả ĐÚNG ĐỊNH DẠNG JSON sau (LƯU Ý: quiz phải là mảng các object có chứa question, options, correct_answer, explanation - KHÔNG ĐƯỢC trả về mảng chuỗi string):
         {{
             "summary": "Đoạn văn 3-5 câu tóm tắt tổng quan bài học một cách súc tích",
             "key_points": [
@@ -97,29 +136,56 @@ class SummaryService:
             {quiz_schema.strip()}
         }}
         """
+        def _clean_and_parse_json(raw_text: str) -> dict:
+            text = raw_text.strip()
+            # Bỏ markdown code block nếu có
+            if text.startswith("```"):
+                text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+                text = re.sub(r"\s*```$", "", text).strip()
+
+            # 1. Thử parse trực tiếp
+            try:
+                return json.loads(text)
+            except Exception:
+                pass
+
+            # 2. Trích xuất khối nằm giữa { và } đầu-cuối
+            match = re.search(r"(\{.*\})", text, re.DOTALL)
+            if match:
+                candidate = match.group(1)
+                try:
+                    return json.loads(candidate)
+                except Exception:
+                    pass
+
+                # 3. Sửa lỗi phổ biến của LLM: dấu phẩy thừa trước dấu đóng } hoặc ]
+                fixed = re.sub(r",\s*([\]\}])", r"\1", candidate)
+                try:
+                    return json.loads(fixed)
+                except Exception:
+                    pass
+
+            raise ValueError(f"Không thể parse JSON từ phản hồi LLM: {text[:200]}...")
+
         def _call_model(m):
             response = m.generate_content(prompt)
-            text_response = response.text.strip()
-            if text_response.startswith("```"):
-                text_response = re.sub(r"^```[a-zA-Z]*\n", "", text_response)
-                text_response = re.sub(r"\n```$", "", text_response).strip()
-            parsed = json.loads(text_response)
+            parsed = _clean_and_parse_json(response.text)
             return {
                 "summary": parsed.get("summary", ""),
                 "key_points": parsed.get("key_points", []),
                 "formulas_and_terms": parsed.get("formulas_and_terms", []),
-                "quiz": parsed.get("quiz", [])
+                "quiz": normalize_quiz(parsed.get("quiz", []))
             }
 
         try:
             return _call_model(self.model)
         except Exception as e1:
-            logger.warning(f"Lỗi khi gọi model chính gemini-2.5-flash: {e1}. Đang chuyển sang gemini-2.0-flash...")
+            logger.warning(f"Lỗi khi gọi model chính gemini-2.5-flash: {e1}. Đang chuyển sang gemini-3.8-flash...")
             if self.fallback_model:
                 try:
                     return _call_model(self.fallback_model)
                 except Exception as e2:
-                    logger.error(f"Fallback gemini-2.0-flash cũng thất bại: {e2}")
+                    logger.error(f"Fallback gemini-3.8-flash cũng thất bại: {e2}")
             logger.error(f"Lỗi khi gọi LLM tóm tắt: {e1}")
             return {
                 "summary": "Tóm tắt từ phụ đề: " + full_text[:200] + "...",

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Lecture Subtitle & AI Summary",
-  "version": "1.0.0",
-  "description": "Tự động tạo phụ đề đồng bộ và tóm tắt bài giảng trực tiếp trên trình duyệt",
+  "name": "PHỤ ĐỀ BÀI GIẢNG AI",
+  "version": "1.2.0",
+  "description": "Tự động tạo phụ đề đồng bộ đa ngôn ngữ, song ngữ và tóm tắt bài giảng trực tiếp trên trình duyệt (YouTube, Drive, LMS...)",
   "permissions": [
     "activeTab",
     "storage",
@@ -15,7 +15,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Bật/Tắt Phụ đề bài giảng AI"
+    "default_title": "PHỤ ĐỀ BÀI GIẢNG AI"
   },
   "content_scripts": [
     {

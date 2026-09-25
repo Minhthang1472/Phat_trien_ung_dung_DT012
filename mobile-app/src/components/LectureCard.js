@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, spacing, borderRadius } from '../constants/theme';
 
-export default function LectureCard({ lecture, onPress }) {
+export default function LectureCard({ lecture, onPress, onDelete }) {
   const formatDuration = (seconds) => {
     if (!seconds) return '00:00';
     const m = Math.floor(seconds / 60);
@@ -19,10 +19,25 @@ export default function LectureCard({ lecture, onPress }) {
             {lecture.title || 'Bài giảng không tên'}
           </Text>
         </View>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>
-            {(lecture.language || 'vi').toUpperCase()}
-          </Text>
+        <View style={styles.actionsRight}>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>
+              {(lecture.language || 'vi').toUpperCase()}
+            </Text>
+          </View>
+          {onDelete ? (
+            <TouchableOpacity
+              style={styles.deleteBtn}
+              onPress={(e) => {
+                if (e && e.stopPropagation) e.stopPropagation();
+                onDelete(lecture);
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.deleteIconText}>🗑️</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
 
@@ -74,6 +89,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textPrimary,
     flex: 1,
+  },
+  actionsRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  deleteBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteIconText: {
+    fontSize: 11,
   },
   badge: {
     backgroundColor: 'rgba(99, 102, 241, 0.2)',

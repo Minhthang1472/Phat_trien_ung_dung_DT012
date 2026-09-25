@@ -15,7 +15,7 @@ from app.firebase_database import firebase_service
 from app.models.schemas import ProcessVideoRequest, ProcessVideoResponse, SubtitleSegment, LookaheadSubtitleRequest, BurnSubtitlesRequest
 from app.services.audio_service import audio_service
 from app.services.whisper_service import whisper_service
-from app.services.summary_service import summary_service
+from app.services.summary_service import summary_service, normalize_quiz
 from app.services.translation_service import translation_service
 from app.services.subtitle_exporter import subtitle_exporter
 from app.services.subtitle_parser import parse_subtitle
@@ -83,6 +83,7 @@ async def process_video(request: ProcessVideoRequest):
     target_lang = (request.target_language or "vi").lower().strip()
     cached_fb = firebase_service.get_lecture_cache(url)
     if cached_fb:
+        cached_fb["quiz"] = normalize_quiz(cached_fb.get("quiz", []))
         cached_lang = (cached_fb.get("language") or "").lower().strip()
         segs = cached_fb.get("segments", [])
         # Nếu cache đã đúng ngôn ngữ đích và đã có tiếng Việt
@@ -144,6 +145,9 @@ async def process_video(request: ProcessVideoRequest):
             source_lang=detected_lang, 
             target_lang=target_lang
         )
+    else:
+        for seg in segments:
+            seg["translated_text"] = seg.get("text", "")
 
     # 5. Tóm tắt nội dung bài giảng (Tổng quan, Điểm chính, Thuật ngữ, Trắc nghiệm nếu bật)
     full_transcript = " ".join([seg.get("text", "") for seg in segments])
@@ -160,7 +164,7 @@ async def process_video(request: ProcessVideoRequest):
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
-        "quiz": summary_data.get("quiz", [])
+        "quiz": normalize_quiz(summary_data.get("quiz", []))
     }
 
     # 6. Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
@@ -208,6 +212,9 @@ async def process_lookahead_window(request: LookaheadSubtitleRequest):
             source_lang=detected_language,
             target_lang=target_lang,
         )
+    else:
+        for seg in segments:
+            seg["translated_text"] = seg.get("text", "")
 
     return {
         "window_start": request.start_seconds,
@@ -298,7 +305,7 @@ async def upload_video(
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
-        "quiz": summary_data.get("quiz", [])
+        "quiz": normalize_quiz(summary_data.get("quiz", []))
     }
 
     # Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
@@ -422,7 +429,7 @@ async def process_subtitle_file(
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
-        "quiz": summary_data.get("quiz", []),
+        "quiz": normalize_quiz(summary_data.get("quiz", [])),
     }
     firebase_service.save_lecture_cache(lecture_url, result)
     return result
@@ -472,3 +479,59 @@ async def get_lecture_history(limit: int = 10):
         "total": len(items), 
         "storage": "Google Firebase Firestore Cloud"
     }
+
+
+@app.delete("/api/history")
+async def delete_lecture_history(video_url: str = Query(..., description="URL video bài giảng cần xóa")):
+    """
+    Xóa bài giảng khỏi kho lưu trữ Google Firebase Firestore Cloud
+    """
+    success = firebase_service.delete_lecture(video_url)
+    if not success:
+        raise HTTPException(status_code=500, detail="Không thể xóa bài giảng khỏi CSDL.")
+    return {"status": "success", "message": "Đã xóa bài giảng thành công."}
+
+
+@app.get("/api/tts")
+async def text_to_speech(
+    text: str = Query(..., description="Văn bản cần phát âm"), 
+    lang: str = Query("vi", description="Mã ngôn ngữ: vi, en, ja, ko, zh...")
+):
+    """
+    Phát âm chuẩn giọng bản ngữ Google Translate (Tiếng Việt chuẩn có dấu, Tiếng Anh, Tiếng Nhật, Hàn, Trung...)
+    """
+    import urllib.parse
+    import requests
+
+    clean_text = text.strip()
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="Văn bản cần phát âm không được để trống.")
+
+    short_text = clean_text[:250]
+    encoded_query = urllib.parse.quote(short_text)
+    clean_lang = lang.lower().strip()
+    if "-" in clean_lang:
+        clean_lang = clean_lang.split("-")[0]
+
+    tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&tl={clean_lang}&client=tw-ob&q={encoded_query}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    try:
+        response = requests.get(tts_url, headers=headers, timeout=8)
+        if response.status_code == 200:
+            return Response(
+                content=response.content,
+                media_type="audio/mpeg",
+                headers={
+                    "Cache-Control": "public, max-age=86400",
+                    "Access-Control-Allow-Origin": "*"
+                }
+            )
+        else:
+            logger.warning(f"Google TTS response code: {response.status_code}")
+    except Exception as e:
+        logger.warning(f"Lỗi khi tải âm thanh từ Google TTS: {e}")
+
+    raise HTTPException(status_code=502, detail="Không thể tạo âm thanh phát âm lúc này.")

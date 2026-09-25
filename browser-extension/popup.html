@@ -3,54 +3,92 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lecture AI Subtitles</title>
+  <title>PHỤ ĐỀ BÀI GIẢNG AI</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="card">
+    <!-- Header -->
     <div class="header">
-      <div class="logo-badge">AI</div>
-      <h2>Lecture Caption</h2>
+      <div class="logo-badge">🎓 AI</div>
+      <div>
+        <h2>PHỤ ĐỀ BÀI GIẢNG AI</h2>
+        <p class="subtitle">Đồng bộ phụ đề & Tóm tắt bài giảng</p>
+      </div>
     </div>
-    <p class="subtitle">Đồng bộ phụ đề & Tóm tắt bài giảng</p>
 
+    <!-- Trạng thái Backend Server -->
     <div class="status-box" id="statusBox">
-      <span class="status-dot"></span>
-      <span id="statusText">Sẵn sàng phân tích</span>
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Đang kiểm tra Backend AI...</span>
     </div>
 
+    <!-- Thông tin Tab hiện tại -->
+    <div class="tab-info" id="tabInfoBox">
+      <span class="tab-label">🎬 Tab hiện tại:</span>
+      <span class="tab-url" id="tabUrlText">Đang tải...</span>
+    </div>
+
+    <!-- Tùy chọn Ngôn ngữ -->
     <div class="field">
-      <label for="targetLang">Ngôn ngữ hiển thị</label>
+      <label for="targetLang">Ngôn ngữ phụ đề dịch:</label>
       <select id="targetLang">
-        <option value="vi" selected>Tiếng Việt (Mặc định)</option>
-        <option value="en">English</option>
+        <option value="vi" selected>🇻🇳 Tiếng Việt</option>
+        <option value="en">🇺🇸 English</option>
+        <option value="ja">🇯🇵 日本語</option>
+        <option value="ko">🇰🇷 한국어</option>
+        <option value="zh">🇨🇳 中文</option>
       </select>
     </div>
 
-    <div class="field">
-      <label for="subtitleFile">Upload existing subtitles (optional)</label>
-      <input id="subtitleFile" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip">
+    <!-- Tùy chọn Checkbox -->
+    <div class="checkbox-row">
+      <label><input id="bilingualCheck" type="checkbox" checked> 🌐 Hiện song ngữ (Bilingual)</label>
+      <label><input id="includeQuizCheck" type="checkbox" checked> ❓ Tạo câu hỏi trắc nghiệm</label>
     </div>
-    <div class="field checkbox-field">
-      <label><input id="includeQuiz" type="checkbox"> Generate review quiz after translation</label>
-    </div>
+
+    <!-- Nút hành động chính -->
     <div class="button-group">
       <button id="btnProcessTab" class="btn-primary">
-        ⚡ Bắt đầu tạo phụ đề cho Tab này
+        ⚡ Bắt đầu tạo phụ đề AI
       </button>
-      <button id="btnProcessSubtitle" class="btn-secondary">
-        Translate uploaded subtitles
-      </button>
-      <button id="btnToggleOverlay" class="btn-secondary">
-        Ẩn/Hiện lớp phủ phụ đề
+
+      <div class="button-row">
+        <button id="btnLookahead" class="btn-secondary" title="Xem ngay phụ đề đoạn đang phát (15s) mà không cần chờ tải toàn bộ video">
+          ⏩ Xem nhanh tức thì
+        </button>
+        <button id="btnToggleOverlay" class="btn-secondary" title="Ẩn hoặc hiện khung phụ đề nổi trên trang">
+          👁️ Ẩn / Hiện
+        </button>
+      </div>
+    </div>
+
+    <!-- Nạp file phụ đề có sẵn -->
+    <div class="accordion-header" id="accordionToggle">
+      <span>📁 Nạp file phụ đề có sẵn (.srt, .vtt) ▾</span>
+    </div>
+    <div class="accordion-body" id="accordionBody" style="display: none;">
+      <input id="subtitleFile" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip">
+      <button id="btnProcessSubtitle" class="btn-action-small">
+        Dịch & Nạp vào Video
       </button>
     </div>
 
+    <!-- Kết quả tóm tắt & Quiz -->
     <div class="summary-section" id="summarySection" style="display: none;">
-      <h3>📌 Tóm tắt bài giảng:</h3>
-      <div class="summary-content" id="summaryContent"></div>
+      <div class="tabs-header">
+        <button class="tab-btn active" id="tabBtnSummary">📝 Tóm tắt</button>
+        <button class="tab-btn" id="tabBtnQuiz">❓ Trắc nghiệm</button>
+      </div>
+      <div class="tab-content" id="tabContentSummary">
+        <div class="summary-text" id="summaryContent"></div>
+      </div>
+      <div class="tab-content" id="tabContentQuiz" style="display: none;">
+        <div class="quiz-container" id="quizContent"></div>
+      </div>
     </div>
   </div>
+
   <script src="popup.js"></script>
 </body>
 </html>

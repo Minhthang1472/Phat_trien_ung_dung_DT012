@@ -1,9 +1,9 @@
-﻿import React from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, spacing, borderRadius } from '../constants/theme';
 
 export default function Header({
-  title = 'LECTURE AI CAPTION',
+  title = 'PHỤ ĐỀ BÀI GIẢNG AI',
   serverStatus = { online: false },
   onOpenSettings,
   onBack,
@@ -45,7 +45,7 @@ export default function Header({
             onPress={onOpenSettings}
             activeOpacity={0.7}
           >
-            <Text style={styles.settingsIcon}>ℹ️</Text>
+            <Text style={styles.settingsIcon}>⚙️</Text>
           </TouchableOpacity>
         )}
       </View>

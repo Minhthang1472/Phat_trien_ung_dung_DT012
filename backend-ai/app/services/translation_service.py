@@ -41,13 +41,30 @@ class TranslationService:
         Dịch đồng bộ toàn bộ danh sách phụ đề sang ngôn ngữ đích (target_lang)
         Cực nhanh, chính xác 100%, giữ nguyên timestamps và không bị lỗi giới hạn quota.
         """
-        if not segments or (source_lang and source_lang.lower() == target_lang.lower()):
+        if not segments:
+            return []
+
+        # Đảm bảo luôn lưu giữ câu phụ đề gốc
+        for seg in segments:
+            if "original_text" not in seg or not seg["original_text"]:
+                seg["original_text"] = seg.get("text", "")
+
+        if source_lang and source_lang.lower() == target_lang.lower():
+            for seg in segments:
+                orig = seg.get("original_text") or seg.get("text", "")
+                seg["original_text"] = orig
+                seg["translated_text"] = orig
+                seg["text"] = orig
             return segments
 
         logger.info(f"Bắt đầu dịch {len(segments)} dòng phụ đề từ [{source_lang}] sang [{target_lang}]...")
 
         batch_size = 35
-        texts = [seg.get("text", "").replace("\n", " ").strip() for seg in segments]
+        # Luôn dịch từ câu gốc original_text để tránh dịch chéo nhiều lần làm sai lệch nghĩa
+        texts = [
+            (seg.get("original_text") or seg.get("text", "")).replace("\n", " ").strip()
+            for seg in segments
+        ]
         translated_texts = []
 
         for i in range(0, len(texts), batch_size):
@@ -95,10 +112,9 @@ class TranslationService:
                     except Exception:
                         translated_texts.append(single_text)
 
-        for seg, vi in zip(segments, translated_texts):
-            seg["original_text"] = seg.get("original_text") or seg.get("text")
-            seg["translated_text"] = vi
-            seg["text"] = vi
+        for seg, trans in zip(segments, translated_texts):
+            seg["translated_text"] = trans
+            seg["text"] = trans
 
         logger.info(f"Dịch hoàn tất {len(segments)} câu sang [{target_lang}] thành công!")
         return segments

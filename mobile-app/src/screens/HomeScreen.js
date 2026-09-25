@@ -18,7 +18,7 @@ import { SUPPORTED_LANGUAGES } from '../constants/config';
 import { apiService } from '../services/api';
 import Header from '../components/Header';
 import LectureCard from '../components/LectureCard';
-import AboutModal from '../components/AboutModal';
+import SettingsModal from '../components/SettingsModal';
 
 // Dữ liệu mẫu bài giảng nếu chưa kết nối server
 const SAMPLE_LECTURES = [
@@ -101,7 +101,7 @@ export default function HomeScreen({ onNavigate }) {
   const [recentLectures, setRecentLectures] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [serverStatus, setServerStatus] = useState({ online: false });
-  const [aboutModalVisible, setAboutModalVisible] = useState(false);
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
   useEffect(() => {
     checkHealthAndFetchHistory();
@@ -178,6 +178,36 @@ export default function HomeScreen({ onNavigate }) {
           // Fallback dùng sample
           onNavigate('SyncPlayer', { lecture: SAMPLE_LECTURES[0] });
         });
+    }
+  };
+
+  const handleDeleteLecture = (lecture) => {
+    const confirmDelete = async () => {
+      // Cập nhật UI ngay lập tức (Optimistic UI)
+      setRecentLectures((prev) => prev.filter((item) => item.video_url !== lecture.video_url));
+
+      // Gọi xóa trên Server Cloud Firestore & Local Storage
+      try {
+        await apiService.deleteLecture(lecture.video_url);
+      } catch (err) {
+        console.warn('Lỗi khi xóa bài giảng:', err);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      const ok = window.confirm(`Bạn có chắc chắn muốn xóa bài giảng "${lecture.title || 'này'}" không?`);
+      if (ok) {
+        confirmDelete();
+      }
+    } else {
+      Alert.alert(
+        'Xác nhận xóa bài giảng',
+        `Bạn có chắc chắn muốn xóa bài giảng "${lecture.title || 'này'}" khỏi danh sách?`,
+        [
+          { text: 'Hủy', style: 'cancel' },
+          { text: 'Xóa', style: 'destructive', onPress: confirmDelete },
+        ]
+      );
     }
   };
 
@@ -349,9 +379,9 @@ export default function HomeScreen({ onNavigate }) {
   return (
     <View style={styles.container}>
       <Header
-        title="LECTURE AI CAPTION"
+        title="PHỤ ĐỀ BÀI GIẢNG AI"
         serverStatus={serverStatus}
-        onOpenSettings={() => setAboutModalVisible(true)}
+        onOpenSettings={() => setSettingsModalVisible(true)}
       />
 
       <ScrollView
@@ -486,29 +516,6 @@ export default function HomeScreen({ onNavigate }) {
           </View>
         </View>
 
-        {/* Khối Hoạt động Trực tiếp Giảng đường */}
-        <View style={styles.cardSection}>
-          <Text style={styles.sectionDividerText}>─── HOẶC HỌC TẠI GIẢNG ĐƯỜNG TRỰC TIẾP ───</Text>
-
-          <TouchableOpacity
-            style={styles.liveCaptionBtn}
-            onPress={() => onNavigate('LiveCaption')}
-            activeOpacity={0.85}
-          >
-            <View style={styles.liveCaptionContent}>
-              <View style={styles.micCircle}>
-                <Text style={styles.micIcon}>🎙️</Text>
-              </View>
-              <View style={styles.liveCaptionTexts}>
-                <Text style={styles.liveCaptionTitle}>BẬT LIVE-CAPTION QUA MICRO</Text>
-                <Text style={styles.liveCaptionDesc}>
-                  Nhận diện lời thầy cô theo thời gian thực trực tiếp trên màn hình
-                </Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-        </View>
-
         {/* Danh sách Bài giảng Gần đây */}
         <View style={styles.cardSection}>
           <View style={styles.recentHeaderRow}>
@@ -523,15 +530,18 @@ export default function HomeScreen({ onNavigate }) {
               key={`${lecture.video_url}_${idx}`}
               lecture={lecture}
               onPress={handleSelectLecture}
+              onDelete={handleDeleteLecture}
             />
           ))}
         </View>
       </ScrollView>
 
-      {/* Modal Thông tin đồ án LHU */}
-      <AboutModal
-        visible={aboutModalVisible}
-        onClose={() => setAboutModalVisible(false)}
+      {/* Modal Cài đặt hệ thống */}
+      <SettingsModal
+        visible={settingsModalVisible}
+        onClose={() => setSettingsModalVisible(false)}
+        onSaved={checkHealthAndFetchHistory}
+        onClearedHistory={checkHealthAndFetchHistory}
       />
     </View>
   );
@@ -660,54 +670,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '500',
-  },
-  sectionDividerText: {
-    textAlign: 'center',
-    fontSize: 11,
-    color: colors.textMuted,
-    marginVertical: spacing.sm,
-    letterSpacing: 0.5,
-  },
-  liveCaptionBtn: {
-    backgroundColor: colors.card,
-    borderRadius: borderRadius.lg,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: '#3B82F6',
-    shadowColor: '#3B82F6',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-  },
-  liveCaptionContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  micCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(59, 130, 246, 0.15)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.md,
-  },
-  micIcon: {
-    fontSize: 22,
-  },
-  liveCaptionTexts: {
-    flex: 1,
-  },
-  liveCaptionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 3,
-  },
-  liveCaptionDesc: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    lineHeight: 16,
   },
   uploadBtn: {
     backgroundColor: 'rgba(6, 182, 212, 0.15)',

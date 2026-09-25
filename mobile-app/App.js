@@ -1,14 +1,19 @@
-import React, { useState } from 'react';
-import { StyleSheet, StatusBar, View } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, StatusBar, View, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from './src/constants/theme';
 import HomeScreen from './src/screens/HomeScreen';
 import SyncPlayerScreen from './src/screens/SyncPlayerScreen';
-import LiveCaptionScreen from './src/screens/LiveCaptionScreen';
 
 export default function App() {
   const [currentRoute, setCurrentRoute] = useState('Home');
   const [routeParams, setRouteParams] = useState({});
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.title = 'PHỤ ĐỀ BÀI GIẢNG AI';
+    }
+  }, []);
 
   const handleNavigate = (route, params = {}) => {
     setRouteParams(params);
@@ -30,8 +35,6 @@ export default function App() {
           {currentRoute === 'SyncPlayer' && (
             <SyncPlayerScreen lecture={routeParams.lecture} onBack={handleBack} />
           )}
-
-          {currentRoute === 'LiveCaption' && <LiveCaptionScreen onBack={handleBack} />}
         </View>
       </SafeAreaView>
     </SafeAreaProvider>

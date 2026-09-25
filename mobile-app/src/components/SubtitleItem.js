@@ -26,6 +26,26 @@ export default function SubtitleItem({ segment, isActive, onSeek, subMode = 'bil
     mainText = segment.text;
   }
 
+  const handleSpeak = (e) => {
+    if (e && e.stopPropagation) e.stopPropagation();
+    const textToSpeak = segment.original_text || segment.text;
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/.test(textToSpeak)) {
+        utterance.lang = 'ja-JP';
+      } else if (/[\uac00-\ud7af]/.test(textToSpeak)) {
+        utterance.lang = 'ko-KR';
+      } else if (/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(textToSpeak)) {
+        utterance.lang = 'vi-VN';
+      } else {
+        utterance.lang = 'en-US';
+      }
+      utterance.rate = 0.95;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
   return (
     <TouchableOpacity
       style={[
@@ -40,6 +60,13 @@ export default function SubtitleItem({ segment, isActive, onSeek, subMode = 'bil
           <Text style={[styles.timeText, isActive && styles.activeTimeText]}>
             [{formatTime(segment.start)} - {formatTime(segment.end)}]
           </Text>
+          <TouchableOpacity
+            style={styles.speakerBtn}
+            onPress={handleSpeak}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.speakerIcon}>🔊</Text>
+          </TouchableOpacity>
         </View>
         {isActive && (
           <View style={styles.activeBadge}>
@@ -99,6 +126,16 @@ const styles = StyleSheet.create({
   },
   activeTimeText: {
     color: colors.primaryLight,
+  },
+  speakerBtn: {
+    marginLeft: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: borderRadius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  speakerIcon: {
+    fontSize: 11,
   },
   activeBadge: {
     backgroundColor: 'rgba(253, 224, 71, 0.15)',

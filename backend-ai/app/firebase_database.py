@@ -79,6 +79,17 @@ class FirebaseService:
             if doc.exists:
                 data = doc.to_dict()
                 logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE: {video_url} (Tiết kiệm 100% Token!)")
+                if "quiz" in data and isinstance(data["quiz"], list):
+                    data["quiz"] = [
+                        item if isinstance(item, dict) else {
+                            "question": str(item).strip(),
+                            "options": ["A. Hoàn toàn đồng ý", "B. Cần thêm cơ sở", "C. Không đồng ý", "D. Ý kiến khác"],
+                            "correct_answer": "A",
+                            "answer": "A",
+                            "explanation": "Câu hỏi ôn tập từ bài giảng."
+                        }
+                        for item in data["quiz"]
+                    ]
                 return data
         except Exception as e:
             logger.warning(f"Lỗi tra cứu Firebase Cache: {e}")
@@ -121,6 +132,17 @@ class FirebaseService:
             history = []
             for doc in docs:
                 data = doc.to_dict()
+                raw_q = data.get("quiz", [])
+                clean_q = [
+                    item if isinstance(item, dict) else {
+                        "question": str(item).strip(),
+                        "options": ["A. Hoàn toàn đồng ý", "B. Cần thêm cơ sở", "C. Không đồng ý", "D. Ý kiến khác"],
+                        "correct_answer": "A",
+                        "answer": "A",
+                        "explanation": "Câu hỏi ôn tập từ bài giảng."
+                    }
+                    for item in raw_q
+                ] if isinstance(raw_q, list) else []
                 history.append({
                     "video_url": data.get("video_url"),
                     "title": data.get("title"),
@@ -130,11 +152,28 @@ class FirebaseService:
                     "segments": data.get("segments", []),
                     "key_points": data.get("key_points", []),
                     "formulas_and_terms": data.get("formulas_and_terms", []),
-                    "quiz": data.get("quiz", [])
+                    "quiz": clean_q
                 })
             return history
         except Exception as e:
             logger.warning(f"Lỗi lấy lịch sử Firebase: {e}")
             return []
 
+    def delete_lecture(self, video_url: str) -> bool:
+        """Xóa bài giảng khỏi Firebase Firestore"""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return False
+
+        try:
+            doc_id = self.get_document_id(video_url)
+            self.db.collection("lectures").document(doc_id).delete()
+            logger.info(f"Đã xóa thành công bài giảng khỏi Firebase Firestore [ID: {doc_id}]")
+            return True
+        except Exception as e:
+            logger.warning(f"Lỗi khi xóa bài giảng khỏi Firebase Firestore: {e}")
+            return False
+
 firebase_service = FirebaseService()
+

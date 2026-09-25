@@ -197,6 +197,40 @@ class ApiService {
     }
     return [];
   }
+
+  async clearLocalHistory() {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.RECENT_LECTURES);
+      return true;
+    } catch (e) {
+      console.warn('Lỗi xóa local history:', e);
+      return false;
+    }
+  }
+
+  async deleteLecture(videoUrl) {
+    if (!videoUrl) return false;
+    // 1. Xóa trên Cloud Firestore qua Backend
+    try {
+      const baseUrl = await this.getBaseUrl();
+      await fetch(`${baseUrl}/api/history?video_url=${encodeURIComponent(videoUrl)}`, {
+        method: 'DELETE',
+      });
+    } catch (e) {
+      console.warn('Lỗi gọi xóa bài giảng trên server:', e);
+    }
+
+    // 2. Xóa trong Local AsyncStorage
+    try {
+      const history = await this.getLocalHistory();
+      const filtered = history.filter((item) => item.video_url !== videoUrl);
+      await AsyncStorage.setItem(STORAGE_KEYS.RECENT_LECTURES, JSON.stringify(filtered));
+    } catch (e) {
+      console.warn('Lỗi xóa bài giảng trong local storage:', e);
+    }
+
+    return true;
+  }
 }
 
 export const apiService = new ApiService();
