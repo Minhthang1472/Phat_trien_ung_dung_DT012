@@ -42,3 +42,5 @@ class ProcessVideoResponse(BaseModel):
     key_points: Optional[List[str]] = []
     formulas_and_terms: Optional[List[str]] = []
     quiz: Optional[List[dict]] = []
+    mindmap: Optional[dict] = None
+    exercises: Optional[List[dict]] = []

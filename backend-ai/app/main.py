@@ -15,7 +15,7 @@ from app.firebase_database import firebase_service
 from app.models.schemas import ProcessVideoRequest, ProcessVideoResponse, SubtitleSegment, LookaheadSubtitleRequest, BurnSubtitlesRequest
 from app.services.audio_service import audio_service
 from app.services.whisper_service import whisper_service
-from app.services.summary_service import summary_service, normalize_quiz
+from app.services.summary_service import summary_service, normalize_quiz, normalize_mindmap, normalize_exercises
 from app.services.translation_service import translation_service
 from app.services.subtitle_exporter import subtitle_exporter
 from app.services.subtitle_parser import parse_subtitle
@@ -84,6 +84,16 @@ async def process_video(request: ProcessVideoRequest):
     cached_fb = firebase_service.get_lecture_cache(url)
     if cached_fb:
         cached_fb["quiz"] = normalize_quiz(cached_fb.get("quiz", []))
+        cached_fb["mindmap"] = normalize_mindmap(
+            cached_fb.get("mindmap"),
+            default_title=cached_fb.get("title", ""),
+            key_points=cached_fb.get("key_points"),
+            terms=cached_fb.get("formulas_and_terms")
+        )
+        cached_fb["exercises"] = normalize_exercises(
+            cached_fb.get("exercises"),
+            key_points=cached_fb.get("key_points")
+        )
         cached_lang = (cached_fb.get("language") or "").lower().strip()
         segs = cached_fb.get("segments", [])
         # Nếu cache đã đúng ngôn ngữ đích và đã có tiếng Việt
@@ -164,7 +174,9 @@ async def process_video(request: ProcessVideoRequest):
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
-        "quiz": normalize_quiz(summary_data.get("quiz", []))
+        "quiz": normalize_quiz(summary_data.get("quiz", [])),
+        "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=audio_info["title"], key_points=summary_data.get("key_points")),
+        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points"))
     }
 
     # 6. Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
@@ -234,14 +246,32 @@ async def upload_video(
     include_quiz: Optional[bool] = Form(True, description="Tùy chọn tạo bài trắc nghiệm hay không")
 ):
     """
-    Tiếp nhận file ghi âm hoặc video bài giảng tải trực tiếp từ máy tính
+    Tiếp nhận file ghi âm hoặc video bài giảng tải trực tiếp từ máy tính (Giới hạn tối đa 150MB)
     """
+    MAX_MEDIA_UPLOAD_SIZE = 150 * 1024 * 1024  # 150MB
+    ALLOWED_MEDIA_EXTENSIONS = (
+        ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v",
+        ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"
+    )
     try:
-        contents = await file.read()
-        # Lưu file để có thể phát trực tiếp trên Web / App
         safe_fname = os.path.basename(file.filename or "lecture.mp4")
-        if not safe_fname.lower().endswith((".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")):
-            raise HTTPException(status_code=415, detail="Chỉ hỗ trợ file video để tạo MP4 phụ đề.")
+        if not safe_fname.lower().endswith(ALLOWED_MEDIA_EXTENSIONS):
+            raise HTTPException(
+                status_code=415,
+                detail="Chỉ hỗ trợ file video hoặc ghi âm (.mp4, .mov, .mkv, .webm, .avi, .mp3, .wav, .m4a)."
+            )
+
+        contents = await file.read()
+        if not contents or len(contents) == 0:
+            raise HTTPException(status_code=400, detail="File tải lên bị rỗng. Vui lòng chọn file hợp lệ.")
+        if len(contents) > MAX_MEDIA_UPLOAD_SIZE:
+            size_mb = len(contents) / (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail=f"Dung lượng file ({size_mb:.1f}MB) vượt quá giới hạn 150MB. Vui lòng nén file hoặc chọn file nhỏ hơn."
+            )
+
+        # Lưu file để có thể phát trực tiếp trên Web / App
         unique_name = f"{uuid.uuid4().hex[:12]}_{safe_fname}"
         saved_file_path = os.path.join(UPLOAD_DIR, unique_name)
         with open(saved_file_path, "wb") as f_saved:
@@ -305,7 +335,9 @@ async def upload_video(
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
-        "quiz": normalize_quiz(summary_data.get("quiz", []))
+        "quiz": normalize_quiz(summary_data.get("quiz", [])),
+        "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=audio_info["title"], key_points=summary_data.get("key_points")),
+        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points"))
     }
 
     # Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
@@ -430,6 +462,8 @@ async def process_subtitle_file(
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
         "quiz": normalize_quiz(summary_data.get("quiz", [])),
+        "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=title or os.path.splitext(filename)[0], key_points=summary_data.get("key_points")),
+        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
     }
     firebase_service.save_lecture_cache(lecture_url, result)
     return result
@@ -535,3 +569,252 @@ async def text_to_speech(
         logger.warning(f"Lỗi khi tải âm thanh từ Google TTS: {e}")
 
     raise HTTPException(status_code=502, detail="Không thể tạo âm thanh phát âm lúc này.")
+
+
+# ==============================================================================
+# GIAI ĐOẠN 2: NẠP ĐỒNG THỜI VIDEO + PHỤ ĐỀ CÓ SẴN (BỎ QUA WHISPER)
+# ==============================================================================
+
+@app.post("/api/video/pair", response_model=ProcessVideoResponse)
+async def pair_video_and_subtitles(
+    subtitle_file: UploadFile = File(..., description="Tệp phụ đề .srt hoặc .vtt có sẵn"),
+    video_file: Optional[UploadFile] = File(None, description="Tệp video/audio tải lên kèm"),
+    video_url: Optional[str] = Form(None, description="Đường link video YouTube hoặc LMS"),
+    title: Optional[str] = Form(None, description="Tiêu đề bài giảng"),
+    target_language: Optional[str] = Form("vi", description="Ngôn ngữ dịch phụ đề"),
+    include_quiz: Optional[bool] = Form(True)
+):
+    """
+    Giai đoạn 2: Nạp ghép đôi 1 Video và 1 file Phụ đề có sẵn
+    Hệ thống bỏ qua hoàn toàn bước Whisper, hiển thị ngay lập tức và sinh Mindmap/Bài tập
+    """
+    sub_fname = subtitle_file.filename or "subtitles.srt"
+    if not sub_fname.lower().endswith((".srt", ".vtt")):
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file phụ đề định dạng .srt hoặc .vtt.")
+
+    sub_bytes = await subtitle_file.read()
+    if not sub_bytes or len(sub_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Tệp phụ đề rỗng hoặc vượt quá giới hạn 10MB.")
+
+    segments = parse_subtitle(sub_bytes)
+    if not segments:
+        raise HTTPException(status_code=400, detail="Không trích xuất được mốc thời gian từ file phụ đề.")
+
+    media_stream_url = None
+    lecture_url = (video_url or "").strip() or f"paired_file://{sub_fname}"
+
+    if video_file:
+        v_name = os.path.basename(video_file.filename or "paired_lecture.mp4")
+        v_bytes = await video_file.read()
+        if len(v_bytes) > 150 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File video tải kèm vượt quá giới hạn 150MB.")
+        unique_name = f"{uuid.uuid4().hex[:12]}_{v_name}"
+        saved_path = os.path.join(UPLOAD_DIR, unique_name)
+        with open(saved_path, "wb") as f_v:
+            f_v.write(v_bytes)
+        media_stream_url = f"/uploads/{unique_name}"
+        lecture_url = f"local_file://{v_name}"
+
+    transcript = " ".join(s.get("text", "") for s in segments)
+    detected_language = translation_service.detect_language(transcript)
+    target_lang = (target_language or "vi").lower().strip()
+
+    if target_lang != detected_language:
+        segments = translation_service.translate_segments(
+            segments,
+            source_lang=detected_language,
+            target_lang=target_lang
+        )
+    else:
+        for s in segments:
+            s["translated_text"] = s.get("text", "")
+
+    summary_data = summary_service.summarize_transcript(
+        transcript,
+        include_quiz=True if include_quiz is None else include_quiz
+    )
+
+    max_duration = max((float(s.get("end", 0)) for s in segments), default=300.0)
+    final_title = title or (video_file.filename if video_file else os.path.splitext(sub_fname)[0])
+
+    result = {
+        "video_url": lecture_url,
+        "media_url": media_stream_url,
+        "title": final_title,
+        "duration_seconds": max_duration,
+        "language": target_lang,
+        "detected_language": detected_language,
+        "segments": segments,
+        "summary": summary_data.get("summary", ""),
+        "key_points": summary_data.get("key_points", []),
+        "formulas_and_terms": summary_data.get("formulas_and_terms", []),
+        "quiz": normalize_quiz(summary_data.get("quiz", [])),
+        "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=final_title, key_points=summary_data.get("key_points")),
+        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points"))
+    }
+
+    firebase_service.save_lecture_cache(lecture_url, result)
+    return result
+
+
+# ==============================================================================
+# GIAI ĐOẠN 3: XỬ LÝ SONG SONG NGẦN CHO VIDEO DÀI (BACKGROUND CHUNK STREAMING)
+# ==============================================================================
+
+import threading
+
+streaming_jobs = {}
+
+def _run_background_transcription(job_id: str, audio_path: str, target_lang: str, src_lang: str):
+    """Worker tiến trình ngầm nhận diện toàn bộ audio và sinh Mindmap/Quiz mà không khóa UI"""
+    try:
+        segments, detected = whisper_service.transcribe_audio(
+            audio_path=audio_path,
+            language=None if src_lang == "auto" else src_lang,
+            task="transcribe"
+        )
+        if target_lang != detected:
+            segments = translation_service.translate_segments(
+                segments,
+                source_lang=detected,
+                target_lang=target_lang
+            )
+        else:
+            for s in segments:
+                s["translated_text"] = s.get("text", "")
+
+        transcript = " ".join(s.get("text", "") for s in segments)
+        summary_data = summary_service.summarize_transcript(transcript, include_quiz=True)
+
+        job = streaming_jobs.get(job_id, {})
+        job["segments"] = segments
+        job["detected_language"] = detected
+        job["summary"] = summary_data.get("summary", "")
+        job["key_points"] = summary_data.get("key_points", [])
+        job["formulas_and_terms"] = summary_data.get("formulas_and_terms", [])
+        job["quiz"] = normalize_quiz(summary_data.get("quiz", []))
+        job["mindmap"] = summary_data.get("mindmap") or normalize_mindmap(None, default_title=job.get("title", ""), key_points=job.get("key_points"))
+        job["exercises"] = summary_data.get("exercises") or normalize_exercises(None, key_points=job.get("key_points"))
+        job["status"] = "completed"
+        job["progress"] = 100
+
+        full_res = {
+            "video_url": job["video_url"],
+            "title": job["title"],
+            "duration_seconds": job["duration_seconds"],
+            "language": target_lang,
+            "detected_language": detected,
+            "segments": segments,
+            "summary": job["summary"],
+            "key_points": job["key_points"],
+            "formulas_and_terms": job["formulas_and_terms"],
+            "quiz": job["quiz"],
+            "mindmap": job["mindmap"],
+            "exercises": job["exercises"]
+        }
+        firebase_service.save_lecture_cache(job["video_url"], full_res)
+    except Exception as e:
+        logger.error(f"Lỗi worker xử lý ngầm video: {e}")
+        if job_id in streaming_jobs:
+            streaming_jobs[job_id]["status"] = "failed"
+            streaming_jobs[job_id]["error"] = str(e)
+    finally:
+        if os.path.exists(audio_path):
+            try: os.remove(audio_path)
+            except Exception: pass
+
+
+@app.post("/api/video/stream-init")
+async def init_streaming_video(request: ProcessVideoRequest):
+    """
+    Giai đoạn 3: Bắt đầu phát video tức thì & chạy ngầm AI xử lý các phân đoạn tiếp theo
+    """
+    url = request.video_url.strip()
+    target_lang = (request.target_language or "vi").lower().strip()
+
+    # Kiểm tra Firestore Cache nếu đã từng xử lý
+    cached = firebase_service.get_lecture_cache(url)
+    if cached:
+        cached["is_streaming"] = False
+        cached["mindmap"] = normalize_mindmap(cached.get("mindmap"), default_title=cached.get("title", ""), key_points=cached.get("key_points"))
+        cached["exercises"] = normalize_exercises(cached.get("exercises"), key_points=cached.get("key_points"))
+        return cached
+
+    # Tải audio stream
+    audio_info = audio_service.extract_audio_from_url(url, duration_limit_sec=None)
+    audio_path = audio_info["audio_path"]
+    job_id = uuid.uuid4().hex[:12]
+
+    # Lookahead cực nhanh 30s đầu để người dùng có thể xem phụ đề ngay
+    fast_segments = []
+    try:
+        win_info = audio_service.extract_audio_from_url(url, duration_limit_sec=30)
+        fast_segments, det = whisper_service.transcribe_audio(audio_path=win_info["audio_path"], task="transcribe")
+        if target_lang != det:
+            fast_segments = translation_service.translate_segments(fast_segments, source_lang=det, target_lang=target_lang)
+        if os.path.exists(win_info["audio_path"]):
+            try: os.remove(win_info["audio_path"])
+            except Exception: pass
+    except Exception as e:
+        logger.warning(f"Lỗi lookahead khởi đầu: {e}")
+
+    streaming_jobs[job_id] = {
+        "job_id": job_id,
+        "video_url": url,
+        "title": audio_info["title"],
+        "duration_seconds": audio_info["duration"],
+        "status": "processing",
+        "progress": 30,
+        "segments": fast_segments,
+        "language": target_lang
+    }
+
+    # Kích hoạt worker chạy ngầm song song
+    worker = threading.Thread(
+        target=_run_background_transcription,
+        args=(job_id, audio_path, target_lang, request.source_language or "auto"),
+        daemon=True
+    )
+    worker.start()
+
+    return {
+        "job_id": job_id,
+        "video_url": url,
+        "title": audio_info["title"],
+        "duration_seconds": audio_info["duration"],
+        "language": target_lang,
+        "segments": fast_segments,
+        "is_streaming": True,
+        "status": "processing",
+        "progress": 30,
+        "summary": "AI đang bóc tách song song bài giảng ở chế độ nền trong khi bạn theo dõi video...",
+        "key_points": ["Hệ thống streaming song song đang hoạt động"],
+        "formulas_and_terms": [],
+        "quiz": [],
+        "mindmap": normalize_mindmap(None, default_title=audio_info["title"]),
+        "exercises": []
+    }
+
+
+@app.get("/api/video/stream-status")
+async def get_stream_status(job_id: str = Query(..., description="ID của phiên streaming")):
+    """
+    Kiểm tra trạng thái tiến trình xử lý ngầm và nhận danh sách phụ đề mới nhất
+    """
+    job = streaming_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiên xử lý nền.")
+
+    return {
+        "job_id": job_id,
+        "status": job.get("status"),
+        "progress": job.get("progress", 0),
+        "segments": job.get("segments", []),
+        "summary": job.get("summary"),
+        "key_points": job.get("key_points", []),
+        "formulas_and_terms": job.get("formulas_and_terms", []),
+        "quiz": job.get("quiz", []),
+        "mindmap": job.get("mindmap"),
+        "exercises": job.get("exercises", []),
+        "is_completed": job.get("status") == "completed"
+    }

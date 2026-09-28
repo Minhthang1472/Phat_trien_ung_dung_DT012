@@ -239,11 +239,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // 6. Xử lý nạp file phụ đề có sẵn
+  // 6. Xử lý nạp file phụ đề có sẵn (Giới hạn tối đa 10MB)
   btnProcessSubtitle.addEventListener("click", async () => {
     const file = subtitleFile.files && subtitleFile.files[0];
     if (!file) {
       alert("Vui lòng chọn một file phụ đề .srt hoặc .vtt trước!");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert(`Dung lượng file phụ đề (${(file.size / (1024 * 1024)).toFixed(1)}MB) vượt quá giới hạn cho phép (10MB).`);
       return;
     }
     if (!currentTab || !currentTab.url) return;

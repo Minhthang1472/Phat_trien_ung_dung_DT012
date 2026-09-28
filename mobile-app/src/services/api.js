@@ -114,6 +114,115 @@ class ApiService {
     return data;
   }
 
+  async uploadWithProgress(endpoint, formData, onProgress) {
+    const baseUrl = await this.getBaseUrl();
+    const fullUrl = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', fullUrl);
+      xhr.setRequestHeader('Accept', 'application/json');
+
+      if (xhr.upload && onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.min(100, Math.round((event.loaded / event.total) * 100));
+            onProgress(percent, event.loaded, event.total);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            resolve(data);
+          } catch (_) {
+            resolve(xhr.responseText);
+          }
+        } else {
+          let errMsg = `Lỗi máy chủ (${xhr.status})`;
+          try {
+            const errObj = JSON.parse(xhr.responseText);
+            errMsg = errObj.detail || errMsg;
+          } catch (_) {
+            if (xhr.responseText) errMsg = xhr.responseText.slice(0, 200);
+          }
+          reject(new Error(errMsg));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('Lỗi kết nối mạng khi tải dữ liệu lên máy chủ.'));
+      };
+
+      xhr.ontimeout = () => {
+        reject(new Error('Quá thời gian kết nối tải lên (Timeout).'));
+      };
+
+      xhr.send(formData);
+    });
+  }
+
+  async pairVideoAndSubtitles(subtitleFile, videoFile = null, videoUrl = '', targetLang = 'vi', includeQuiz = true) {
+    const baseUrl = await this.getBaseUrl();
+    const formData = new FormData();
+    formData.append('subtitle_file', subtitleFile);
+    if (videoFile) {
+      formData.append('video_file', videoFile);
+    }
+    if (videoUrl) {
+      formData.append('video_url', videoUrl);
+    }
+    formData.append('target_language', targetLang);
+    formData.append('include_quiz', includeQuiz ? 'true' : 'false');
+
+    const response = await fetch(`${baseUrl}/api/video/pair`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      let errMsg = `Lỗi HTTP ${response.status}`;
+      try {
+        const body = await response.json();
+        errMsg = body.detail || errMsg;
+      } catch (_) {}
+      throw new Error(errMsg);
+    }
+    const data = await response.json();
+    await this.saveToLocalHistory(data);
+    return data;
+  }
+
+  async streamInit(videoUrl, targetLang = 'vi', sourceLang = 'auto') {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/video/stream-init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_url: videoUrl,
+        target_language: targetLang,
+        source_language: sourceLang,
+      }),
+    });
+    if (!response.ok) {
+      let errMsg = `Lỗi HTTP ${response.status}`;
+      try {
+        const body = await response.json();
+        errMsg = body.detail || errMsg;
+      } catch (_) {}
+      throw new Error(errMsg);
+    }
+    return await response.json();
+  }
+
+  async getStreamStatus(jobId) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/video/stream-status?job_id=${encodeURIComponent(jobId)}`);
+    if (!response.ok) return null;
+    return await response.json();
+  }
+
   async burnSubtitlesIntoVideo(mediaUrl, segments) {
     const baseUrl = await this.getBaseUrl();
     const response = await fetch(`${baseUrl}/api/video/burn-subtitles`, {

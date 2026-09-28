@@ -7,7 +7,7 @@ from app.core.config import settings
 logger = logging.getLogger("uvicorn")
 
 def normalize_quiz(raw_quiz) -> list:
-    """Đảm bảo mọi phần tử trong quiz đều là dictionary hợp lệ theo schema Pydantic."""
+    """Đảm bảo mọi phần tử trong quiz đều là dictionary hợp lệ theo schema Pydantic, có timestamp_sec."""
     if not isinstance(raw_quiz, list):
         return []
     clean_quiz = []
@@ -19,12 +19,19 @@ def normalize_quiz(raw_quiz) -> list:
                 opts = ["A. Đúng", "B. Sai", "C. Cần xem xét thêm", "D. Ý kiến khác"]
             ans = item.get("correct_answer") or item.get("answer") or "A"
             exp = item.get("explanation") or "Dựa trên nội dung bài giảng."
+            raw_ts = item.get("timestamp_sec") or item.get("time_sec") or item.get("timestamp")
+            try:
+                ts_val = round(float(raw_ts), 1) if raw_ts is not None else None
+            except (ValueError, TypeError):
+                ts_val = None
+
             clean_quiz.append({
                 "question": str(q_text).strip(),
                 "options": [str(o) for o in opts],
                 "correct_answer": str(ans).strip(),
                 "answer": str(ans).strip(),
-                "explanation": str(exp).strip()
+                "explanation": str(exp).strip(),
+                "timestamp_sec": ts_val
             })
         elif isinstance(item, str) and item.strip():
             # Nếu LLM trả về dạng chuỗi câu hỏi tự luận, tự động chuyển thành format trắc nghiệm chuẩn
@@ -38,9 +45,74 @@ def normalize_quiz(raw_quiz) -> list:
                 ],
                 "correct_answer": "A",
                 "answer": "A",
-                "explanation": "Câu hỏi gợi mở củng cố kiến thức từ bài giảng."
+                "explanation": "Câu hỏi gợi mở củng cố kiến thức từ bài giảng.",
+                "timestamp_sec": None
             })
     return clean_quiz
+
+
+def normalize_mindmap(raw_map, default_title="Chủ đề bài học", key_points=None, terms=None) -> dict:
+    """Đảm bảo cấu trúc cây phân cấp (Mindmap) hợp lệ với title và mảng children."""
+    if isinstance(raw_map, dict) and raw_map.get("title") and isinstance(raw_map.get("children"), list):
+        def clean_node(n):
+            title = str(n.get("title") or n.get("name") or "Nhánh kiến thức").strip()
+            raw_children = n.get("children") or []
+            clean_children = [clean_node(c) for c in raw_children if isinstance(c, dict)]
+            return {"title": title, "children": clean_children}
+        return clean_node(raw_map)
+
+    # Nếu AI chưa trả về mindmap, tự động trích xuất từ key_points & terms
+    kp = key_points or ["Khái niệm cốt lõi", "Quy trình phân tích", "Ý nghĩa ứng dụng"]
+    tm = terms or []
+    branches = []
+    for idx, p in enumerate(kp[:4]):
+        parts = p.split(":", 1)
+        b_title = parts[0].strip() if len(parts) > 1 else f"Luận điểm {idx+1}"
+        detail = parts[1].strip() if len(parts) > 1 else p.strip()
+        branches.append({
+            "title": b_title[:60],
+            "children": [{"title": detail[:90], "children": []}]
+        })
+    if tm:
+        branches.append({
+            "title": "Thuật ngữ & Công thức",
+            "children": [{"title": str(t)[:80], "children": []} for t in tm[:3]]
+        })
+
+    return {
+        "title": default_title[:50] if default_title else "Tổng quan bài học",
+        "children": branches
+    }
+
+
+def normalize_exercises(raw_exercises, key_points=None) -> list:
+    """Đảm bảo danh sách bài tập ôn luyện (Flashcards & Tự luận) đầy đủ và hợp lệ."""
+    if isinstance(raw_exercises, list) and len(raw_exercises) > 0:
+        clean = []
+        for item in raw_exercises:
+            if isinstance(item, dict):
+                clean.append({
+                    "question": str(item.get("question") or "Khái niệm trọng tâm?").strip(),
+                    "answer": str(item.get("answer") or "Tham khảo nội dung bài học.").strip(),
+                    "hint": str(item.get("hint") or "Xem lại phần tóm tắt lý thuyết.").strip()
+                })
+        if clean:
+            return clean
+
+    # Tự động tạo bài tập củng cố từ key_points
+    kp = key_points or [
+        "Nắm vững các định nghĩa và thuật ngữ cốt lõi được giảng dạy trong video.",
+        "Hiểu rõ phương pháp luận và cách áp dụng vào bài tập thực tế."
+    ]
+    exercises = []
+    for idx, point in enumerate(kp[:3]):
+        q_topic = point.split(":")[0] if ":" in point else f"Nội dung trọng tâm {idx+1}"
+        exercises.append({
+            "question": f"Hãy giải thích và trình bày ý nghĩa của '{q_topic}' trong bài giảng?",
+            "answer": point,
+            "hint": "Căn cứ vào phần giải thích chính của giảng viên."
+        })
+    return exercises
 
 
 class SummaryService:
@@ -91,18 +163,23 @@ class SummaryService:
                 }
             ] if include_quiz else []
 
+            default_kp = [
+                "Bóc tách âm thanh và nhận diện giọng nói AI hoàn tất.",
+                "Phụ đề đồng bộ mốc thời gian đã sẵn sàng tra cứu và xuất file.",
+                "Để kích hoạt phân tích LLM thông minh và trắc nghiệm, cấu hình GEMINI_API_KEY trong file .env."
+            ]
+            default_terms = [
+                "Speech-to-Text (ASR): Nhận diện lời nói thành phụ đề",
+                "Timestamps Alignment: Đồng bộ mốc thời gian giây"
+            ]
+
             return {
                 "summary": f"Tóm tắt sơ lược bài học: {preview}",
-                "key_points": [
-                    "Bóc tách âm thanh và nhận diện giọng nói AI hoàn tất.",
-                    "Phụ đề đồng bộ mốc thời gian đã sẵn sàng tra cứu và xuất file.",
-                    "Để kích hoạt phân tích LLM thông minh và trắc nghiệm, cấu hình GEMINI_API_KEY trong file .env."
-                ],
-                "formulas_and_terms": [
-                    "Speech-to-Text (ASR): Nhận diện lời nói thành phụ đề",
-                    "Timestamps Alignment: Đồng bộ mốc thời gian giây"
-                ],
-                "quiz": normalize_quiz(default_quiz)
+                "key_points": default_kp,
+                "formulas_and_terms": default_terms,
+                "quiz": normalize_quiz(default_quiz),
+                "mindmap": normalize_mindmap(None, default_title="Sơ đồ tư duy bài giảng", key_points=default_kp, terms=default_terms),
+                "exercises": normalize_exercises(None, key_points=default_kp)
             }
 
         quiz_schema = """
@@ -111,29 +188,61 @@ class SummaryService:
                     "question": "Nội dung câu hỏi trắc nghiệm tự kiểm tra kiến thức?",
                     "options": ["A. Lựa chọn 1", "B. Lựa chọn 2", "C. Lựa chọn 3", "D. Lựa chọn 4"],
                     "correct_answer": "A",
-                    "explanation": "Giải thích ngắn gọn lý do đúng"
+                    "explanation": "Giải thích ngắn gọn lý do đúng",
+                    "timestamp_sec": 60
                 }
-            ]
-        """ if include_quiz else '"quiz": []'
+            ],
+        """ if include_quiz else '"quiz": [],'
 
         prompt = f"""
-        Bạn là một trợ lý giáo dục AI chuyên nghiệp. Dưới đây là nội dung phụ đề bài giảng:
+        Bạn là một chuyên gia giáo dục và sư phạm AI xuất sắc. Dưới đây là toàn bộ phụ đề bài giảng:
         ---
         {full_text}
         ---
-        Hãy phân tích nội dung trên và trả về kết quả ĐÚNG ĐỊNH DẠNG JSON sau (LƯU Ý: quiz phải là mảng các object có chứa question, options, correct_answer, explanation - KHÔNG ĐƯỢC trả về mảng chuỗi string):
+        Hãy phân tích chuyên sâu nội dung trên và trả về kết quả ĐÚNG ĐỊNH DẠNG JSON sau:
         {{
             "summary": "Đoạn văn 3-5 câu tóm tắt tổng quan bài học một cách súc tích",
             "key_points": [
-                "Điểm cốt lõi thứ 1",
-                "Điểm cốt lõi thứ 2",
-                "Điểm cốt lõi thứ 3"
+                "Điểm cốt lõi thứ 1: giải thích ngắn",
+                "Điểm cốt lõi thứ 2: giải thích ngắn",
+                "Điểm cốt lõi thứ 3: giải thích ngắn"
             ],
             "formulas_and_terms": [
                 "Thuật ngữ hoặc công thức quan trọng 1",
                 "Thuật ngữ hoặc công thức quan trọng 2"
             ],
             {quiz_schema.strip()}
+            "mindmap": {{
+                "title": "Chủ đề trung tâm bài giảng",
+                "children": [
+                    {{
+                        "title": "Nhánh chính 1",
+                        "children": [
+                            {{ "title": "Luận điểm chi tiết 1.1" }},
+                            {{ "title": "Luận điểm chi tiết 1.2" }}
+                        ]
+                    }},
+                    {{
+                        "title": "Nhánh chính 2",
+                        "children": [
+                            {{ "title": "Luận điểm chi tiết 2.1" }},
+                            {{ "title": "Luận điểm chi tiết 2.2" }}
+                        ]
+                    }}
+                ]
+            }},
+            "exercises": [
+                {{
+                    "question": "Câu hỏi tự luận/củng cố kiến thức 1?",
+                    "answer": "Gợi ý câu trả lời chuẩn xác và đầy đủ",
+                    "hint": "Gợi ý ngắn gọn giúp người học tư duy"
+                }},
+                {{
+                    "question": "Câu hỏi tự luận/củng cố kiến thức 2?",
+                    "answer": "Gợi ý câu trả lời chuẩn xác và đầy đủ",
+                    "hint": "Gợi ý ngắn gọn"
+                }}
+            ]
         }}
         """
         def _clean_and_parse_json(raw_text: str) -> dict:
@@ -170,11 +279,15 @@ class SummaryService:
         def _call_model(m):
             response = m.generate_content(prompt)
             parsed = _clean_and_parse_json(response.text)
+            kp = parsed.get("key_points", [])
+            terms = parsed.get("formulas_and_terms", [])
             return {
                 "summary": parsed.get("summary", ""),
-                "key_points": parsed.get("key_points", []),
-                "formulas_and_terms": parsed.get("formulas_and_terms", []),
-                "quiz": normalize_quiz(parsed.get("quiz", []))
+                "key_points": kp,
+                "formulas_and_terms": terms,
+                "quiz": normalize_quiz(parsed.get("quiz", [])),
+                "mindmap": normalize_mindmap(parsed.get("mindmap"), default_title="Sơ đồ tư duy bài học", key_points=kp, terms=terms),
+                "exercises": normalize_exercises(parsed.get("exercises"), key_points=kp)
             }
 
         try:
@@ -187,11 +300,14 @@ class SummaryService:
                 except Exception as e2:
                     logger.error(f"Fallback gemini-3.8-flash cũng thất bại: {e2}")
             logger.error(f"Lỗi khi gọi LLM tóm tắt: {e1}")
+            fallback_kp = ["Bóc tách âm thanh thành công", "Nội dung bài giảng sẵn sàng"]
             return {
                 "summary": "Tóm tắt từ phụ đề: " + full_text[:200] + "...",
-                "key_points": ["Đã xử lý âm thanh thành công"],
+                "key_points": fallback_kp,
                 "formulas_and_terms": [],
-                "quiz": []
+                "quiz": [],
+                "mindmap": normalize_mindmap(None, default_title="Sơ đồ bài giảng", key_points=fallback_kp),
+                "exercises": normalize_exercises(None, key_points=fallback_kp)
             }
 
 summary_service = SummaryService()

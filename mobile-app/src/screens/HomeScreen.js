@@ -10,6 +10,7 @@ import {
   Alert,
   RefreshControl,
   Platform,
+  Modal,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
@@ -63,6 +64,44 @@ const SAMPLE_LECTURES = [
         explanation: 'SVM là giải thuật phân loại và hồi quy có giám sát rất phổ biến.',
       },
     ],
+    mindmap: {
+      title: 'Nhập môn Trí tuệ Nhân tạo',
+      children: [
+        {
+          title: 'Học máy có giám sát (Supervised Learning)',
+          children: [
+            { title: 'Tập dữ liệu huấn luyện có nhãn sẵn' },
+            { title: 'Phân loại email Spam và dự báo giá nhà' },
+          ],
+        },
+        {
+          title: 'Đánh giá mô hình & Ma trận nhầm lẫn',
+          children: [
+            { title: 'Confusion Matrix: TP, FP, TN, FN' },
+            { title: 'Chỉ số F1-Score khi dữ liệu Imbalanced' },
+          ],
+        },
+        {
+          title: 'Mạng nơ-ron nhân tạo (ANN)',
+          children: [
+            { title: 'Hàm kích hoạt phi tuyến ReLU' },
+            { title: 'Hàm mất mát Cross-Entropy Loss' },
+          ],
+        },
+      ],
+    },
+    exercises: [
+      {
+        question: 'Tại sao khi tập dữ liệu bị mất cân bằng (Imbalanced) lại không nên dùng Accuracy?',
+        answer: 'Vì mô hình có thể dự đoán 100% về lớp chiếm đa số và đạt Accuracy rất cao nhưng hoàn toàn vô dụng trên lớp thiểu số quan trọng.',
+        hint: 'Nghĩ về ví dụ bài toán phát hiện bệnh hiếm (chỉ 1% người mắc).',
+      },
+      {
+        question: 'Công thức F1-Score được tính như thế nào từ Precision và Recall?',
+        answer: 'F1 = 2 * (Precision * Recall) / (Precision + Recall), là trung bình điều hòa giữa Precision và Recall.',
+        hint: 'Trung bình điều hòa của 2 chỉ số.',
+      },
+    ],
   },
   {
     video_url: 'https://www.youtube.com/watch?v=sample2',
@@ -89,8 +128,38 @@ const SAMPLE_LECTURES = [
         explanation: 'Thrashing xảy ra khi tỷ lệ lỗi trang (Page Fault) quá cao, khiến OS liên tục nạp/xóa trang bộ nhớ.',
       },
     ],
+    mindmap: {
+      title: 'Kiến trúc Hệ điều hành',
+      children: [
+        {
+          title: 'Tiến trình (Process) & Luồng (Thread)',
+          children: [
+            { title: 'Chuyển ngữ cảnh (Context Switch)' },
+            { title: 'Không gian địa chỉ và luồng thực thi' },
+          ],
+        },
+        {
+          title: 'Bộ nhớ ảo & Phân trang',
+          children: [
+            { title: 'Bảng trang (Page Table)' },
+            { title: 'Lỗi trang (Page Fault) và hiện tượng Thrashing' },
+          ],
+        },
+      ],
+    },
+    exercises: [
+      {
+        question: 'Phân biệt sự khác nhau cơ bản giữa Process và Thread?',
+        answer: 'Process sở hữu không gian địa chỉ bộ nhớ độc lập, trong khi các Thread trong cùng một Process chia sẻ chung không gian bộ nhớ đó.',
+        hint: 'Liên quan đến việc chia sẻ bộ nhớ và chi phí tạo lập.',
+      },
+    ],
   },
 ];
+
+// Giới hạn dung lượng file tối đa (Giai đoạn 1)
+const MAX_VIDEO_SIZE = 150 * 1024 * 1024; // 150 MB cho Video / Audio
+const MAX_SUBTITLE_SIZE = 10 * 1024 * 1024; // 10 MB cho Phụ đề
 
 export default function HomeScreen({ onNavigate }) {
   const [videoUrl, setVideoUrl] = useState('');
@@ -98,6 +167,8 @@ export default function HomeScreen({ onNavigate }) {
   const [includeQuiz, setIncludeQuiz] = useState(true);
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(null); // null hoặc 0-100
+  const [uploadDetails, setUploadDetails] = useState({ name: '', size: '' });
   const [recentLectures, setRecentLectures] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [serverStatus, setServerStatus] = useState({ online: false });
@@ -220,7 +291,7 @@ export default function HomeScreen({ onNavigate }) {
           input = document.createElement('input');
           input.id = 'lecture-file-picker';
           input.type = 'file';
-          input.accept = 'video/*,audio/*,.mp4,.mp3,.wav,.m4a';
+          input.accept = 'video/*,audio/*,.mp4,.mp3,.wav,.m4a,.mov,.webm';
           input.style.display = 'none';
           document.body.appendChild(input);
         }
@@ -228,6 +299,17 @@ export default function HomeScreen({ onNavigate }) {
         input.onchange = async (e) => {
           const file = e.target.files && e.target.files[0];
           if (!file) return;
+
+          // 1. Kiểm tra dung lượng file Video/Audio (Tối đa 150MB)
+          if (file.size > MAX_VIDEO_SIZE) {
+            const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+            Alert.alert(
+              'File vượt quá giới hạn',
+              `Dung lượng file (${sizeMb} MB) vượt quá giới hạn cho phép (150 MB).\nVui lòng chọn video/audio ngắn hơn hoặc nén lại trước khi tải.`
+            );
+            input.value = '';
+            return;
+          }
 
           // Tạo URL phát trực tiếp từ bộ nhớ trình duyệt cho video/audio
           let localMediaUrl = null;
@@ -237,38 +319,34 @@ export default function HomeScreen({ onNavigate }) {
             }
           } catch (_) {}
 
-          setLoading(true);
-          setLoadingStep(`Đang tải file bài giảng lên AI...`);
+          const sizeStr = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+          setUploadDetails({ name: file.name, size: sizeStr });
+          setUploadProgress(0);
 
           try {
-            const baseUrl = await apiService.getBaseUrl();
             const formData = new FormData();
             formData.append('file', file);
             formData.append('target_language', targetLang);
             formData.append('include_quiz', includeQuiz ? 'true' : 'false');
 
-            setLoadingStep('AI đang bóc tách phụ đề & tóm tắt...');
-            const response = await fetch(`${baseUrl}/api/video/upload`, {
-              method: 'POST',
-              body: formData,
-            });
+            const data = await apiService.uploadWithProgress(
+              '/api/video/upload',
+              formData,
+              (percent) => {
+                setUploadProgress(percent);
+              }
+            );
 
-            if (!response.ok) {
-              const errBody = await response.text();
-              throw new Error(`Lỗi máy chủ (${response.status}): ${errBody || response.statusText}`);
-            }
-
-            const data = await response.json();
             if (localMediaUrl) {
               data.media_stream_url = localMediaUrl;
               data.media_mime_type = file.type || '';
             }
-            setLoading(false);
+            setUploadProgress(null);
             await apiService.saveLectureToLocal(data);
             await checkHealthAndFetchHistory();
             onNavigate('SyncPlayer', { lecture: data });
           } catch (uploadErr) {
-            setLoading(false);
+            setUploadProgress(null);
             Alert.alert('Không thể xử lý file', uploadErr.message);
           } finally {
             input.value = '';
@@ -292,10 +370,20 @@ export default function HomeScreen({ onNavigate }) {
           const file = result.assets && result.assets[0];
           if (!file) return;
 
-          setLoading(true);
-          setLoadingStep('Đang gửi file lên Backend AI...');
+          // 1. Kiểm tra dung lượng file Video/Audio (Tối đa 150MB)
+          if (file.size && file.size > MAX_VIDEO_SIZE) {
+            const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
+            Alert.alert(
+              'File vượt quá giới hạn',
+              `Dung lượng file (${sizeMb} MB) vượt quá giới hạn cho phép (150 MB).\nVui lòng chọn video/audio ngắn hơn hoặc nén lại trước khi tải.`
+            );
+            return;
+          }
 
-          const baseUrl = await apiService.getBaseUrl();
+          const sizeStr = file.size ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : '';
+          setUploadDetails({ name: file.name || 'uploaded_lecture.mp4', size: sizeStr });
+          setUploadProgress(0);
+
           const formData = new FormData();
           formData.append('file', {
             uri: file.uri,
@@ -305,33 +393,27 @@ export default function HomeScreen({ onNavigate }) {
           formData.append('target_language', targetLang);
           formData.append('include_quiz', includeQuiz ? 'true' : 'false');
 
-          setLoadingStep('AI đang bóc tách phụ đề & tóm tắt...');
-          const response = await fetch(`${baseUrl}/api/video/upload`, {
-            method: 'POST',
-            body: formData,
-            headers: {
-              'Accept': 'application/json',
-            },
-          });
+          const data = await apiService.uploadWithProgress(
+            '/api/video/upload',
+            formData,
+            (percent) => {
+              setUploadProgress(percent);
+            }
+          );
 
-          if (!response.ok) {
-            throw new Error(`Server trả về lỗi: ${response.status}`);
-          }
-
-          const data = await response.json();
-          setLoading(false);
+          setUploadProgress(null);
           await apiService.saveLectureToLocal(data);
           await checkHealthAndFetchHistory();
           onNavigate('SyncPlayer', { lecture: data });
         } catch (err) {
-          setLoading(false);
+          setUploadProgress(null);
           Alert.alert('Lỗi tải file', err.message);
         }
       })();
     }
   };
 
-  // Tính thống kê tiến độ từ lịch sử
+  // Nạp phụ đề có sẵn (Kiểm tra giới hạn 10MB)
   const handleUploadSubtitle = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -342,12 +424,22 @@ export default function HomeScreen({ onNavigate }) {
 
       const subtitle = result.assets && result.assets[0];
       if (!subtitle || !/\.(srt|vtt)$/i.test(subtitle.name || '')) {
-        Alert.alert('Tep khong hop le', 'Vui long chon tep phu de .srt hoac .vtt.');
+        Alert.alert('Tệp không hợp lệ', 'Vui lòng chọn tệp phụ đề .srt hoặc .vtt.');
+        return;
+      }
+
+      // 1. Kiểm tra giới hạn 10MB cho tệp phụ đề
+      if (subtitle.size && subtitle.size > MAX_SUBTITLE_SIZE) {
+        const sizeMb = (subtitle.size / (1024 * 1024)).toFixed(1);
+        Alert.alert(
+          'Tệp phụ đề quá lớn',
+          `Dung lượng tệp (${sizeMb} MB) vượt quá giới hạn cho phép (10 MB).`
+        );
         return;
       }
 
       setLoading(true);
-      setLoadingStep('Dang doc timestamp va nhan dien ngon ngu...');
+      setLoadingStep('Đang đọc timestamps và dịch phụ đề...');
       const uploadFile = subtitle.file || {
         uri: subtitle.uri,
         name: subtitle.name,
@@ -364,7 +456,166 @@ export default function HomeScreen({ onNavigate }) {
       onNavigate('SyncPlayer', { lecture: data });
     } catch (err) {
       setLoading(false);
-      Alert.alert('Khong the xu ly phu de', err.message);
+      Alert.alert('Không thể xử lý phụ đề', err.message);
+    }
+  };
+
+  // Xem ngay & Xử lý song song cho video dài (Giai đoạn 3)
+  const handleStreamVideo = async () => {
+    const trimmed = videoUrl.trim();
+    if (!trimmed) {
+      Alert.alert(
+        'Chưa nhập URL bài giảng',
+        'Vui lòng dán liên kết video YouTube hoặc bài giảng để phát ngay tức thì và để AI tự động xử lý song song ngầm.'
+      );
+      return;
+    }
+
+    setLoading(true);
+    setLoadingStep('Khởi tạo phát tức thì & Lookahead phân đoạn đầu...');
+
+    try {
+      const result = await apiService.streamInit(trimmed, targetLang);
+      setLoading(false);
+      onNavigate('SyncPlayer', { lecture: result });
+    } catch (err) {
+      setLoading(false);
+      Alert.alert('Không thể khởi tạo phát song song', err.message);
+    }
+  };
+
+  // Ghép đôi Video và Phụ đề có sẵn (Giai đoạn 2)
+  const handlePairVideoAndSubtitle = async () => {
+    try {
+      // 1. Chọn file phụ đề .srt hoặc .vtt
+      const subResult = await DocumentPicker.getDocumentAsync({
+        type: ['application/x-subrip', 'text/vtt', 'text/plain', 'application/octet-stream'],
+        copyToCacheDirectory: true,
+      });
+      if (subResult.canceled) return;
+      const subtitle = subResult.assets && subResult.assets[0];
+      if (!subtitle || !/\.(srt|vtt)$/i.test(subtitle.name || '')) {
+        Alert.alert('Tệp không hợp lệ', 'Vui lòng chọn tệp phụ đề định dạng .srt hoặc .vtt.');
+        return;
+      }
+
+      if (subtitle.size && subtitle.size > MAX_SUBTITLE_SIZE) {
+        Alert.alert('Tệp quá lớn', 'Dung lượng tệp phụ đề vượt quá giới hạn 10MB.');
+        return;
+      }
+
+      const uploadSubFile = subtitle.file || {
+        uri: subtitle.uri,
+        name: subtitle.name,
+        type: subtitle.mimeType || 'text/plain',
+      };
+
+      const trimmedUrl = videoUrl.trim();
+
+      // Nếu đã có URL ở ô nhập: ghép trực tiếp với URL
+      if (trimmedUrl) {
+        setLoading(true);
+        setLoadingStep('Đang ghép đôi Video URL với Phụ đề và sinh Mindmap...');
+        const result = await apiService.pairVideoAndSubtitles(
+          uploadSubFile,
+          null,
+          trimmedUrl,
+          targetLang,
+          includeQuiz
+        );
+        setLoading(false);
+        await checkHealthAndFetchHistory();
+        onNavigate('SyncPlayer', { lecture: result });
+        return;
+      }
+
+      // Nếu chưa có URL: Cho phép người dùng chọn thêm file Video từ máy hoặc xử lý độc lập
+      const proceedWithSubOnly = async () => {
+        setLoading(true);
+        setLoadingStep('Đang phân tích phụ đề và sinh Mindmap...');
+        try {
+          const result = await apiService.pairVideoAndSubtitles(
+            uploadSubFile,
+            null,
+            '',
+            targetLang,
+            includeQuiz
+          );
+          setLoading(false);
+          await checkHealthAndFetchHistory();
+          onNavigate('SyncPlayer', { lecture: result });
+        } catch (err) {
+          setLoading(false);
+          Alert.alert('Lỗi phân tích phụ đề', err.message);
+        }
+      };
+
+      const pickLocalVideoAndPair = async () => {
+        try {
+          const vidResult = await DocumentPicker.getDocumentAsync({
+            type: ['video/*', 'audio/*'],
+            copyToCacheDirectory: true,
+          });
+          if (vidResult.canceled) return;
+          const vidFile = vidResult.assets && vidResult.assets[0];
+          if (!vidFile) return;
+
+          if (vidFile.size && vidFile.size > MAX_VIDEO_SIZE) {
+            Alert.alert('File video quá lớn', 'Dung lượng file video vượt quá giới hạn 150MB.');
+            return;
+          }
+
+          const uploadVidFile = vidFile.file || {
+            uri: vidFile.uri,
+            name: vidFile.name || 'lecture.mp4',
+            type: vidFile.mimeType || 'video/mp4',
+          };
+
+          setLoading(true);
+          setLoadingStep('Đang ghép đôi Video nội bộ với Phụ đề...');
+          const result = await apiService.pairVideoAndSubtitles(
+            uploadSubFile,
+            uploadVidFile,
+            '',
+            targetLang,
+            includeQuiz
+          );
+
+          if (typeof URL !== 'undefined' && URL.createObjectURL && vidFile.file) {
+            result.media_stream_url = URL.createObjectURL(vidFile.file);
+          }
+          setLoading(false);
+          await checkHealthAndFetchHistory();
+          onNavigate('SyncPlayer', { lecture: result });
+        } catch (err) {
+          setLoading(false);
+          Alert.alert('Lỗi ghép đôi', err.message);
+        }
+      };
+
+      if (Platform.OS === 'web') {
+        const choice = window.confirm(
+          `Đã chọn phụ đề: "${subtitle.name}".\n\nBấm [OK] để chọn thêm File Video từ máy ghép đôi.\nBấm [Cancel] để chỉ phân tích file phụ đề.`
+        );
+        if (choice) {
+          await pickLocalVideoAndPair();
+        } else {
+          await proceedWithSubOnly();
+        }
+      } else {
+        Alert.alert(
+          'Ghép đôi Video',
+          `Đã chọn phụ đề: "${subtitle.name}". Bạn muốn liên kết với video nào?`,
+          [
+            { text: 'Chỉ phân tích phụ đề', onPress: proceedWithSubOnly },
+            { text: 'Chọn File Video từ máy', onPress: pickLocalVideoAndPair },
+            { text: 'Hủy', style: 'cancel' },
+          ]
+        );
+      }
+    } catch (err) {
+      setLoading(false);
+      Alert.alert('Lỗi thao tác', err.message);
     }
   };
 
@@ -461,40 +712,65 @@ export default function HomeScreen({ onNavigate }) {
             </View>
           </TouchableOpacity>
 
-          {/* Nút Bắt đầu Tạo Phụ đề */}
-          <TouchableOpacity
-            style={[styles.primaryActionBtn, loading && styles.disabledBtn]}
-            onPress={handleProcessVideo}
-            disabled={loading}
-            activeOpacity={0.8}
-          >
-            {loading ? (
-              <View style={styles.loadingBox}>
-                <ActivityIndicator color="#fff" size="small" />
-                <Text style={styles.loadingText}>{loadingStep}</Text>
-              </View>
-            ) : (
-              <Text style={styles.primaryActionBtnText}>⚡ BẮT ĐẦU TẠO PHỤ ĐỀ & TÓM TẮT</Text>
-            )}
-          </TouchableOpacity>
+          {/* Nhóm các nút hành động xử lý bài giảng */}
+          <View style={styles.actionButtonGroup}>
+            {/* Nút 1: Bắt đầu Tạo Phụ đề Tiêu chuẩn */}
+            <TouchableOpacity
+              style={[styles.primaryActionBtn, loading && styles.disabledBtn]}
+              onPress={handleProcessVideo}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              {loading ? (
+                <View style={styles.loadingBox}>
+                  <ActivityIndicator color="#fff" size="small" />
+                  <Text style={styles.loadingText}>{loadingStep}</Text>
+                </View>
+              ) : (
+                <Text style={styles.primaryActionBtnText}>⚡ BẮT ĐẦU TẠO PHỤ ĐỀ & TÓM TẮT (TIÊU CHUẨN)</Text>
+              )}
+            </TouchableOpacity>
 
-          {/* Nút Upload File Nội bộ */}
-          <TouchableOpacity
-            style={[styles.uploadBtn, loading && styles.disabledBtn]}
-            onPress={handleUploadFile}
-            disabled={loading}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.uploadBtnText}>📁 UPLOAD FILE TỪ THIẾT BỊ (MP4 / MP3)</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.subtitleUploadBtn, loading && styles.disabledBtn]}
-            onPress={handleUploadSubtitle}
-            disabled={loading}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.subtitleUploadBtnText}>NHAP PHU DE CO SAN (SRT / VTT)</Text>
-          </TouchableOpacity>
+            {/* Nút 2: Xem ngay & Xử lý song song ngầm cho video dài (Giai đoạn 3) */}
+            <TouchableOpacity
+              style={[styles.streamBtn, loading && styles.disabledBtn]}
+              onPress={handleStreamVideo}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.streamBtnText}>🚀 XEM NGAY & XỬ LÝ SONG SONG (VIDEO DÀI)</Text>
+            </TouchableOpacity>
+
+            {/* Nút 3: Ghép đôi Video + Phụ đề có sẵn (Giai đoạn 2) */}
+            <TouchableOpacity
+              style={[styles.pairBtn, loading && styles.disabledBtn]}
+              onPress={handlePairVideoAndSubtitle}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.pairBtnText}>🔗 GHÉP ĐÔI VIDEO + PHỤ ĐỀ (SIÊU TỐC)</Text>
+            </TouchableOpacity>
+
+            {/* Nút 4: Upload File Nội bộ từ thiết bị */}
+            <TouchableOpacity
+              style={[styles.uploadBtn, loading && styles.disabledBtn]}
+              onPress={handleUploadFile}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.uploadBtnText}>📁 UPLOAD FILE TỪ THIẾT BỊ (MP4 / MP3)</Text>
+            </TouchableOpacity>
+
+            {/* Nút 5: Nạp phụ đề độc lập */}
+            <TouchableOpacity
+              style={[styles.subtitleUploadBtn, loading && styles.disabledBtn]}
+              onPress={handleUploadSubtitle}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.subtitleUploadBtnText}>📄 NẠP PHỤ ĐỀ CÓ SẴN (SRT / VTT)</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Khối Thống kê Tiến độ Học */}
@@ -535,6 +811,60 @@ export default function HomeScreen({ onNavigate }) {
           ))}
         </View>
       </ScrollView>
+
+      {/* Modal Thanh tiến trình Upload (Progress Bar Animation) */}
+      <Modal
+        visible={uploadProgress !== null}
+        transparent
+        animationType="fade"
+      >
+        <View style={styles.progressModalBackdrop}>
+          <View style={styles.progressCard}>
+            <View style={styles.progressHeaderRow}>
+              <View style={styles.progressIconWrap}>
+                <Text style={styles.progressIcon}>
+                  {uploadProgress !== null && uploadProgress < 100 ? '🚀' : '🧠'}
+                </Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.progressTitle}>
+                  {uploadProgress !== null && uploadProgress < 100 ? 'ĐANG TẢI LÊN MÁY CHỦ' : 'ĐÃ TẢI LÊN • AI ĐANG XỬ LÝ'}
+                </Text>
+                <Text style={styles.progressFileName} numberOfLines={1}>
+                  {uploadDetails.name || 'Bài giảng'} {uploadDetails.size ? `(${uploadDetails.size})` : ''}
+                </Text>
+              </View>
+              <Text style={styles.progressPercentText}>{uploadProgress}%</Text>
+            </View>
+
+            {/* Thanh tiến trình Progress Bar Animation */}
+            <View style={styles.progressBarTrack}>
+              <View
+                style={[
+                  styles.progressBarFill,
+                  { width: `${Math.max(6, uploadProgress || 0)}%` },
+                  uploadProgress !== null && uploadProgress >= 100 && styles.progressBarFillDone,
+                ]}
+              />
+            </View>
+
+            {/* Trạng thái chi tiết */}
+            <View style={styles.progressStatusRow}>
+              <Text style={styles.progressStatusText}>
+                {uploadProgress !== null && uploadProgress < 100
+                  ? `Đang truyền file lên máy chủ AI: ${uploadProgress}%...`
+                  : 'Tải lên hoàn tất! 🧠 Whisper AI đang nhận diện giọng nói & đồng bộ timestamps...'}
+              </Text>
+            </View>
+
+            <View style={styles.progressLimitBadge}>
+              <Text style={styles.progressLimitText}>
+                🛡️ Giới hạn an toàn: Video/Audio ≤ 150MB • Phụ đề ≤ 10MB
+              </Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Modal Cài đặt hệ thống */}
       <SettingsModal
@@ -703,6 +1033,41 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.5,
   },
+  actionButtonGroup: {
+    gap: 2,
+  },
+  streamBtn: {
+    backgroundColor: 'rgba(236, 72, 153, 0.15)',
+    borderWidth: 1,
+    borderColor: '#ec4899',
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+  },
+  streamBtnText: {
+    color: '#f472b6',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  pairBtn: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+  },
+  pairBtnText: {
+    color: '#fbbf24',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
   statsRow: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -790,5 +1155,101 @@ const styles = StyleSheet.create({
   switchThumbActive: {
     backgroundColor: '#ffffff',
     alignSelf: 'flex-end',
+  },
+  progressModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(2, 6, 23, 0.82)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  progressCard: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#0f172a',
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.4)',
+    padding: spacing.lg,
+    shadowColor: '#6366f1',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  progressHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  progressIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
+  },
+  progressIcon: {
+    fontSize: 22,
+  },
+  progressTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.primaryLight,
+    letterSpacing: 0.5,
+  },
+  progressFileName: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  progressPercentText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.accent,
+    marginLeft: spacing.sm,
+  },
+  progressBarTrack: {
+    height: 10,
+    backgroundColor: '#1e293b',
+    borderRadius: 6,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.15)',
+    marginBottom: spacing.md,
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: colors.accent,
+    borderRadius: 6,
+  },
+  progressBarFillDone: {
+    backgroundColor: '#10b981',
+  },
+  progressStatusRow: {
+    marginBottom: spacing.sm,
+  },
+  progressStatusText: {
+    fontSize: 12,
+    color: colors.textPrimary,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  progressLimitBadge: {
+    marginTop: spacing.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(15, 23, 42, 0.7)',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.12)',
+    alignItems: 'center',
+  },
+  progressLimitText: {
+    fontSize: 11,
+    color: colors.textMuted,
   },
 });
