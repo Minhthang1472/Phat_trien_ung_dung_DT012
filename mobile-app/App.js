@@ -33,7 +33,11 @@ export default function App() {
           {currentRoute === 'Home' && <HomeScreen onNavigate={handleNavigate} />}
 
           {currentRoute === 'SyncPlayer' && (
-            <SyncPlayerScreen lecture={routeParams.lecture} onBack={handleBack} />
+            <SyncPlayerScreen
+              lecture={routeParams.lecture}
+              initialSeekTime={routeParams.initialSeekTime}
+              onBack={handleBack}
+            />
           )}
         </View>
       </SafeAreaView>

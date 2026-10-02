@@ -19,7 +19,8 @@ import SubtitleItem from '../components/SubtitleItem';
 import SummaryQuizScreen from './SummaryQuizScreen';
 import { apiService } from '../services/api';
 
-export default function SyncPlayerScreen({ lecture, onBack }) {
+export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
+  const effectiveSeekTime = initialSeekTime || lecture?.initial_time || 0;
   const [currentTab, setCurrentTab] = useState('subtitles'); // 'subtitles' | 'summary'
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -35,6 +36,7 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
   const [activeCheckpointQuiz, setActiveCheckpointQuiz] = useState(null);
   const triggeredCheckpointIdsRef = useRef(new Set());
   const lastTimeUpdateRef = useRef(0);
+  const lastSavedProgressRef = useRef(0);
   const lastScrolledIndexRef = useRef(-1);
 
   // Xử lý song song ngầm cho video dài (Background Streaming)
@@ -81,7 +83,7 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
       } catch (err) {
         console.warn('Lỗi kiểm tra tiến độ streaming:', err);
       }
-    }, 5000);
+    }, 3000);
 
     return () => {
       isSubscribed = false;
@@ -215,6 +217,22 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
     (lecture?.video_url && (lecture.video_url.endsWith('.mp3') || lecture.video_url.endsWith('.wav') || lecture.video_url.endsWith('.m4a')))
   );
 
+  const isUploadedVideo = Boolean(
+    !isYouTube && (
+      (lecture?.media_url && lecture.media_url.includes('/uploads/')) ||
+      (lecture?.video_url && lecture.video_url.startsWith('local_file://')) ||
+      (lecture?.media_stream_url && lecture.media_stream_url.includes('/uploads/'))
+    )
+  );
+
+  // Lưu tiến độ phát video ngầm (Throttle mỗi 4 giây)
+  const saveProgressThrottled = (sec) => {
+    if (lecture?.video_url && Math.abs(sec - lastSavedProgressRef.current) >= 4) {
+      lastSavedProgressRef.current = sec;
+      apiService.savePlaybackProgress(lecture.video_url, sec, duration);
+    }
+  };
+
   // Khởi tạo YouTube Iframe API để đồng bộ thời gian thực chuẩn 100%
   useEffect(() => {
     if (Platform.OS === 'web' && isYouTube && youtubeId) {
@@ -227,6 +245,11 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
             events: {
               onReady: (event) => {
                 ytPlayerRef.current = event.target;
+                if (effectiveSeekTime > 5) {
+                  try {
+                    event.target.seekTo(effectiveSeekTime, true);
+                  } catch (_) {}
+                }
               },
               onStateChange: (event) => {
                 // 1: Đang phát (PLAYING), 2: Tạm dừng (PAUSED), 0: Kết thúc (ENDED)
@@ -241,6 +264,7 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
                           lastTimeUpdateRef.current = sec;
                           setCurrentTime(sec);
                           checkInVideoQuiz(sec);
+                          saveProgressThrottled(sec);
                         }
                       }
                     }, 250);
@@ -255,6 +279,9 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
                     const sec = ytPlayerRef.current.getCurrentTime();
                     lastTimeUpdateRef.current = sec;
                     setCurrentTime(sec);
+                    if (lecture?.video_url) {
+                      apiService.savePlaybackProgress(lecture.video_url, sec, duration);
+                    }
                   }
                 }
               },
@@ -286,7 +313,16 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
         }
       };
     }
-  }, [isYouTube, youtubeId, interactiveQuizEnabled, activeCheckpointQuiz, checkpointQuizzes]);
+  }, [isYouTube, youtubeId, interactiveQuizEnabled, activeCheckpointQuiz, checkpointQuizzes, effectiveSeekTime]);
+
+  // Lưu tiến độ khi thoát màn hình
+  useEffect(() => {
+    return () => {
+      if (lecture?.video_url && lastTimeUpdateRef.current > 0) {
+        apiService.savePlaybackProgress(lecture.video_url, lastTimeUpdateRef.current, duration);
+      }
+    };
+  }, [lecture?.video_url, duration]);
 
   // Tự động cuộn mượt đến câu phụ đề đang phát (chống giật khung hình khi video chạy)
   useEffect(() => {
@@ -307,6 +343,15 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
       lastTimeUpdateRef.current = sec;
       setCurrentTime(sec);
       checkInVideoQuiz(sec);
+      saveProgressThrottled(sec);
+    }
+  };
+
+  const handleMediaLoadedMetadata = (e) => {
+    if (effectiveSeekTime > 5 && e.target) {
+      try {
+        e.target.currentTime = effectiveSeekTime;
+      } catch (_) {}
     }
   };
 
@@ -344,20 +389,56 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
   };
 
   const handleBurnSubtitles = async () => {
-    if (!lecture?.media_url || segments.length === 0) {
-      Alert.alert('Chưa sẵn sàng', 'Chỉ có thể ghi cứng phụ đề cho video đã upload và có phụ đề.');
+    let rawMediaUrl = null;
+    if (lecture?.media_url && lecture.media_url.includes('/uploads/')) {
+      rawMediaUrl = lecture.media_url;
+    } else if (lecture?.media_stream_url && lecture.media_stream_url.includes('/uploads/')) {
+      rawMediaUrl = lecture.media_stream_url;
+    } else if (lecture?.media_url) {
+      rawMediaUrl = lecture.media_url;
+    }
+
+    if (!rawMediaUrl || segments.length === 0) {
+      Alert.alert('Chưa sẵn sàng', 'Chỉ có thể xuất video kèm phụ đề cho video đã tải lên từ máy.');
       return;
     }
     setBurningSubtitles(true);
     try {
-      const result = await apiService.burnSubtitlesIntoVideo(lecture.media_url, segments);
+      const result = await apiService.burnSubtitlesIntoVideo(rawMediaUrl, segments);
       setBurnedMediaUrl(result.media_url);
-      Alert.alert('Đã hoàn tất', 'MP4 mới đã được tạo với phụ đề ghi cứng.', [
-        { text: 'Mở video', onPress: () => onBack && onBack() },
-        { text: 'Đóng', style: 'cancel' },
-      ]);
+
+      const downloadUrl = result.media_url.startsWith('http')
+        ? result.media_url
+        : `${serverBaseUrl}${result.media_url}`;
+
+      // Trên Web: Tự động kích hoạt tải xuống file MP4 ghi cứng
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = result.filename || `video_kem_phu_de_${Date.now()}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else {
+        // Trên Mobile (iOS / Android)
+        const localPath = `${FileSystem.cacheDirectory}${result.filename || 'video_kem_phu_de.mp4'}`;
+        const downloadRes = await FileSystem.downloadAsync(downloadUrl, localPath);
+        const canShare = await Sharing.isAvailableAsync();
+        if (canShare) {
+          await Sharing.shareAsync(downloadRes.uri, {
+            mimeType: 'video/mp4',
+            dialogTitle: 'Lưu Video MP4 kèm phụ đề',
+          });
+        }
+      }
+
+      Alert.alert(
+        '🎉 Xuất Video Thành Công!',
+        'Video MP4 hoàn chỉnh đã được ghi cứng phụ đề chuẩn xác từng giây và tự động tải về thiết bị của bạn.',
+        [{ text: 'Tuyệt vời!' }]
+      );
     } catch (error) {
-      Alert.alert('Không thể ghi cứng phụ đề', error.message);
+      Alert.alert('Không thể xuất video kèm phụ đề', error.message);
     } finally {
       setBurningSubtitles(false);
     }
@@ -478,6 +559,7 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
                       borderRadius: 12,
                       objectFit: 'contain',
                     }}
+                    onLoadedMetadata={handleMediaLoadedMetadata}
                     onTimeUpdate={handleMediaTimeUpdate}
                     onSeeked={handleMediaSeeked}
                     onPlay={() => setIsPlaying(true)}
@@ -507,6 +589,7 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
                       controls
                       preload="auto"
                       style={{ width: '100%', maxWidth: 400 }}
+                      onLoadedMetadata={handleMediaLoadedMetadata}
                       onTimeUpdate={handleMediaTimeUpdate}
                       onSeeked={handleMediaSeeked}
                       onPlay={() => setIsPlaying(true)}
@@ -765,14 +848,18 @@ export default function SyncPlayerScreen({ lecture, onBack }) {
             <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.8}>
               <Text style={styles.shareBtnText}>📤 Chia sẻ</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.burnBtn, burningSubtitles && styles.disabledBtn]}
-              onPress={handleBurnSubtitles}
-              disabled={burningSubtitles}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.burnBtnText}>{burningSubtitles ? '⏳ Đang xử lý' : '🎞️ Ghi cứng MP4'}</Text>
-            </TouchableOpacity>
+            {isUploadedVideo && (
+              <TouchableOpacity
+                style={[styles.burnBtn, burningSubtitles && styles.disabledBtn]}
+                onPress={handleBurnSubtitles}
+                disabled={burningSubtitles}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.burnBtnText}>
+                  {burningSubtitles ? '⏳ Đang render video...' : '🎬 Xuất Video kèm phụ đề (MP4)'}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Danh sách phụ đề đồng bộ chạy theo giây */}

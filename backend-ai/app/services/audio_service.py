@@ -58,6 +58,31 @@ class AudioService:
             }
 
     @staticmethod
+    def get_video_info(video_url: str) -> dict:
+        """
+        Lấy thông tin nhanh metadata video (tiêu đề, thời lượng giây) mà KHÔNG tải video/audio.
+        Tốc độ phản hồi cực nhanh (< 1 giây).
+        """
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        }
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info(f"Đang đọc thông tin metadata nhanh từ URL: {video_url}")
+                info = ydl.extract_info(video_url, download=False)
+                return {
+                    "title": info.get('title', 'Bài giảng không tên'),
+                    "duration": info.get('duration', 0) or 0,
+                    "video_id": info.get('id', '')
+                }
+        except Exception as e:
+            logger.warning(f"Lỗi khi đọc metadata nhanh: {e}")
+            return {"title": "Bài giảng", "duration": 0, "video_id": ""}
+
+    @staticmethod
     def extract_audio_from_file(file_bytes: bytes, filename: str, duration_limit_sec: int = None) -> dict:
         """
         Tiếp nhận file âm thanh/video upload trực tiếp từ máy (mp3, wav, mp4, m4a, flac...),

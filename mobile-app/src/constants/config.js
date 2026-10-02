@@ -12,6 +12,8 @@ export const getDefaultApiUrl = () => {
 export const STORAGE_KEYS = {
   SERVER_URL: '@lecture_ai_server_url',
   RECENT_LECTURES: '@lecture_ai_recent_history',
+  FAVORITES: '@lecture_ai_favorites',
+  PLAYBACK_PROGRESS: '@lecture_ai_playback_progress',
 };
 
 export const SUPPORTED_LANGUAGES = [

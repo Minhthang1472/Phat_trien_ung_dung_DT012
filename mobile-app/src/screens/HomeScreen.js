@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   RefreshControl,
   Platform,
   Modal,
+  Switch,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
@@ -20,6 +21,22 @@ import { apiService } from '../services/api';
 import Header from '../components/Header';
 import LectureCard from '../components/LectureCard';
 import SettingsModal from '../components/SettingsModal';
+
+// Danh sách ngôn ngữ dịch thuật cho Popup Upload File
+const UPLOAD_LANG_OPTIONS = [
+  { code: 'vi', label: 'Tiếng Việt', flag: '🇻🇳' },
+  { code: 'en', label: 'English', flag: '🇺🇸' },
+  { code: 'ja', label: '日本語 (Nhật)', flag: '🇯🇵' },
+  { code: 'ko', label: '한국어 (Hàn)', flag: '🇰🇷' },
+  { code: 'zh', label: '中文 (Trung)', flag: '🇨🇳' },
+  { code: 'fr', label: 'Français (Pháp)', flag: '🇫🇷' },
+  { code: 'de', label: 'Deutsch (Đức)', flag: '🇩🇪' },
+];
+
+const getLangDisplayName = (code) => {
+  const found = UPLOAD_LANG_OPTIONS.find((l) => l.code === code);
+  return found ? `${found.flag} ${found.label}` : (code || '').toUpperCase();
+};
 
 // Dữ liệu mẫu bài giảng nếu chưa kết nối server
 const SAMPLE_LECTURES = [
@@ -169,10 +186,27 @@ export default function HomeScreen({ onNavigate }) {
   const [loadingStep, setLoadingStep] = useState('');
   const [uploadProgress, setUploadProgress] = useState(null); // null hoặc 0-100
   const [uploadDetails, setUploadDetails] = useState({ name: '', size: '' });
+
+  // Popup Cấu hình Dịch thuật cho File Upload
+  const [pendingUploadFile, setPendingUploadFile] = useState(null);
+  const [uploadConfigModalVisible, setUploadConfigModalVisible] = useState(false);
+  const [uploadTargetLang, setUploadTargetLang] = useState('vi');
+  const [uploadIncludeQuiz, setUploadIncludeQuiz] = useState(true);
+
+  // Tiến trình đa bước AI (Upload -> Whisper AI -> Dịch thuật -> Tóm tắt & Quiz)
+  const [aiProcessingStage, setAiProcessingStage] = useState('uploading'); // 'uploading' | 'whisper' | 'translating' | 'summarizing' | 'done'
+  const [aiStageProgress, setAiStageProgress] = useState(0);
+
   const [recentLectures, setRecentLectures] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [serverStatus, setServerStatus] = useState({ online: false });
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+
+  // Bộ lọc, Tìm kiếm, Ghim yêu thích & Tiến độ phát video
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [activeCategory, setActiveCategory] = useState('all'); // 'all', 'fav', 'en', 'ja', 'upload', 'youtube'
+  const [favorites, setFavorites] = useState([]);
+  const [playbackMap, setPlaybackMap] = useState({});
 
   useEffect(() => {
     checkHealthAndFetchHistory();
@@ -182,10 +216,22 @@ export default function HomeScreen({ onNavigate }) {
     const status = await apiService.checkServerHealth();
     setServerStatus(status);
 
-    const history = await apiService.getLectureHistory(10);
-    if (history && history.length > 0) {
-      setRecentLectures(history);
-    } else {
+    try {
+      const [history, favs, pMap] = await Promise.all([
+        apiService.getLectureHistory(25),
+        apiService.getFavorites(),
+        apiService.getPlaybackProgressMap(),
+      ]);
+
+      if (history && history.length > 0) {
+        setRecentLectures(history);
+      } else {
+        setRecentLectures(SAMPLE_LECTURES);
+      }
+      setFavorites(favs || []);
+      setPlaybackMap(pMap || {});
+    } catch (err) {
+      console.warn('Lỗi tải dữ liệu lịch sử/favorites:', err);
       setRecentLectures(SAMPLE_LECTURES);
     }
   };
@@ -196,6 +242,76 @@ export default function HomeScreen({ onNavigate }) {
     setRefreshing(false);
   };
 
+  const handleToggleFavorite = async (lecture) => {
+    if (!lecture?.video_url) return;
+    const updated = await apiService.toggleFavorite(lecture.video_url);
+    setFavorites(updated);
+  };
+
+  const handleQuickExportSRT = async (lecture) => {
+    try {
+      await apiService.exportLectureSRT(lecture);
+      if (Platform.OS === 'web') {
+        window.alert('Đã tải xuống file phụ đề .SRT thành công!');
+      } else {
+        Alert.alert('Thành công', 'Đã xuất file phụ đề .SRT.');
+      }
+    } catch (err) {
+      Alert.alert('Lỗi xuất phụ đề', err.message);
+    }
+  };
+
+  const handleQuickExportSummary = async (lecture) => {
+    try {
+      await apiService.exportLectureSummary(lecture);
+      if (Platform.OS === 'web') {
+        window.alert('Đã tải xuống bản tóm tắt bài giảng .TXT thành công!');
+      } else {
+        Alert.alert('Thành công', 'Đã xuất bản tóm tắt bài giảng.');
+      }
+    } catch (err) {
+      Alert.alert('Lỗi xuất tóm tắt', err.message);
+    }
+  };
+
+  // Tính toán danh sách bài giảng sau khi lọc và sắp xếp (bài ghim luôn ưu tiên trên đầu)
+  const filteredAndSortedLectures = useMemo(() => {
+    const list = recentLectures || [];
+    return list
+      .filter((lec) => {
+        // 1. Lọc theo từ khóa tìm kiếm
+        if (searchKeyword.trim()) {
+          const q = searchKeyword.trim().toLowerCase();
+          const matchTitle = (lec.title || '').toLowerCase().includes(q);
+          const matchSummary = (lec.summary || '').toLowerCase().includes(q);
+          const matchKeys = (lec.key_points || []).some((kp) => kp.toLowerCase().includes(q));
+          if (!matchTitle && !matchSummary && !matchKeys) return false;
+        }
+
+        // 2. Lọc theo danh mục / Tab
+        const isFav = favorites.includes(lec.video_url);
+        const isLocal =
+          lec.video_url?.startsWith('local_file://') ||
+          lec.media_url?.startsWith('/uploads/') ||
+          lec.media_stream_url?.startsWith('/uploads/');
+        const lang = (lec.detected_language || lec.language || '').toLowerCase();
+
+        if (activeCategory === 'fav') return isFav;
+        if (activeCategory === 'en') return lang.includes('en');
+        if (activeCategory === 'ja') return lang.includes('ja');
+        if (activeCategory === 'upload') return isLocal;
+        if (activeCategory === 'youtube') return !isLocal && (lec.video_url || '').includes('youtu');
+
+        return true;
+      })
+      .sort((a, b) => {
+        // Bài ghim (Favorites) luôn ưu tiên nổi lên trên đầu!
+        const aFav = favorites.includes(a.video_url) ? 1 : 0;
+        const bFav = favorites.includes(b.video_url) ? 1 : 0;
+        return bFav - aFav;
+      });
+  }, [recentLectures, searchKeyword, activeCategory, favorites]);
+
   const handleProcessVideo = async () => {
     const trimmed = videoUrl.trim();
     if (!trimmed) {
@@ -204,10 +320,33 @@ export default function HomeScreen({ onNavigate }) {
     }
 
     setLoading(true);
-    setLoadingStep('Đang kết nối Backend AI...');
+    setLoadingStep('Đang kiểm tra thời lượng bài giảng...');
 
     try {
-      setLoadingStep('Kiểm tra bộ đệm Cache & Tải Audio...');
+      // 1. Kiểm tra nhanh thông tin & thời lượng video từ Backend (< 1 giây)
+      const info = await apiService.getVideoInfo(trimmed);
+      const durationSec = info.duration_seconds || 0;
+      const isLong = durationSec >= 1800; // Ngưỡng 30 phút (1800 giây)
+
+      // 2. Nếu video từ 30 phút trở lên (và chưa có trong Cache): Tự động kích hoạt chế độ song song
+      if (isLong && !info.is_cached) {
+        const minutes = Math.round(durationSec / 60);
+        setLoadingStep(`Video dài ${minutes}p (≥ 30p) - Tự động bật Xem ngay & Xử lý song song...`);
+        const streamResult = await apiService.streamInit(trimmed, targetLang);
+        setLoading(false);
+
+        const noticeMsg = `Video này có thời lượng dài (${minutes} phút).\n\nHệ thống đã tự động kích hoạt chế độ XEM NGAY & XỬ LÝ SONG SONG để bạn theo dõi video ngay mà không cần chờ đợi!`;
+        if (Platform.OS === 'web') {
+          window.alert(`⚡ TỰ ĐỘNG XỬ LÝ SONG SONG\n\n${noticeMsg}`);
+        } else {
+          Alert.alert('⚡ Tự động xử lý song song', noticeMsg);
+        }
+        onNavigate('SyncPlayer', { lecture: streamResult });
+        return;
+      }
+
+      // 3. Nếu video dưới 30 phút (hoặc đã có sẵn trong Cache): Xử lý toàn bộ
+      setLoadingStep('Đang bóc tách toàn bộ phụ đề & tóm tắt AI...');
       const result = await apiService.processVideo(trimmed, targetLang, 'auto', null, includeQuiz);
       setLoading(false);
       // Chuyển sang màn hình Sync Player với kết quả
@@ -229,11 +368,14 @@ export default function HomeScreen({ onNavigate }) {
   };
 
   const handleSelectLecture = (lecture) => {
+    const progress = playbackMap[lecture.video_url];
+    const initialSeekTime = progress && progress.currentTime > 5 ? progress.currentTime : 0;
+
     // Nếu là item từ server chỉ có metadata, hoặc item đầy đủ
     if (lecture.full_data) {
-      onNavigate('SyncPlayer', { lecture: lecture.full_data });
+      onNavigate('SyncPlayer', { lecture: lecture.full_data, initialSeekTime });
     } else if (lecture.segments && lecture.segments.length > 0) {
-      onNavigate('SyncPlayer', { lecture });
+      onNavigate('SyncPlayer', { lecture, initialSeekTime });
     } else {
       // Gọi API tải dữ liệu chi tiết
       setLoading(true);
@@ -242,12 +384,12 @@ export default function HomeScreen({ onNavigate }) {
         .processVideo(lecture.video_url, lecture.language || 'vi')
         .then((fullData) => {
           setLoading(false);
-          onNavigate('SyncPlayer', { lecture: fullData });
+          onNavigate('SyncPlayer', { lecture: fullData, initialSeekTime });
         })
         .catch(() => {
           setLoading(false);
           // Fallback dùng sample
-          onNavigate('SyncPlayer', { lecture: SAMPLE_LECTURES[0] });
+          onNavigate('SyncPlayer', { lecture: SAMPLE_LECTURES[0], initialSeekTime });
         });
     }
   };
@@ -282,7 +424,7 @@ export default function HomeScreen({ onNavigate }) {
     }
   };
 
-  // Upload file video/audio từ thiết bị (Tương thích 100% cả Web máy tính lẫn Điện thoại)
+  // 1. Khi người dùng bấm nút Chọn File -> Chọn file -> Mở Popup cấu hình ngôn ngữ dịch thuật
   const handleUploadFile = () => {
     if (Platform.OS === 'web') {
       try {
@@ -296,11 +438,11 @@ export default function HomeScreen({ onNavigate }) {
           document.body.appendChild(input);
         }
 
-        input.onchange = async (e) => {
+        input.onchange = (e) => {
           const file = e.target.files && e.target.files[0];
           if (!file) return;
 
-          // 1. Kiểm tra dung lượng file Video/Audio (Tối đa 150MB)
+          // Kiểm tra dung lượng file Video/Audio (Tối đa 150MB)
           if (file.size > MAX_VIDEO_SIZE) {
             const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
             Alert.alert(
@@ -311,7 +453,7 @@ export default function HomeScreen({ onNavigate }) {
             return;
           }
 
-          // Tạo URL phát trực tiếp từ bộ nhớ trình duyệt cho video/audio
+          // Lưu URL blob cục bộ để phát mượt trên Web
           let localMediaUrl = null;
           try {
             if (typeof URL !== 'undefined' && URL.createObjectURL) {
@@ -320,37 +462,17 @@ export default function HomeScreen({ onNavigate }) {
           } catch (_) {}
 
           const sizeStr = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-          setUploadDetails({ name: file.name, size: sizeStr });
-          setUploadProgress(0);
-
-          try {
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('target_language', targetLang);
-            formData.append('include_quiz', includeQuiz ? 'true' : 'false');
-
-            const data = await apiService.uploadWithProgress(
-              '/api/video/upload',
-              formData,
-              (percent) => {
-                setUploadProgress(percent);
-              }
-            );
-
-            if (localMediaUrl) {
-              data.media_stream_url = localMediaUrl;
-              data.media_mime_type = file.type || '';
-            }
-            setUploadProgress(null);
-            await apiService.saveLectureToLocal(data);
-            await checkHealthAndFetchHistory();
-            onNavigate('SyncPlayer', { lecture: data });
-          } catch (uploadErr) {
-            setUploadProgress(null);
-            Alert.alert('Không thể xử lý file', uploadErr.message);
-          } finally {
-            input.value = '';
-          }
+          setPendingUploadFile({
+            file,
+            name: file.name,
+            size: sizeStr,
+            localMediaUrl,
+            type: file.type || 'video/mp4',
+          });
+          setUploadTargetLang(targetLang || 'vi');
+          setUploadIncludeQuiz(includeQuiz);
+          setUploadConfigModalVisible(true);
+          input.value = '';
         };
 
         input.click();
@@ -370,7 +492,7 @@ export default function HomeScreen({ onNavigate }) {
           const file = result.assets && result.assets[0];
           if (!file) return;
 
-          // 1. Kiểm tra dung lượng file Video/Audio (Tối đa 150MB)
+          // Kiểm tra dung lượng file Video/Audio (Tối đa 150MB)
           if (file.size && file.size > MAX_VIDEO_SIZE) {
             const sizeMb = (file.size / (1024 * 1024)).toFixed(1);
             Alert.alert(
@@ -381,35 +503,118 @@ export default function HomeScreen({ onNavigate }) {
           }
 
           const sizeStr = file.size ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` : '';
-          setUploadDetails({ name: file.name || 'uploaded_lecture.mp4', size: sizeStr });
-          setUploadProgress(0);
-
-          const formData = new FormData();
-          formData.append('file', {
+          setPendingUploadFile({
             uri: file.uri,
             name: file.name || 'uploaded_lecture.mp4',
             type: file.mimeType || 'video/mp4',
+            size: sizeStr,
           });
-          formData.append('target_language', targetLang);
-          formData.append('include_quiz', includeQuiz ? 'true' : 'false');
-
-          const data = await apiService.uploadWithProgress(
-            '/api/video/upload',
-            formData,
-            (percent) => {
-              setUploadProgress(percent);
-            }
-          );
-
-          setUploadProgress(null);
-          await apiService.saveLectureToLocal(data);
-          await checkHealthAndFetchHistory();
-          onNavigate('SyncPlayer', { lecture: data });
+          setUploadTargetLang(targetLang || 'vi');
+          setUploadIncludeQuiz(includeQuiz);
+          setUploadConfigModalVisible(true);
         } catch (err) {
-          setUploadProgress(null);
-          Alert.alert('Lỗi tải file', err.message);
+          Alert.alert('Lỗi chọn file', err.message);
         }
       })();
+    }
+  };
+
+  // 2. Khi người dùng xác nhận ngôn ngữ & bấm Bắt đầu xử lý -> Mở Progress bar & thực hiện AI đa bước
+  const handleConfirmUpload = async () => {
+    if (!pendingUploadFile) return;
+    const fileToUpload = pendingUploadFile;
+    setUploadConfigModalVisible(false);
+
+    // Kích hoạt thanh tiến trình (Progress Bar)
+    setUploadDetails({ name: fileToUpload.name, size: fileToUpload.size });
+    setUploadProgress(0);
+    setAiProcessingStage('uploading');
+    setAiStageProgress(5);
+
+    let stageTimer = null;
+    try {
+      const formData = new FormData();
+      if (Platform.OS === 'web') {
+        formData.append('file', fileToUpload.file);
+      } else {
+        formData.append('file', {
+          uri: fileToUpload.uri,
+          name: fileToUpload.name,
+          type: fileToUpload.type,
+        });
+      }
+      formData.append('target_language', uploadTargetLang);
+      formData.append('include_quiz', uploadIncludeQuiz ? 'true' : 'false');
+
+      const uploadPromise = apiService.uploadWithProgress(
+        '/api/video/upload',
+        formData,
+        (percent) => {
+          setUploadProgress(percent);
+          if (percent < 100) {
+            setAiProcessingStage('uploading');
+            setAiStageProgress(Math.round(percent * 0.35));
+          } else {
+            // Khi truyền file lên server thành công 100%
+            setAiProcessingStage('whisper');
+            setAiStageProgress(45);
+          }
+        }
+      );
+
+      // Cập nhật tiến độ trực quan đa bước trong khi AI đang bóc tách, dịch thuật & tóm tắt
+      let fakeProgress = 45;
+      stageTimer = setInterval(() => {
+        setAiProcessingStage((prevStage) => {
+          if (prevStage === 'uploading') return prevStage;
+          if (prevStage === 'whisper') {
+            fakeProgress = Math.min(72, fakeProgress + 2);
+            setAiStageProgress(fakeProgress);
+            if (fakeProgress >= 70) return 'translating';
+            return 'whisper';
+          }
+          if (prevStage === 'translating') {
+            fakeProgress = Math.min(88, fakeProgress + 1);
+            setAiStageProgress(fakeProgress);
+            if (fakeProgress >= 86) return 'summarizing';
+            return 'translating';
+          }
+          if (prevStage === 'summarizing') {
+            fakeProgress = Math.min(96, fakeProgress + 1);
+            setAiStageProgress(fakeProgress);
+            return 'summarizing';
+          }
+          return prevStage;
+        });
+      }, 700);
+
+      const data = await uploadPromise;
+      if (stageTimer) clearInterval(stageTimer);
+
+      // Hoàn tất 100% thành công!
+      setAiProcessingStage('done');
+      setAiStageProgress(100);
+      setUploadProgress(100);
+
+      if (fileToUpload.localMediaUrl) {
+        data.media_stream_url = fileToUpload.localMediaUrl;
+        data.media_mime_type = fileToUpload.type || '';
+      }
+
+      // Giữ 700ms để người dùng thấy tất cả các bước đã hoàn tất (100% Checkmarks)
+      setTimeout(async () => {
+        setUploadProgress(null);
+        setPendingUploadFile(null);
+        await apiService.saveLectureToLocal(data);
+        await checkHealthAndFetchHistory();
+        onNavigate('SyncPlayer', { lecture: data });
+      }, 700);
+
+    } catch (err) {
+      if (stageTimer) clearInterval(stageTimer);
+      setUploadProgress(null);
+      setPendingUploadFile(null);
+      Alert.alert('Không thể xử lý file', err.message);
     }
   };
 
@@ -714,7 +919,7 @@ export default function HomeScreen({ onNavigate }) {
 
           {/* Nhóm các nút hành động xử lý bài giảng */}
           <View style={styles.actionButtonGroup}>
-            {/* Nút 1: Bắt đầu Tạo Phụ đề Tiêu chuẩn */}
+            {/* Nút duy nhất: Bắt đầu Tạo Phụ đề AI (Tự động nhận diện thời lượng <30p hoặc >=30p) */}
             <TouchableOpacity
               style={[styles.primaryActionBtn, loading && styles.disabledBtn]}
               onPress={handleProcessVideo}
@@ -727,21 +932,16 @@ export default function HomeScreen({ onNavigate }) {
                   <Text style={styles.loadingText}>{loadingStep}</Text>
                 </View>
               ) : (
-                <Text style={styles.primaryActionBtnText}>⚡ BẮT ĐẦU TẠO PHỤ ĐỀ & TÓM TẮT (TIÊU CHUẨN)</Text>
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={styles.primaryActionBtnText}>⚡ BẮT ĐẦU TẠO PHỤ ĐỀ & TÓM TẮT AI</Text>
+                  <Text style={styles.primaryActionBtnSubText}>
+                    Tự động tối ưu: &lt; 30p bóc tách toàn bộ • ≥ 30p xem ngay & nạp ngầm
+                  </Text>
+                </View>
               )}
             </TouchableOpacity>
 
-            {/* Nút 2: Xem ngay & Xử lý song song ngầm cho video dài (Giai đoạn 3) */}
-            <TouchableOpacity
-              style={[styles.streamBtn, loading && styles.disabledBtn]}
-              onPress={handleStreamVideo}
-              disabled={loading}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.streamBtnText}>🚀 XEM NGAY & XỬ LÝ SONG SONG (VIDEO DÀI)</Text>
-            </TouchableOpacity>
-
-            {/* Nút 3: Ghép đôi Video + Phụ đề có sẵn (Giai đoạn 2) */}
+            {/* Nút 2: Ghép đôi Video + Phụ đề có sẵn (Giai đoạn 2) */}
             <TouchableOpacity
               style={[styles.pairBtn, loading && styles.disabledBtn]}
               onPress={handlePairVideoAndSubtitle}
@@ -751,7 +951,7 @@ export default function HomeScreen({ onNavigate }) {
               <Text style={styles.pairBtnText}>🔗 GHÉP ĐÔI VIDEO + PHỤ ĐỀ (SIÊU TỐC)</Text>
             </TouchableOpacity>
 
-            {/* Nút 4: Upload File Nội bộ từ thiết bị */}
+            {/* Nút 3: Upload File Nội bộ từ thiết bị */}
             <TouchableOpacity
               style={[styles.uploadBtn, loading && styles.disabledBtn]}
               onPress={handleUploadFile}
@@ -759,16 +959,6 @@ export default function HomeScreen({ onNavigate }) {
               activeOpacity={0.8}
             >
               <Text style={styles.uploadBtnText}>📁 UPLOAD FILE TỪ THIẾT BỊ (MP4 / MP3)</Text>
-            </TouchableOpacity>
-
-            {/* Nút 5: Nạp phụ đề độc lập */}
-            <TouchableOpacity
-              style={[styles.subtitleUploadBtn, loading && styles.disabledBtn]}
-              onPress={handleUploadSubtitle}
-              disabled={loading}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.subtitleUploadBtnText}>📄 NẠP PHỤ ĐỀ CÓ SẴN (SRT / VTT)</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -795,24 +985,227 @@ export default function HomeScreen({ onNavigate }) {
         {/* Danh sách Bài giảng Gần đây */}
         <View style={styles.cardSection}>
           <View style={styles.recentHeaderRow}>
-            <Text style={styles.sectionHeader}>📚 BÀI GIẢNG ĐÃ XỬ LÝ GẦN ĐÂY</Text>
-            <TouchableOpacity onPress={handleRefresh}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={styles.sectionHeader}>📚 BÀI GIẢNG ĐÃ XỬ LÝ GẦN ĐÂY</Text>
+              <View style={styles.countBadge}>
+                <Text style={styles.countBadgeText}>{filteredAndSortedLectures.length}</Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={handleRefresh} style={styles.reloadBtn}>
               <Text style={styles.reloadText}>Làm mới ↻</Text>
             </TouchableOpacity>
           </View>
 
-          {recentLectures.map((lecture, idx) => (
-            <LectureCard
-              key={`${lecture.video_url}_${idx}`}
-              lecture={lecture}
-              onPress={handleSelectLecture}
-              onDelete={handleDeleteLecture}
+          {/* Thanh Tìm kiếm bài giảng tức thì */}
+          <View style={styles.searchBarContainer}>
+            <Text style={styles.searchIcon}>🔍</Text>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Tìm theo tên bài giảng, tóm tắt, từ khóa..."
+              placeholderTextColor={colors.textMuted}
+              value={searchKeyword}
+              onChangeText={setSearchKeyword}
+              clearButtonMode="while-editing"
             />
-          ))}
+            {searchKeyword.trim() ? (
+              <TouchableOpacity onPress={() => setSearchKeyword('')} style={styles.searchClearBtn}>
+                <Text style={styles.searchClearText}>✕</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {/* Hàng bộ lọc danh mục (Filter Chips) */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterChipScroll}
+            contentContainerStyle={styles.filterChipContainer}
+          >
+            <TouchableOpacity
+              style={[styles.filterChip, activeCategory === 'all' && styles.filterChipActive]}
+              onPress={() => setActiveCategory('all')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.filterChipText, activeCategory === 'all' && styles.filterChipTextActive]}>
+                Tất cả ({recentLectures.length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.filterChip, activeCategory === 'fav' && styles.filterChipActive]}
+              onPress={() => setActiveCategory('fav')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.filterChipText, activeCategory === 'fav' && styles.filterChipTextActive]}>
+                ⭐ Đã ghim ({favorites.length})
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.filterChip, activeCategory === 'en' && styles.filterChipActive]}
+              onPress={() => setActiveCategory('en')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.filterChipText, activeCategory === 'en' && styles.filterChipTextActive]}>
+                🇬🇧 Tiếng Anh
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.filterChip, activeCategory === 'ja' && styles.filterChipActive]}
+              onPress={() => setActiveCategory('ja')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.filterChipText, activeCategory === 'ja' && styles.filterChipTextActive]}>
+                🇯🇵 Tiếng Nhật
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.filterChip, activeCategory === 'upload' && styles.filterChipActive]}
+              onPress={() => setActiveCategory('upload')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.filterChipText, activeCategory === 'upload' && styles.filterChipTextActive]}>
+                📁 File máy
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.filterChip, activeCategory === 'youtube' && styles.filterChipActive]}
+              onPress={() => setActiveCategory('youtube')}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.filterChipText, activeCategory === 'youtube' && styles.filterChipTextActive]}>
+                🔴 YouTube
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+
+          {/* Danh sách thẻ bài giảng */}
+          {filteredAndSortedLectures.length > 0 ? (
+            filteredAndSortedLectures.map((lecture, idx) => (
+              <LectureCard
+                key={`${lecture.video_url}_${idx}`}
+                lecture={lecture}
+                isFavorite={favorites.includes(lecture.video_url)}
+                onToggleFavorite={handleToggleFavorite}
+                playbackProgress={playbackMap[lecture.video_url]}
+                onPress={handleSelectLecture}
+                onDelete={handleDeleteLecture}
+                onExportSRT={handleQuickExportSRT}
+                onExportSummary={handleQuickExportSummary}
+              />
+            ))
+          ) : (
+            <View style={styles.emptyFilterBox}>
+              <Text style={styles.emptyFilterIcon}>🔎</Text>
+              <Text style={styles.emptyFilterTitle}>Không tìm thấy bài giảng phù hợp</Text>
+              <Text style={styles.emptyFilterSub}>
+                {searchKeyword.trim()
+                  ? `Không có kết quả nào cho "${searchKeyword}". Thử từ khóa khác hoặc đặt lại bộ lọc.`
+                  : 'Chưa có bài giảng nào trong danh mục này.'}
+              </Text>
+              {(searchKeyword.trim() || activeCategory !== 'all') && (
+                <TouchableOpacity
+                  style={styles.resetFilterBtn}
+                  onPress={() => {
+                    setSearchKeyword('');
+                    setActiveCategory('all');
+                  }}
+                >
+                  <Text style={styles.resetFilterBtnText}>Đặt lại bộ lọc</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
       </ScrollView>
 
-      {/* Modal Thanh tiến trình Upload (Progress Bar Animation) */}
+      {/* Modal Popup Chọn Ngôn Ngữ Dịch Thuật Cho File Upload */}
+      <Modal
+        visible={uploadConfigModalVisible}
+        transparent
+        animationType="fade"
+      >
+        <View style={styles.configModalBackdrop}>
+          <View style={styles.configModalCard}>
+            <View style={styles.configHeaderRow}>
+              <View style={styles.configIconWrap}>
+                <Text style={styles.configHeaderIcon}>🎯</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.configModalTitle}>TÙY CHỌN DỊCH THUẬT & XỬ LÝ AI</Text>
+                <Text style={styles.configModalSubtitle} numberOfLines={1}>
+                  📁 {pendingUploadFile?.name} {pendingUploadFile?.size ? `(${pendingUploadFile.size})` : ''}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.configSectionTitle}>
+              🌐 Bạn muốn dịch phụ đề sang ngôn ngữ nào?
+            </Text>
+
+            <View style={styles.langGrid}>
+              {UPLOAD_LANG_OPTIONS.map((item) => {
+                const isSelected = uploadTargetLang === item.code;
+                return (
+                  <TouchableOpacity
+                    key={item.code}
+                    style={[styles.langOptionBtn, isSelected && styles.langOptionBtnSelected]}
+                    onPress={() => setUploadTargetLang(item.code)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.langOptionFlag}>{item.flag}</Text>
+                    <Text style={[styles.langOptionText, isSelected && styles.langOptionTextSelected]}>
+                      {item.label}
+                    </Text>
+                    {isSelected && <Text style={styles.langOptionCheck}>✓</Text>}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Tùy chọn trắc nghiệm ôn tập AI */}
+            <View style={styles.quizOptionRow}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={styles.quizOptionTitle}>🧠 Tạo câu hỏi trắc nghiệm (AI Quiz)</Text>
+                <Text style={styles.quizOptionDesc}>Gemini AI tự động tạo bộ câu hỏi kiểm tra sau khi dịch xong</Text>
+              </View>
+              <Switch
+                value={uploadIncludeQuiz}
+                onValueChange={setUploadIncludeQuiz}
+                trackColor={{ false: '#334155', true: colors.primary }}
+                thumbColor={uploadIncludeQuiz ? '#ffffff' : '#94a3b8'}
+              />
+            </View>
+
+            {/* Hàng nút bấm */}
+            <View style={styles.configActionRow}>
+              <TouchableOpacity
+                style={styles.configCancelBtn}
+                onPress={() => {
+                  setUploadConfigModalVisible(false);
+                  setPendingUploadFile(null);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.configCancelText}>Hủy bỏ</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.configSubmitBtn}
+                onPress={handleConfirmUpload}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.configSubmitText}>🚀 BẮT ĐẦU XỬ LÝ & DỊCH</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal Thanh tiến trình Upload & Dịch thuật Đa bước (Multi-stage AI Progress) */}
       <Modal
         visible={uploadProgress !== null}
         transparent
@@ -823,18 +1216,34 @@ export default function HomeScreen({ onNavigate }) {
             <View style={styles.progressHeaderRow}>
               <View style={styles.progressIconWrap}>
                 <Text style={styles.progressIcon}>
-                  {uploadProgress !== null && uploadProgress < 100 ? '🚀' : '🧠'}
+                  {aiProcessingStage === 'uploading'
+                    ? '📤'
+                    : aiProcessingStage === 'whisper'
+                    ? '🎙️'
+                    : aiProcessingStage === 'translating'
+                    ? '🌐'
+                    : aiProcessingStage === 'summarizing'
+                    ? '🧠'
+                    : '🎉'}
                 </Text>
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={styles.progressTitle}>
-                  {uploadProgress !== null && uploadProgress < 100 ? 'ĐANG TẢI LÊN MÁY CHỦ' : 'ĐÃ TẢI LÊN • AI ĐANG XỬ LÝ'}
+                  {aiProcessingStage === 'uploading'
+                    ? 'BƯỚC 1/4 • ĐANG TẢI LÊN MÁY CHỦ'
+                    : aiProcessingStage === 'whisper'
+                    ? 'BƯỚC 2/4 • WHISPER BÓC TÁCH GIỌNG NÓI'
+                    : aiProcessingStage === 'translating'
+                    ? `BƯỚC 3/4 • DỊCH THUẬT SANG ${getLangDisplayName(uploadTargetLang).toUpperCase()}`
+                    : aiProcessingStage === 'summarizing'
+                    ? 'BƯỚC 4/4 • GEMINI AI TÓM TẮT & TẠO QUIZ'
+                    : 'HOÀN TẤT XỬ LÝ BÀI GIẢNG!'}
                 </Text>
                 <Text style={styles.progressFileName} numberOfLines={1}>
                   {uploadDetails.name || 'Bài giảng'} {uploadDetails.size ? `(${uploadDetails.size})` : ''}
                 </Text>
               </View>
-              <Text style={styles.progressPercentText}>{uploadProgress}%</Text>
+              <Text style={styles.progressPercentText}>{aiStageProgress}%</Text>
             </View>
 
             {/* Thanh tiến trình Progress Bar Animation */}
@@ -842,24 +1251,88 @@ export default function HomeScreen({ onNavigate }) {
               <View
                 style={[
                   styles.progressBarFill,
-                  { width: `${Math.max(6, uploadProgress || 0)}%` },
-                  uploadProgress !== null && uploadProgress >= 100 && styles.progressBarFillDone,
+                  { width: `${Math.max(6, aiStageProgress)}%` },
+                  aiStageProgress >= 100 && styles.progressBarFillDone,
                 ]}
               />
             </View>
 
-            {/* Trạng thái chi tiết */}
-            <View style={styles.progressStatusRow}>
-              <Text style={styles.progressStatusText}>
-                {uploadProgress !== null && uploadProgress < 100
-                  ? `Đang truyền file lên máy chủ AI: ${uploadProgress}%...`
-                  : 'Tải lên hoàn tất! 🧠 Whisper AI đang nhận diện giọng nói & đồng bộ timestamps...'}
-              </Text>
+            {/* Checklist 4 Giai đoạn xử lý & dịch thuật */}
+            <View style={styles.stageChecklist}>
+              {/* Bước 1: Upload */}
+              <View style={styles.stageCheckItem}>
+                <Text style={styles.stageCheckIcon}>
+                  {uploadProgress >= 100 ? '✅' : '⏳'}
+                </Text>
+                <Text style={[styles.stageCheckText, uploadProgress >= 100 && styles.stageCheckTextDone]}>
+                  1. Tải file lên máy chủ ({uploadProgress}%)
+                </Text>
+              </View>
+
+              {/* Bước 2: Whisper AI */}
+              <View style={styles.stageCheckItem}>
+                <Text style={styles.stageCheckIcon}>
+                  {['translating', 'summarizing', 'done'].includes(aiProcessingStage)
+                    ? '✅'
+                    : aiProcessingStage === 'whisper'
+                    ? '⏳'
+                    : '⚪'}
+                </Text>
+                <Text
+                  style={[
+                    styles.stageCheckText,
+                    ['translating', 'summarizing', 'done'].includes(aiProcessingStage) && styles.stageCheckTextDone,
+                    aiProcessingStage === 'whisper' && styles.stageCheckTextActive,
+                  ]}
+                >
+                  2. Whisper AI nhận diện giọng nói & timestamps
+                </Text>
+              </View>
+
+              {/* Bước 3: Dịch thuật */}
+              <View style={styles.stageCheckItem}>
+                <Text style={styles.stageCheckIcon}>
+                  {['summarizing', 'done'].includes(aiProcessingStage)
+                    ? '✅'
+                    : aiProcessingStage === 'translating'
+                    ? '⏳'
+                    : '⚪'}
+                </Text>
+                <Text
+                  style={[
+                    styles.stageCheckText,
+                    ['summarizing', 'done'].includes(aiProcessingStage) && styles.stageCheckTextDone,
+                    aiProcessingStage === 'translating' && styles.stageCheckTextActive,
+                  ]}
+                >
+                  3. Dịch thuật song ngữ ({getLangDisplayName(uploadTargetLang)})
+                </Text>
+              </View>
+
+              {/* Bước 4: Tóm tắt & Quiz */}
+              <View style={styles.stageCheckItem}>
+                <Text style={styles.stageCheckIcon}>
+                  {aiProcessingStage === 'done'
+                    ? '✅'
+                    : aiProcessingStage === 'summarizing'
+                    ? '⏳'
+                    : '⚪'}
+                </Text>
+                <Text
+                  style={[
+                    styles.stageCheckText,
+                    aiProcessingStage === 'done' && styles.stageCheckTextDone,
+                    aiProcessingStage === 'summarizing' && styles.stageCheckTextActive,
+                  ]}
+                >
+                  4. Gemini AI tóm tắt bài giảng & biên soạn Quiz
+                </Text>
+              </View>
             </View>
 
             <View style={styles.progressLimitBadge}>
               <Text style={styles.progressLimitText}>
-                🛡️ Giới hạn an toàn: Video/Audio ≤ 150MB • Phụ đề ≤ 10MB
+                🎬 Sau khi hoàn tất, bạn có thể xuất video kèm phụ đề (MP4) ngay trong trình phát!
               </Text>
             </View>
           </View>
@@ -990,6 +1463,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.5,
+  },
+  primaryActionBtnSubText: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 3,
   },
   loadingBox: {
     flexDirection: 'row',
@@ -1156,6 +1635,196 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     alignSelf: 'flex-end',
   },
+
+  // Styles Modal Cấu hình Dịch thuật File Upload
+  configModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(2, 6, 23, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.md,
+  },
+  configModalCard: {
+    width: '100%',
+    maxWidth: 480,
+    backgroundColor: '#0F172A',
+    borderRadius: borderRadius.md,
+    padding: spacing.lg,
+    borderWidth: 1.5,
+    borderColor: 'rgba(99, 102, 241, 0.4)',
+    shadowColor: '#6366f1',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  configHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  configIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.3)',
+  },
+  configHeaderIcon: {
+    fontSize: 22,
+  },
+  configModalTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: colors.primaryLight,
+    letterSpacing: 0.5,
+  },
+  configModalSubtitle: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  configSectionTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs + 2,
+  },
+  langGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: spacing.md,
+  },
+  langOptionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: borderRadius.sm,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.15)',
+    gap: 6,
+  },
+  langOptionBtnSelected: {
+    backgroundColor: 'rgba(99, 102, 241, 0.25)',
+    borderColor: colors.primaryLight,
+  },
+  langOptionFlag: {
+    fontSize: 14,
+  },
+  langOptionText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  langOptionTextSelected: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  langOptionCheck: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '800',
+    marginLeft: 2,
+  },
+  quizOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(30, 41, 59, 0.6)',
+    padding: 10,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.15)',
+    marginBottom: spacing.lg,
+  },
+  quizOptionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  quizOptionDesc: {
+    fontSize: 10.5,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  configActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  configCancelBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: borderRadius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  configCancelText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  configSubmitBtn: {
+    flex: 2,
+    paddingVertical: 10,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  configSubmitText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+
+  // Styles Checklist 4 bước xử lý
+  stageChecklist: {
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    borderRadius: borderRadius.sm,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.1)',
+    gap: 6,
+    marginBottom: spacing.xs,
+  },
+  stageCheckItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  stageCheckIcon: {
+    fontSize: 13,
+    width: 20,
+    textAlign: 'center',
+  },
+  stageCheckText: {
+    fontSize: 11.5,
+    color: colors.textMuted,
+    flex: 1,
+  },
+  stageCheckTextActive: {
+    color: colors.accent,
+    fontWeight: '700',
+  },
+  stageCheckTextDone: {
+    color: '#94a3b8',
+  },
+
   progressModalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(2, 6, 23, 0.82)',
@@ -1251,5 +1920,124 @@ const styles = StyleSheet.create({
   progressLimitText: {
     fontSize: 11,
     color: colors.textMuted,
+  },
+  countBadge: {
+    backgroundColor: 'rgba(99, 102, 241, 0.2)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginLeft: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.35)',
+  },
+  countBadgeText: {
+    color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  reloadBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  searchBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    paddingHorizontal: 12,
+    height: 40,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  searchIcon: {
+    fontSize: 13,
+    marginRight: 8,
+    color: colors.textMuted,
+  },
+  searchInput: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 12.5,
+    padding: 0,
+  },
+  searchClearBtn: {
+    padding: 4,
+  },
+  searchClearText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  filterChipScroll: {
+    marginBottom: spacing.sm + 2,
+  },
+  filterChipContainer: {
+    gap: 6,
+    paddingVertical: 2,
+  },
+  filterChip: {
+    backgroundColor: '#1E293B',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primaryLight,
+  },
+  filterChipText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  emptyFilterBox: {
+    padding: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderStyle: 'dashed',
+    marginTop: 4,
+  },
+  emptyFilterIcon: {
+    fontSize: 28,
+    marginBottom: 8,
+  },
+  emptyFilterTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  emptyFilterSub: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+    maxWidth: 300,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  resetFilterBtn: {
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.primaryLight,
+  },
+  resetFilterBtnText: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

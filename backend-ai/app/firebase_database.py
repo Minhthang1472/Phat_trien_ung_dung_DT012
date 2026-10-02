@@ -128,7 +128,12 @@ class FirebaseService:
             return []
 
         try:
-            docs = self.db.collection("lectures").limit(limit).stream()
+            try:
+                docs = self.db.collection("lectures").order_by("cached_at", direction=firestore.Query.DESCENDING).limit(limit).stream()
+            except Exception as sort_err:
+                logger.warning(f"Lỗi sắp xếp cached_at, fallback sang query cơ bản: {sort_err}")
+                docs = self.db.collection("lectures").limit(limit).stream()
+
             history = []
             for doc in docs:
                 data = doc.to_dict()
@@ -145,6 +150,8 @@ class FirebaseService:
                 ] if isinstance(raw_q, list) else []
                 history.append({
                     "video_url": data.get("video_url"),
+                    "media_url": data.get("media_url") or data.get("media_stream_url"),
+                    "media_stream_url": data.get("media_stream_url") or data.get("media_url"),
                     "title": data.get("title"),
                     "duration_seconds": data.get("duration_seconds"),
                     "language": data.get("language"),

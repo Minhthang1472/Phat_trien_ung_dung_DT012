@@ -194,10 +194,22 @@ class SummaryService:
             ],
         """ if include_quiz else '"quiz": [],'
 
+        # Tối ưu hóa tốc độ: Với video dài (> 7.000 ký tự), trích chọn thông minh các phần cốt lõi để Gemini phản hồi siêu tốc (3-5 giây)
+        condensed_text = full_text.strip()
+        if len(condensed_text) > 7000:
+            mid = len(condensed_text) // 2
+            condensed_text = (
+                condensed_text[:3000]
+                + "\n...[lược bớt đoạn diễn giải kéo dài]...\n"
+                + condensed_text[mid - 1000 : mid + 1000]
+                + "\n...[tiếp tục phần trọng tâm cuối bài]...\n"
+                + condensed_text[-2500:]
+            )
+
         prompt = f"""
-        Bạn là một chuyên gia giáo dục và sư phạm AI xuất sắc. Dưới đây là toàn bộ phụ đề bài giảng:
+        Bạn là một chuyên gia giáo dục và sư phạm AI xuất sắc. Dưới đây là phụ đề bài giảng:
         ---
-        {full_text}
+        {condensed_text}
         ---
         Hãy phân tích chuyên sâu nội dung trên và trả về kết quả ĐÚNG ĐỊNH DẠNG JSON sau:
         {{

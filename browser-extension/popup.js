@@ -164,10 +164,44 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     btnProcessTab.disabled = true;
-    btnProcessTab.innerText = "⏳ AI đang xử lý (Whisper + Dịch)...";
-    statusText.innerText = "Đang trích xuất âm thanh & bóc tách phụ đề...";
+    btnProcessTab.innerText = "⏳ AI đang kiểm tra video...";
+    statusText.innerText = "Đang kiểm tra thời lượng bài giảng...";
 
     try {
+      // 1. Kiểm tra nhanh thời lượng video (< 1 giây)
+      let isLong = false;
+      let durationSec = 0;
+      try {
+        const infoRes = await fetch(`http://127.0.0.1:8000/api/video/info?video_url=${encodeURIComponent(currentTab.url)}`);
+        if (infoRes.ok) {
+          const infoData = await infoRes.json();
+          durationSec = infoData.duration_seconds || 0;
+          if (infoData.is_long_video && !infoData.is_cached) {
+            isLong = true;
+          }
+        }
+      } catch (_) {}
+
+      // 2. Nếu video từ 30 phút trở lên: Tự động kích hoạt xem nhanh & song song
+      if (isLong) {
+        const minutes = Math.round(durationSec / 60);
+        statusText.innerText = `⚡ Video dài ${minutes}p (≥ 30p): Tự động bật xem nhanh song song...`;
+        await safeSendMessage(currentTab.id, {
+          action: "START_LOOKAHEAD",
+          videoUrl: currentTab.url,
+          targetLanguage: targetLang.value,
+          isBilingual: bilingualCheck.checked,
+          sourceLanguage: "en",
+        });
+        statusText.innerText = `⚡ Đã bật xem nhanh cho video ${minutes}p! Phụ đề đang nạp liên tục.`;
+        btnProcessTab.disabled = false;
+        btnProcessTab.innerText = "⚡ Bắt đầu tạo phụ đề AI";
+        return;
+      }
+
+      btnProcessTab.innerText = "⏳ AI đang xử lý (Whisper + Dịch)...";
+      statusText.innerText = "Đang trích xuất âm thanh & bóc tách phụ đề...";
+
       const response = await fetch("http://127.0.0.1:8000/api/video/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -211,18 +245,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // 4. Bật chế độ xem nhanh tức thì (Lookahead 15s)
-  btnLookahead.addEventListener("click", async () => {
-    if (!currentTab || !currentTab.url) return;
-    statusText.innerText = "⏩ Đang tải phụ đề xem nhanh đoạn này...";
-    await safeSendMessage(currentTab.id, {
-      action: "START_LOOKAHEAD",
-      videoUrl: currentTab.url,
-      targetLanguage: targetLang.value,
-      isBilingual: bilingualCheck.checked,
-      sourceLanguage: "en",
+  // 4. Bật chế độ xem nhanh tức thì (nếu có nút)
+  if (btnLookahead) {
+    btnLookahead.addEventListener("click", async () => {
+      if (!currentTab || !currentTab.url) return;
+      statusText.innerText = "⏩ Đang tải phụ đề xem nhanh đoạn này...";
+      await safeSendMessage(currentTab.id, {
+        action: "START_LOOKAHEAD",
+        videoUrl: currentTab.url,
+        targetLanguage: targetLang.value,
+        isBilingual: bilingualCheck.checked,
+        sourceLanguage: "en",
+      });
     });
-  });
+  }
 
   // 5. Ẩn / Hiện phụ đề nổi trên trang
   btnToggleOverlay.addEventListener("click", async () => {

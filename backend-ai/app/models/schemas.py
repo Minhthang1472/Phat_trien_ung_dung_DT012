@@ -44,3 +44,7 @@ class ProcessVideoResponse(BaseModel):
     quiz: Optional[List[dict]] = []
     mindmap: Optional[dict] = None
     exercises: Optional[List[dict]] = []
+    is_streaming: Optional[bool] = False
+    job_id: Optional[str] = None
+    progress: Optional[int] = 100
+    status: Optional[str] = "completed"

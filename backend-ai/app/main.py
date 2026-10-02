@@ -9,6 +9,7 @@ import uuid
 import logging
 import shutil
 import subprocess
+import tempfile
 
 from app.core.config import settings
 from app.firebase_database import firebase_service
@@ -348,10 +349,13 @@ async def upload_video(
 @app.post("/api/video/burn-subtitles")
 async def burn_subtitles_into_video(request: BurnSubtitlesRequest):
     """Render translated subtitle timestamps directly into an uploaded MP4."""
-    if not request.media_url.startswith("/uploads/"):
+    media_url = request.media_url
+    if "/uploads/" in media_url:
+        media_url = "/uploads/" + media_url.split("/uploads/", 1)[1]
+    if not media_url.startswith("/uploads/"):
         raise HTTPException(status_code=400, detail="Chi co the chen phu de vao video da upload len he thong.")
 
-    source_name = os.path.basename(request.media_url)
+    source_name = os.path.basename(media_url)
     source_path = os.path.abspath(os.path.join(UPLOAD_DIR, source_name))
     if not source_path.startswith(os.path.abspath(UPLOAD_DIR) + os.sep) or not os.path.isfile(source_path):
         raise HTTPException(status_code=404, detail="Khong tim thay file video da upload.")
@@ -666,28 +670,97 @@ import threading
 streaming_jobs = {}
 
 def _run_background_transcription(job_id: str, audio_path: str, target_lang: str, src_lang: str):
-    """Worker tiến trình ngầm nhận diện toàn bộ audio và sinh Mindmap/Quiz mà không khóa UI"""
+    """
+    Worker tiến trình ngầm cho VIDEO DÀI:
+    - Bóc tách theo luồng Streaming Generator liên tục.
+    - Cứ mỗi 3 câu mới (khoảng 8-15 giây audio), dịch ngay và nhồi trực tiếp vào job["segments"].
+    - Đảm bảo người dùng xem tới đâu thì phụ đề đã có sẵn tới đó, gối đầu liên tục không bị khựng sau 30 giây!
+    """
     try:
-        segments, detected = whisper_service.transcribe_audio(
+        job = streaming_jobs.get(job_id)
+        if not job:
+            return
+
+        duration = float(job.get("duration_seconds") or 1800.0)
+        # Giữ lại các câu 30s đầu đã được load ban đầu
+        existing_segments = list(job.get("segments", []))
+        all_segments = list(existing_segments)
+        max_existing_end = max((float(s.get("end", 0)) for s in existing_segments), default=0.0)
+
+        buffer_batch = []
+        detected = "en"
+
+        for raw_seg in whisper_service.transcribe_audio_generator(
             audio_path=audio_path,
             language=None if src_lang == "auto" else src_lang,
             task="transcribe"
-        )
-        if target_lang != detected:
-            segments = translation_service.translate_segments(
-                segments,
-                source_lang=detected,
-                target_lang=target_lang
-            )
-        else:
-            for s in segments:
-                s["translated_text"] = s.get("text", "")
+        ):
+            detected = raw_seg.get("detected_language") or detected
 
-        transcript = " ".join(s.get("text", "") for s in segments)
+            # Bỏ qua các câu rơi vào khoảng 30s đầu đã được nạp trước đó
+            if float(raw_seg.get("end", 0)) <= max_existing_end:
+                continue
+
+            buffer_batch.append(raw_seg)
+
+            # Cứ mỗi 3 câu mới: Dịch ngay lập tức và bơm vào danh sách phụ đề đang chạy!
+            if len(buffer_batch) >= 3:
+                translated_batch = list(buffer_batch)
+                if target_lang != detected:
+                    try:
+                        translated_batch = translation_service.translate_segments(
+                            translated_batch,
+                            source_lang=detected,
+                            target_lang=target_lang
+                        )
+                    except Exception as te:
+                        logger.warning(f"Lỗi dịch batch nhỏ: {te}")
+                        for s in translated_batch:
+                            s["translated_text"] = s.get("text", "")
+                else:
+                    for s in translated_batch:
+                        s["translated_text"] = s.get("text", "")
+
+                for item in translated_batch:
+                    item["id"] = len(all_segments)
+                    all_segments.append(item)
+
+                buffer_batch = []
+
+                # Cập nhật trực tiếp vào job để Frontend SyncPlayer nhận ngay ở lần poll tiếp theo
+                job["segments"] = list(all_segments)
+                job["detected_language"] = detected
+                prog = min(95, max(10, int((float(raw_seg.get("end", 0)) / duration) * 100)))
+                job["progress"] = prog
+
+        # Dịch nốt các câu còn lại trong buffer nếu còn
+        if buffer_batch:
+            translated_batch = list(buffer_batch)
+            if target_lang != detected:
+                try:
+                    translated_batch = translation_service.translate_segments(
+                        translated_batch,
+                        source_lang=detected,
+                        target_lang=target_lang
+                    )
+                except Exception:
+                    for s in translated_batch:
+                        s["translated_text"] = s.get("text", "")
+            else:
+                for s in translated_batch:
+                    s["translated_text"] = s.get("text", "")
+
+            for item in translated_batch:
+                item["id"] = len(all_segments)
+                all_segments.append(item)
+
+            job["segments"] = list(all_segments)
+
+        # Toàn bộ video dài đã xong: Tạo Tóm tắt, Mindmap, Quiz siêu tốc
+        transcript = " ".join(s.get("text", "") for s in all_segments)
         summary_data = summary_service.summarize_transcript(transcript, include_quiz=True)
 
-        job = streaming_jobs.get(job_id, {})
-        job["segments"] = segments
+        job["segments"] = all_segments
         job["detected_language"] = detected
         job["summary"] = summary_data.get("summary", "")
         job["key_points"] = summary_data.get("key_points", [])
@@ -704,7 +777,7 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
             "duration_seconds": job["duration_seconds"],
             "language": target_lang,
             "detected_language": detected,
-            "segments": segments,
+            "segments": all_segments,
             "summary": job["summary"],
             "key_points": job["key_points"],
             "formulas_and_terms": job["formulas_and_terms"],
@@ -713,6 +786,7 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
             "exercises": job["exercises"]
         }
         firebase_service.save_lecture_cache(job["video_url"], full_res)
+        logger.info(f"Đã hoàn thành nạp gối đầu toàn bộ video dài [{job.get('title')}]: {len(all_segments)} câu phụ đề.")
     except Exception as e:
         logger.error(f"Lỗi worker xử lý ngầm video: {e}")
         if job_id in streaming_jobs:
@@ -745,18 +819,23 @@ async def init_streaming_video(request: ProcessVideoRequest):
     audio_path = audio_info["audio_path"]
     job_id = uuid.uuid4().hex[:12]
 
-    # Lookahead cực nhanh 30s đầu để người dùng có thể xem phụ đề ngay
+    # Lookahead cực nhanh 30s đầu từ file audio_path cục bộ (chỉ mất 0.05 giây!)
     fast_segments = []
+    fast_wav = os.path.join(tempfile.gettempdir(), f"fast_{job_id}.wav")
     try:
-        win_info = audio_service.extract_audio_from_url(url, duration_limit_sec=30)
-        fast_segments, det = whisper_service.transcribe_audio(audio_path=win_info["audio_path"], task="transcribe")
-        if target_lang != det:
-            fast_segments = translation_service.translate_segments(fast_segments, source_lang=det, target_lang=target_lang)
-        if os.path.exists(win_info["audio_path"]):
-            try: os.remove(win_info["audio_path"])
-            except Exception: pass
+        import subprocess
+        cmd = ["ffmpeg", "-y", "-i", audio_path, "-t", "30", "-ar", "16000", "-ac", "1", fast_wav]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        if os.path.exists(fast_wav):
+            fast_segments, det = whisper_service.transcribe_audio(audio_path=fast_wav, task="transcribe")
+            if target_lang != det:
+                fast_segments = translation_service.translate_segments(fast_segments, source_lang=det, target_lang=target_lang)
     except Exception as e:
         logger.warning(f"Lỗi lookahead khởi đầu: {e}")
+    finally:
+        if os.path.exists(fast_wav):
+            try: os.remove(fast_wav)
+            except Exception: pass
 
     streaming_jobs[job_id] = {
         "job_id": job_id,
@@ -803,7 +882,14 @@ async def get_stream_status(job_id: str = Query(..., description="ID của phiê
     """
     job = streaming_jobs.get(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Không tìm thấy phiên xử lý nền.")
+        return {
+            "job_id": job_id,
+            "status": "not_found",
+            "progress": 100,
+            "segments": [],
+            "is_completed": True,
+            "error": "Phiên xử lý không tồn tại hoặc server vừa khởi động lại."
+        }
 
     return {
         "job_id": job_id,
@@ -818,3 +904,36 @@ async def get_stream_status(job_id: str = Query(..., description="ID của phiê
         "exercises": job.get("exercises", []),
         "is_completed": job.get("status") == "completed"
     }
+
+
+@app.get("/api/video/info")
+async def get_video_info_endpoint(video_url: str = Query(..., description="Đường link video YouTube hoặc bài giảng")):
+    """
+    Kiểm tra nhanh tiêu đề và thời lượng video (< 1 giây) để phân loại:
+    - Dưới 30 phút (< 1800s): Xử lý toàn bộ (transcribe full).
+    - Từ 30 phút trở lên (>= 1800s): Kích hoạt chế độ Xem ngay & Xử lý song song (streaming background).
+    """
+    url = video_url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Vui lòng cung cấp URL video hợp lệ.")
+    
+    # Kiểm tra Firestore cache trước
+    cached = firebase_service.get_lecture_cache(url)
+    if cached:
+        duration = float(cached.get("duration_seconds", 0) or 0)
+        return {
+            "title": cached.get("title", "Bài giảng"),
+            "duration_seconds": duration,
+            "is_cached": True,
+            "is_long_video": duration >= 1800
+        }
+
+    info = audio_service.get_video_info(url)
+    duration = float(info.get("duration", 0) or 0)
+    return {
+        "title": info.get("title", "Bài giảng"),
+        "duration_seconds": duration,
+        "is_cached": False,
+        "is_long_video": duration >= 1800
+    }
+

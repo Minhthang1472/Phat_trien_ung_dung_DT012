@@ -1,4 +1,7 @@
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { getDefaultApiUrl, STORAGE_KEYS } from '../constants/config';
 
 class ApiService {
@@ -52,6 +55,19 @@ class ApiService {
     } catch (err) {
       return { online: false, error: err.message || 'Không thể kết nối máy chủ' };
     }
+  }
+
+  async getVideoInfo(videoUrl) {
+    try {
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/video/info?video_url=${encodeURIComponent(videoUrl)}`);
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (err) {
+      console.warn('Lỗi đọc metadata video nhanh:', err);
+    }
+    return { title: '', duration_seconds: 0, is_long_video: false };
   }
 
   async processVideo(videoUrl, targetLanguage = 'vi', sourceLanguage = 'auto', maxDuration = null, includeQuiz = true) {
@@ -295,6 +311,10 @@ class ApiService {
     }
   }
 
+  async saveLectureToLocal(lecture) {
+    return await this.saveToLocalHistory(lecture);
+  }
+
   async getLocalHistory() {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.RECENT_LECTURES);
@@ -339,6 +359,192 @@ class ApiService {
     }
 
     return true;
+  }
+
+  // --- Tiến độ phát video (Resume Playback) ---
+  async savePlaybackProgress(videoUrl, currentTime, duration) {
+    if (!videoUrl) return;
+    try {
+      const map = await this.getPlaybackProgressMap();
+      const cur = Math.max(0, Math.round(currentTime || 0));
+      const dur = Math.max(1, Math.round(duration || 0));
+      const percent = Math.min(100, Math.round((cur / dur) * 100));
+      map[videoUrl] = {
+        currentTime: cur,
+        duration: dur,
+        percent,
+        lastUpdated: Date.now(),
+      };
+      await AsyncStorage.setItem(STORAGE_KEYS.PLAYBACK_PROGRESS, JSON.stringify(map));
+    } catch (e) {
+      console.warn('Lỗi lưu tiến độ phát:', e);
+    }
+  }
+
+  async getPlaybackProgressMap() {
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.PLAYBACK_PROGRESS);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {
+      console.warn('Lỗi đọc tiến độ phát:', e);
+    }
+    return {};
+  }
+
+  // --- Danh sách bài giảng Yêu thích / Ghim (Favorites / Pin) ---
+  async getFavorites() {
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.FAVORITES);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {
+      console.warn('Lỗi đọc favorites:', e);
+    }
+    return [];
+  }
+
+  async toggleFavorite(videoUrl) {
+    if (!videoUrl) return [];
+    try {
+      const favs = await this.getFavorites();
+      let updated;
+      if (favs.includes(videoUrl)) {
+        updated = favs.filter((u) => u !== videoUrl);
+      } else {
+        updated = [videoUrl, ...favs];
+      }
+      await AsyncStorage.setItem(STORAGE_KEYS.FAVORITES, JSON.stringify(updated));
+      return updated;
+    } catch (e) {
+      console.warn('Lỗi cập nhật favorites:', e);
+      return [];
+    }
+  }
+
+  // --- Xuất file Phụ đề & Tóm tắt nhanh ---
+  async exportFile(filename, content, mimeType = 'text/plain') {
+    try {
+      if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        return true;
+      }
+
+      // Trên Mobile (iOS / Android)
+      const filePath = `${FileSystem.cacheDirectory}${filename}`;
+      await FileSystem.writeAsStringAsync(filePath, content, { encoding: FileSystem.EncodingType.UTF8 });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(filePath, {
+          mimeType,
+          dialogTitle: `Tải xuống ${filename}`,
+        });
+      }
+      return true;
+    } catch (err) {
+      console.warn('Lỗi xuất file:', err);
+      throw err;
+    }
+  }
+
+  exportLectureSRT(lecture) {
+    const segments = lecture.segments || [];
+    if (!segments || segments.length === 0) {
+      throw new Error('Bài giảng chưa có danh sách phụ đề.');
+    }
+    const formatSRTTime = (sec) => {
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      const ms = Math.round((sec % 1) * 1000);
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+    };
+
+    let srt = '';
+    segments.forEach((seg, idx) => {
+      srt += `${idx + 1}\n`;
+      srt += `${formatSRTTime(seg.start || 0)} --> ${formatSRTTime(seg.end || 0)}\n`;
+      srt += `${seg.text || ''}\n`;
+      if (seg.original_text && seg.original_text.trim() !== (seg.text || '').trim()) {
+        srt += `${seg.original_text}\n`;
+      }
+      srt += '\n';
+    });
+
+    const safeTitle = (lecture.title || 'lecture').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
+    return this.exportFile(`${safeTitle}.srt`, srt, 'application/x-subrip');
+  }
+
+  exportLectureSummary(lecture) {
+    let text = `BÀI GIẢNG: ${lecture.title || 'Không tên'}\n`;
+    text += `Thời lượng: ${lecture.duration_seconds || 0} giây\n`;
+    text += `Ngôn ngữ: ${(lecture.language || 'vi').toUpperCase()}\n`;
+    text += `Nguồn: ${lecture.video_url || ''}\n\n`;
+    text += `=====================================\n`;
+    text += `TÓM TẮT BÀI HỌC (AI SUMMARY):\n`;
+    text += `${lecture.summary || 'Chưa có tóm tắt'}\n\n`;
+
+    if (lecture.key_points && lecture.key_points.length > 0) {
+      text += `=====================================\n`;
+      text += `CÁC Ý CHÍNH QUAN TRỌNG (KEY POINTS):\n`;
+      lecture.key_points.forEach((kp, idx) => {
+        text += `${idx + 1}. ${kp}\n`;
+      });
+      text += '\n';
+    }
+
+    if (lecture.formulas_and_terms && lecture.formulas_and_terms.length > 0) {
+      text += `=====================================\n`;
+      text += `TỪ VỰNG & THUẬT NGỮ CỐT LÕI:\n`;
+      lecture.formulas_and_terms.forEach((item, idx) => {
+        text += `- ${item}\n`;
+      });
+      text += '\n';
+    }
+
+    const safeTitle = (lecture.title || 'lecture_summary').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
+    return this.exportFile(`${safeTitle}_Summary.txt`, text, 'text/plain');
+  }
+
+  // --- Xuất Video kèm phụ đề ghi cứng (Burn/Hardsub MP4 bằng FFmpeg) ---
+  async burnSubtitlesIntoVideo(mediaUrl, segments) {
+    const baseUrl = await this.getBaseUrl();
+    const formattedSegments = (segments || []).map((seg, idx) => ({
+      id: typeof seg.id === 'number' ? seg.id : idx,
+      start: Number(seg.start) || 0,
+      end: Number(seg.end) || 0,
+      text: String(seg.text || ''),
+      original_text: seg.original_text ? String(seg.original_text) : undefined,
+      translated_text: seg.translated_text ? String(seg.translated_text) : undefined,
+    }));
+
+    const response = await fetch(`${baseUrl}/api/video/burn-subtitles`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        media_url: mediaUrl,
+        segments: formattedSegments,
+      }),
+    });
+
+    if (!response.ok) {
+      let errMsg = `Lỗi render phụ đề vào video (${response.status})`;
+      try {
+        const data = await response.json();
+        errMsg = data.detail || errMsg;
+      } catch (_) {}
+      throw new Error(errMsg);
+    }
+
+    return await response.json();
   }
 }
 
