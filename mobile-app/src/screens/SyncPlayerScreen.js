@@ -19,6 +19,24 @@ import SubtitleItem from '../components/SubtitleItem';
 import SummaryQuizScreen from './SummaryQuizScreen';
 import { apiService } from '../services/api';
 
+const LANG_MAP = {
+  vi: { code: 'vi', name: 'Tiếng Việt', flag: '🇻🇳' },
+  en: { code: 'en', name: 'Tiếng Anh', flag: '🇺🇸' },
+  ja: { code: 'ja', name: 'Tiếng Nhật', flag: '🇯🇵' },
+  ko: { code: 'ko', name: 'Tiếng Hàn', flag: '🇰🇷' },
+  zh: { code: 'zh', name: 'Tiếng Trung', flag: '🇨🇳' },
+  fr: { code: 'fr', name: 'Tiếng Pháp', flag: '🇫🇷' },
+  de: { code: 'de', name: 'Tiếng Đức', flag: '🇩🇪' },
+  es: { code: 'es', name: 'Tiếng Tây Ban Nha', flag: '🇪🇸' },
+  ru: { code: 'ru', name: 'Tiếng Nga', flag: '🇷🇺' },
+};
+
+const getLangMeta = (code, fallbackName = 'Ngôn ngữ') => {
+  if (!code) return { code: '', name: fallbackName, flag: '🌐' };
+  const clean = String(code).toLowerCase().trim();
+  return LANG_MAP[clean] || { code: clean, name: clean.toUpperCase(), flag: '🌐' };
+};
+
 export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
   const effectiveSeekTime = initialSeekTime || lecture?.initial_time || 0;
   const [currentTab, setCurrentTab] = useState('subtitles'); // 'subtitles' | 'summary'
@@ -29,7 +47,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
   const [serverBaseUrl, setServerBaseUrl] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showCC, setShowCC] = useState(true);
-  const [subMode, setSubMode] = useState('bilingual'); // 'bilingual' | 'vi' | 'en'
+  const [subMode, setSubMode] = useState('bilingual'); // 'bilingual' | 'target' | 'original'
 
   // Trắc nghiệm theo mốc thời gian (In-Video Checkpoint Quiz)
   const [interactiveQuizEnabled, setInteractiveQuizEnabled] = useState(true);
@@ -94,7 +112,42 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
   const duration = lecture?.duration_seconds || 300;
   const segments = liveSegments.length > 0 ? liveSegments : (lecture?.segments || []);
   const title = lecture?.title || 'Bài giảng đồng bộ phụ đề AI';
-  const language = (lecture?.language || 'vi').toUpperCase();
+
+  // Xác định chuẩn xác ngôn ngữ đích (Phụ đề dịch) và ngôn ngữ gốc (Người nói trong video)
+  const targetLangCode = (lecture?.language || 'vi').toLowerCase();
+  const language = targetLangCode.toUpperCase();
+  const targetLangInfo = getLangMeta(targetLangCode, 'Bản dịch');
+
+  const sourceLangCode = useMemo(() => {
+    if (lecture?.detected_language) {
+      return String(lecture.detected_language).toLowerCase();
+    }
+    if (lecture?.source_language && lecture.source_language !== 'auto') {
+      return String(lecture.source_language).toLowerCase();
+    }
+    const allOriginal = segments.slice(0, 10).map((s) => s.original_text || '').join(' ');
+    if (/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/.test(allOriginal)) return 'ja';
+    if (/[\uac00-\ud7af]/.test(allOriginal)) return 'ko';
+    if (/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(allOriginal)) return 'vi';
+    return targetLangCode === 'en' ? 'ja' : 'en';
+  }, [lecture?.detected_language, lecture?.source_language, segments, targetLangCode]);
+
+  const sourceLangInfo = getLangMeta(sourceLangCode, 'Ngôn ngữ gốc');
+
+  const hasDifferentOriginal = useMemo(() => {
+    return segments.some(
+      (s) => s.original_text && s.text && s.original_text.trim() !== s.text.trim()
+    );
+  }, [segments]);
+
+  // Trích xuất văn bản phụ đề theo đúng ngôn ngữ người dùng đang chọn
+  const getSegmentText = (seg) => {
+    if (!seg) return '';
+    if (subMode === 'original') {
+      return seg.original_text || seg.text || '';
+    }
+    return seg.translated_text || seg.text || seg.original_text || '';
+  };
 
   // Khởi tạo các mốc Checkpoint Quiz theo thời lượng bài giảng (In-Video Quiz)
   const rawQuizzes = lecture?.quiz || lecture?.full_data?.quiz || [];
@@ -184,9 +237,10 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
     ? segments
     : segments.filter((seg) => {
         const q = searchQuery.toLowerCase();
+        const activeText = getSegmentText(seg).toLowerCase();
         const textMatch = seg.text && seg.text.toLowerCase().includes(q);
         const origMatch = seg.original_text && seg.original_text.toLowerCase().includes(q);
-        return textMatch || origMatch;
+        return activeText.includes(q) || textMatch || origMatch;
       });
 
   const isYouTube =
@@ -388,103 +442,6 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
     } catch (_) {}
   };
 
-  const handleBurnSubtitles = async () => {
-    let rawMediaUrl = null;
-    if (lecture?.media_url && lecture.media_url.includes('/uploads/')) {
-      rawMediaUrl = lecture.media_url;
-    } else if (lecture?.media_stream_url && lecture.media_stream_url.includes('/uploads/')) {
-      rawMediaUrl = lecture.media_stream_url;
-    } else if (lecture?.media_url) {
-      rawMediaUrl = lecture.media_url;
-    }
-
-    if (!rawMediaUrl || segments.length === 0) {
-      Alert.alert('Chưa sẵn sàng', 'Chỉ có thể xuất video kèm phụ đề cho video đã tải lên từ máy.');
-      return;
-    }
-    setBurningSubtitles(true);
-    try {
-      const result = await apiService.burnSubtitlesIntoVideo(rawMediaUrl, segments);
-      setBurnedMediaUrl(result.media_url);
-
-      const downloadUrl = result.media_url.startsWith('http')
-        ? result.media_url
-        : `${serverBaseUrl}${result.media_url}`;
-
-      // Trên Web: Tự động kích hoạt tải xuống file MP4 ghi cứng
-      if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = result.filename || `video_kem_phu_de_${Date.now()}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      } else {
-        // Trên Mobile (iOS / Android)
-        const localPath = `${FileSystem.cacheDirectory}${result.filename || 'video_kem_phu_de.mp4'}`;
-        const downloadRes = await FileSystem.downloadAsync(downloadUrl, localPath);
-        const canShare = await Sharing.isAvailableAsync();
-        if (canShare) {
-          await Sharing.shareAsync(downloadRes.uri, {
-            mimeType: 'video/mp4',
-            dialogTitle: 'Lưu Video MP4 kèm phụ đề',
-          });
-        }
-      }
-
-      Alert.alert(
-        '🎉 Xuất Video Thành Công!',
-        'Video MP4 hoàn chỉnh đã được ghi cứng phụ đề chuẩn xác từng giây và tự động tải về thiết bị của bạn.',
-        [{ text: 'Tuyệt vời!' }]
-      );
-    } catch (error) {
-      Alert.alert('Không thể xuất video kèm phụ đề', error.message);
-    } finally {
-      setBurningSubtitles(false);
-    }
-  };
-
-  // Xuất file phụ đề SRT chuẩn
-  const handleExportSRT = async () => {
-    if (segments.length === 0) {
-      Alert.alert('Không có dữ liệu', 'Bài giảng này chưa có phụ đề để xuất.');
-      return;
-    }
-    try {
-      const formatSRTTime = (sec) => {
-        const h = Math.floor(sec / 3600);
-        const m = Math.floor((sec % 3600) / 60);
-        const s = Math.floor(sec % 60);
-        const ms = Math.round((sec % 1) * 1000);
-        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
-      };
-
-      let srtContent = '';
-      segments.forEach((seg, idx) => {
-        srtContent += `${idx + 1}\n`;
-        srtContent += `${formatSRTTime(seg.start)} --> ${formatSRTTime(seg.end)}\n`;
-        srtContent += `${seg.text}\n\n`;
-      });
-
-      const safeTitle = (title || 'lecture').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
-      const filePath = `${FileSystem.cacheDirectory}${safeTitle}.srt`;
-      await FileSystem.writeAsStringAsync(filePath, srtContent, { encoding: FileSystem.EncodingType.UTF8 });
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(filePath, {
-          mimeType: 'application/x-subrip',
-          dialogTitle: 'Xuất file phụ đề SRT',
-          UTI: 'com.apple.subrip',
-        });
-      } else {
-        Alert.alert('Thành công', `File SRT đã được lưu tại:\n${filePath}`);
-      }
-    } catch (err) {
-      Alert.alert('Lỗi xuất SRT', err.message);
-    }
-  };
-
   const formatTime = (sec) => {
     if (typeof sec !== 'number') return '00:00';
     const m = Math.floor(sec / 60);
@@ -500,8 +457,19 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
         onBack={onBack}
         serverStatus={{ online: true }}
         rightElement={
-          <View style={styles.langBadge}>
-            <Text style={styles.langBadgeText}>{language}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity
+              style={styles.headerShareBtn}
+              onPress={handleShare}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.headerShareText}>📤 Chia sẻ</Text>
+            </TouchableOpacity>
+            <View style={styles.langBadge}>
+              <Text style={styles.langBadgeText}>
+                {targetLangInfo.flag} {targetLangInfo.code.toUpperCase()}
+              </Text>
+            </View>
           </View>
         }
       />
@@ -621,9 +589,11 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
                 <View style={styles.ccOverlayContainer} pointerEvents="none">
                   <View style={styles.ccOverlayBox}>
                     <Text style={styles.ccOverlayText}>
-                      {subMode === 'en' ? (activeSegment.original_text || activeSegment.text) : activeSegment.text}
+                      {subMode === 'original'
+                        ? (activeSegment.original_text || activeSegment.text)
+                        : (activeSegment.translated_text || activeSegment.text || activeSegment.original_text)}
                     </Text>
-                    {subMode === 'bilingual' && activeSegment.original_text && activeSegment.original_text.trim() !== activeSegment.text.trim() && (
+                    {subMode === 'bilingual' && activeSegment.original_text && activeSegment.original_text.trim() !== (activeSegment.translated_text || activeSegment.text || '').trim() && (
                       <Text style={styles.ccOverlaySubText}>{activeSegment.original_text}</Text>
                     )}
                   </View>
@@ -748,37 +718,46 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
             </View>
           </View>
 
-          {/* Thanh chọn chế độ Ngôn ngữ & Chế độ Song ngữ */}
+          {/* Thanh chọn chế độ Ngôn ngữ Phụ đề */}
           <View style={styles.langModeBar}>
             <Text style={styles.langModeLabel}>Phụ đề:</Text>
             <View style={styles.langModeButtons}>
+              {/* Nút 1: Chế độ Song ngữ (nếu có bản dịch khác tiếng gốc) */}
+              {(hasDifferentOriginal || sourceLangCode !== targetLangCode) && (
+                <TouchableOpacity
+                  style={[styles.langModeBtn, subMode === 'bilingual' && styles.langModeBtnActive]}
+                  onPress={() => setSubMode('bilingual')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.langModeBtnText, subMode === 'bilingual' && styles.langModeBtnTextActive]}>
+                    🌐 Song ngữ
+                  </Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Nút 2: Phụ đề đã dịch (Target Language) */}
               <TouchableOpacity
-                style={[styles.langModeBtn, subMode === 'bilingual' && styles.langModeBtnActive]}
-                onPress={() => setSubMode('bilingual')}
+                style={[styles.langModeBtn, subMode === 'target' && styles.langModeBtnActive]}
+                onPress={() => setSubMode('target')}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.langModeBtnText, subMode === 'bilingual' && styles.langModeBtnTextActive]}>
-                  🌐 Song ngữ
+                <Text style={[styles.langModeBtnText, subMode === 'target' && styles.langModeBtnTextActive]}>
+                  {targetLangInfo.flag} {targetLangInfo.name}
                 </Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.langModeBtn, subMode === 'vi' && styles.langModeBtnActive]}
-                onPress={() => setSubMode('vi')}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.langModeBtnText, subMode === 'vi' && styles.langModeBtnTextActive]}>
-                  🇻🇳 Tiếng Việt
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.langModeBtn, subMode === 'en' && styles.langModeBtnActive]}
-                onPress={() => setSubMode('en')}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.langModeBtnText, subMode === 'en' && styles.langModeBtnTextActive]}>
-                  🇺🇸 Tiếng Anh
-                </Text>
-              </TouchableOpacity>
+
+              {/* Nút 3: Ngôn ngữ gốc người nói trong video (nếu khác với ngôn ngữ dịch) */}
+              {(hasDifferentOriginal || sourceLangCode !== targetLangCode) && (
+                <TouchableOpacity
+                  style={[styles.langModeBtn, subMode === 'original' && styles.langModeBtnActive]}
+                  onPress={() => setSubMode('original')}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.langModeBtnText, subMode === 'original' && styles.langModeBtnTextActive]}>
+                    {sourceLangInfo.flag} {sourceLangInfo.name} (Gốc)
+                  </Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 
@@ -824,11 +803,11 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
             </View>
           )}
 
-          {/* Thanh tìm kiếm phụ đề và mốc thời gian */}
+          {/* Thanh tìm kiếm phụ đề và mốc thời gian (Yêu cầu 3) */}
           <View style={styles.searchBar}>
             <TextInput
               style={styles.searchInput}
-              placeholder="🔍 Tìm câu / thuật ngữ trong bài giảng..."
+              placeholder="🔍 Tìm câu / chủ đề bài giảng (ví dụ: công thức, khái niệm)..."
               placeholderTextColor={colors.textMuted}
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -840,27 +819,15 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
             )}
           </View>
 
-          {/* Thanh công cụ Xuất file */}
-          <View style={styles.exportToolbar}>
-            <TouchableOpacity style={styles.exportSrtBtn} onPress={handleExportSRT} activeOpacity={0.8}>
-              <Text style={styles.exportSrtBtnText}>📄 Xuất SRT</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.8}>
-              <Text style={styles.shareBtnText}>📤 Chia sẻ</Text>
-            </TouchableOpacity>
-            {isUploadedVideo && (
-              <TouchableOpacity
-                style={[styles.burnBtn, burningSubtitles && styles.disabledBtn]}
-                onPress={handleBurnSubtitles}
-                disabled={burningSubtitles}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.burnBtnText}>
-                  {burningSubtitles ? '⏳ Đang render video...' : '🎬 Xuất Video kèm phụ đề (MP4)'}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          {/* Thống kê kết quả tìm kiếm (Yêu cầu 3) */}
+          {searchQuery.trim().length > 0 && (
+            <View style={styles.searchStatsBar}>
+              <Text style={styles.searchStatsText}>
+                🎯 Tìm thấy <Text style={{ color: '#f59e0b', fontWeight: '800' }}>{filteredSegments.length}</Text> câu phụ đề khớp với "{searchQuery.trim()}":
+              </Text>
+            </View>
+          )}
+
 
           {/* Danh sách phụ đề đồng bộ chạy theo giây */}
           <ScrollView
@@ -876,6 +843,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
                   isActive={segments[activeSegmentIndex] === seg}
                   onSeek={handleSeek}
                   subMode={subMode}
+                  searchQuery={searchQuery}
                 />
               ))
             ) : (
@@ -1052,56 +1020,33 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontStyle: 'italic',
   },
-  exportToolbar: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    gap: spacing.sm,
-  },
-  exportSrtBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(56, 189, 248, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.4)',
-    paddingVertical: 6,
+  headerShareBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     borderRadius: borderRadius.sm,
-    alignItems: 'center',
-  },
-  exportSrtBtnText: {
-    color: '#38bdf8',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  shareBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(168, 85, 247, 0.1)',
+    backgroundColor: 'rgba(168, 85, 247, 0.15)',
     borderWidth: 1,
     borderColor: 'rgba(168, 85, 247, 0.4)',
-    paddingVertical: 6,
-    borderRadius: borderRadius.sm,
-    alignItems: 'center',
   },
-  shareBtnText: {
+  headerShareText: {
     color: '#c084fc',
     fontSize: 12,
     fontWeight: '700',
   },
-  burnBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(34, 197, 94, 0.45)',
-    paddingVertical: 6,
+  searchStatsBar: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
     borderRadius: borderRadius.sm,
-    alignItems: 'center',
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
   },
-  burnBtnText: {
-    color: '#4ade80',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  disabledBtn: {
-    opacity: 0.55,
+  searchStatsText: {
+    fontSize: 11,
+    color: '#f8fafc',
+    fontWeight: '600',
   },
   subtitlesScroll: {
     flex: 1,

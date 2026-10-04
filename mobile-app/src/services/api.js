@@ -70,23 +70,116 @@ class ApiService {
     return { title: '', duration_seconds: 0, is_long_video: false };
   }
 
-  async processVideo(videoUrl, targetLanguage = 'vi', sourceLanguage = 'auto', maxDuration = null, includeQuiz = true) {
+  async cancelJob(jobId) {
+    if (!jobId) return false;
+    try {
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/video/cancel/${encodeURIComponent(jobId)}`, {
+        method: 'POST',
+      });
+      return response.ok;
+    } catch (err) {
+      console.warn('Lỗi gọi API hủy tác vụ:', err);
+      return false;
+    }
+  }
+
+  async updateLectureMeta(videoUrl, { folder, tags }) {
+    try {
+      const baseUrl = await this.getBaseUrl();
+      const response = await fetch(`${baseUrl}/api/lecture/meta`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ video_url: videoUrl, folder, tags }),
+      });
+      // Đồng bộ vào Local History
+      const history = await this.getLocalHistory();
+      const updated = history.map((item) => {
+        if (item.video_url === videoUrl) {
+          return {
+            ...item,
+            folder: folder !== undefined ? folder : item.folder,
+            tags: tags !== undefined ? tags : item.tags,
+            full_data: {
+              ...(item.full_data || {}),
+              folder: folder !== undefined ? folder : item.full_data?.folder,
+              tags: tags !== undefined ? tags : item.full_data?.tags,
+            },
+          };
+        }
+        return item;
+      });
+      await AsyncStorage.setItem(STORAGE_KEYS.RECENT_LECTURES, JSON.stringify(updated));
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (e) {
+      console.warn('Lỗi cập nhật thư mục / nhãn bài giảng:', e);
+    }
+    return { success: false };
+  }
+
+  async processVideo(videoUrl, targetLanguageOrOptions = 'vi', sourceLanguage = 'auto', maxDuration = null, includeQuiz = true, extraOptions = {}) {
+    let targetLanguage = 'vi';
+    let sourceLang = sourceLanguage;
+    let maxDur = maxDuration;
+    let incQuiz = includeQuiz;
+    let startTime = null;
+    let endTime = null;
+    let jobId = null;
+    let folder = null;
+    let tags = [];
+    let signal = null;
+
+    if (typeof targetLanguageOrOptions === 'object' && targetLanguageOrOptions !== null) {
+      targetLanguage = targetLanguageOrOptions.targetLanguage || 'vi';
+      sourceLang = targetLanguageOrOptions.sourceLanguage || 'auto';
+      maxDur = targetLanguageOrOptions.maxDuration || null;
+      incQuiz = targetLanguageOrOptions.includeQuiz !== undefined ? targetLanguageOrOptions.includeQuiz : true;
+      startTime = targetLanguageOrOptions.startTime || null;
+      endTime = targetLanguageOrOptions.endTime || null;
+      jobId = targetLanguageOrOptions.jobId || null;
+      folder = targetLanguageOrOptions.folder || null;
+      tags = targetLanguageOrOptions.tags || [];
+      signal = targetLanguageOrOptions.signal || null;
+    } else {
+      targetLanguage = targetLanguageOrOptions || 'vi';
+      if (extraOptions) {
+        startTime = extraOptions.startTime || null;
+        endTime = extraOptions.endTime || null;
+        jobId = extraOptions.jobId || null;
+        folder = extraOptions.folder || null;
+        tags = extraOptions.tags || [];
+        signal = extraOptions.signal || null;
+      }
+    }
+
     const baseUrl = await this.getBaseUrl();
     const payload = {
       video_url: videoUrl,
       target_language: targetLanguage,
-      source_language: sourceLanguage,
-      max_duration_seconds: maxDuration,
-      include_quiz: includeQuiz,
+      source_language: sourceLang,
+      max_duration_seconds: maxDur,
+      include_quiz: incQuiz,
+      start_time: startTime,
+      end_time: endTime,
+      job_id: jobId,
+      folder: folder,
+      tags: tags,
     };
 
-    const response = await fetch(`${baseUrl}/api/video/process`, {
+    const fetchOpts = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
-    });
+    };
+    if (signal) {
+      fetchOpts.signal = signal;
+    }
+
+    const response = await fetch(`${baseUrl}/api/video/process`, fetchOpts);
 
     if (!response.ok) {
       let errMsg = `Lỗi HTTP ${response.status}`;
@@ -130,7 +223,7 @@ class ApiService {
     return data;
   }
 
-  async uploadWithProgress(endpoint, formData, onProgress) {
+  async uploadWithProgress(endpoint, formData, onProgress, cancelToken = null) {
     const baseUrl = await this.getBaseUrl();
     const fullUrl = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
 
@@ -138,6 +231,15 @@ class ApiService {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', fullUrl);
       xhr.setRequestHeader('Accept', 'application/json');
+
+      if (cancelToken) {
+        cancelToken.abort = () => {
+          try {
+            xhr.abort();
+          } catch (_) {}
+          reject(new Error('Tác vụ tải lên đã bị người dùng hủy.'));
+        };
+      }
 
       if (xhr.upload && onProgress) {
         xhr.upload.onprogress = (event) => {
@@ -420,10 +522,37 @@ class ApiService {
     }
   }
 
-  // --- Xuất file Phụ đề & Tóm tắt nhanh ---
+
+  // --- Xuất file Phụ đề & Tóm tắt với Native File Picker (Yêu cầu 2) ---
   async exportFile(filename, content, mimeType = 'text/plain') {
     try {
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
+        // Tùy chọn 1: Dùng File System Access API (Native Save As Dialog cho người dùng chọn thư mục đích)
+        if (typeof window !== 'undefined' && window.showSaveFilePicker) {
+          try {
+            const ext = filename.split('.').pop();
+            const fileHandle = await window.showSaveFilePicker({
+              suggestedName: filename,
+              types: [
+                {
+                  description: 'Tệp xuất dữ liệu bài giảng',
+                  accept: { [mimeType]: [`.${ext}`] },
+                },
+              ],
+            });
+            const writable = await fileHandle.createWritable();
+            await writable.write(content);
+            await writable.close();
+            return true;
+          } catch (pickerErr) {
+            if (pickerErr.name === 'AbortError') {
+              return false; // Người dùng bấm Hủy trên hộp thoại chọn thư mục
+            }
+            // Nếu trình duyệt có quyền hạn chế, chuyển sang fallback
+          }
+        }
+
+        // Tùy chọn 2: Fallback qua HTML5 Blob Download
         const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -443,7 +572,7 @@ class ApiService {
       if (canShare) {
         await Sharing.shareAsync(filePath, {
           mimeType,
-          dialogTitle: `Tải xuống ${filename}`,
+          dialogTitle: `Lưu ${filename}`,
         });
       }
       return true;
@@ -479,6 +608,40 @@ class ApiService {
 
     const safeTitle = (lecture.title || 'lecture').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
     return this.exportFile(`${safeTitle}.srt`, srt, 'application/x-subrip');
+  }
+
+  exportLectureVTT(lecture) {
+    const segments = lecture.segments || [];
+    if (!segments || segments.length === 0) {
+      throw new Error('Bài giảng chưa có danh sách phụ đề.');
+    }
+    const formatVTTTime = (sec) => {
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      const ms = Math.round((sec % 1) * 1000);
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+    };
+
+    let vtt = 'WEBVTT\n\n';
+    segments.forEach((seg, idx) => {
+      vtt += `${idx + 1}\n`;
+      vtt += `${formatVTTTime(seg.start || 0)} --> ${formatVTTTime(seg.end || 0)}\n`;
+      vtt += `${seg.text || ''}\n`;
+      if (seg.original_text && seg.original_text.trim() !== (seg.text || '').trim()) {
+        vtt += `${seg.original_text}\n`;
+      }
+      vtt += '\n';
+    });
+
+    const safeTitle = (lecture.title || 'lecture').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
+    return this.exportFile(`${safeTitle}.vtt`, vtt, 'text/vtt');
+  }
+
+  exportLectureJSON(lecture) {
+    const safeTitle = (lecture.title || 'lecture').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
+    const jsonContent = JSON.stringify(lecture, null, 2);
+    return this.exportFile(`${safeTitle}_Data.json`, jsonContent, 'application/json');
   }
 
   exportLectureSummary(lecture) {

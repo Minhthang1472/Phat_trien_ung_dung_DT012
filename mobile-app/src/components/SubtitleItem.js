@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, spacing, borderRadius } from '../constants/theme';
 
-export default function SubtitleItem({ segment, isActive, onSeek, subMode = 'bilingual' }) {
+export default function SubtitleItem({ segment, isActive, onSeek, subMode = 'bilingual', searchQuery = '' }) {
   const formatTime = (sec) => {
     if (typeof sec !== 'number') return '00:00';
     const m = Math.floor(sec / 60);
@@ -10,25 +10,49 @@ export default function SubtitleItem({ segment, isActive, onSeek, subMode = 'bil
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const hasOriginal = Boolean(segment.original_text && segment.original_text.trim() !== segment.text.trim());
-
-  let mainText = segment.text;
+  // Xác định câu phụ đề theo chế độ hiển thị:
+  // - subMode === 'bilingual': Dòng chính là phụ đề dịch, dòng phụ là lời nói gốc
+  // - subMode === 'original': Chỉ hiển thị lời nói gốc
+  // - Mặc định (subMode === 'target'): Chỉ hiển thị phụ đề dịch
+  let mainText = '';
   let subText = null;
 
-  if (subMode === 'en') {
-    mainText = segment.original_text || segment.text;
-  } else if (subMode === 'bilingual') {
-    mainText = segment.text;
-    if (hasOriginal) {
+  if (subMode === 'bilingual') {
+    mainText = segment.translated_text || segment.text || '';
+    if (segment.original_text && segment.original_text.trim() !== mainText.trim()) {
       subText = segment.original_text;
     }
+  } else if (subMode === 'original') {
+    mainText = segment.original_text || segment.text || '';
   } else {
-    mainText = segment.text;
+    mainText = segment.translated_text || segment.text || segment.original_text || '';
   }
+
+  const renderHighlighted = (text, query, baseStyle) => {
+    if (!query || !query.trim() || !text) {
+      return <Text style={baseStyle}>{text}</Text>;
+    }
+    const q = query.trim();
+    const regex = new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <Text style={baseStyle}>
+        {parts.map((part, idx) =>
+          part.toLowerCase() === q.toLowerCase() ? (
+            <Text key={idx} style={[baseStyle, styles.highlightMatch]}>
+              {part}
+            </Text>
+          ) : (
+            part
+          )
+        )}
+      </Text>
+    );
+  };
 
   const handleSpeak = (e) => {
     if (e && e.stopPropagation) e.stopPropagation();
-    const textToSpeak = segment.original_text || segment.text;
+    const textToSpeak = mainText;
     if (typeof window !== 'undefined' && window.speechSynthesis) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(textToSpeak);
@@ -75,20 +99,17 @@ export default function SubtitleItem({ segment, isActive, onSeek, subMode = 'bil
         )}
       </View>
 
-      <Text
-        style={[
-          styles.text,
-          isActive ? styles.activeText : styles.inactiveText,
-        ]}
-      >
-        {mainText}
-      </Text>
+      {renderHighlighted(mainText, searchQuery, [
+        styles.text,
+        isActive ? styles.activeText : styles.inactiveText,
+      ])}
 
-      {subText ? (
-        <Text style={[styles.subText, isActive && styles.activeSubText]}>
-          {subText}
-        </Text>
-      ) : null}
+      {subText
+        ? renderHighlighted(subText, searchQuery, [
+            styles.subText,
+            isActive && styles.activeSubText,
+          ])
+        : null}
     </TouchableOpacity>
   );
 }
@@ -172,5 +193,12 @@ const styles = StyleSheet.create({
   activeSubText: {
     color: '#cbd5e1',
     fontWeight: '500',
+  },
+  highlightMatch: {
+    backgroundColor: '#f59e0b',
+    color: '#000000',
+    fontWeight: '800',
+    paddingHorizontal: 3,
+    borderRadius: 2,
   },
 });

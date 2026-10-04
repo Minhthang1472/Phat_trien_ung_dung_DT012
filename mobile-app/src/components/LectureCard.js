@@ -11,6 +11,7 @@ export default function LectureCard({
   playbackProgress,
   onExportSRT,
   onExportSummary,
+  onEditMeta,
 }) {
   const [exporting, setExporting] = useState(false);
 
@@ -166,6 +167,22 @@ export default function LectureCard({
                 </TouchableOpacity>
               )}
 
+              {/* Nút Phân loại Thư mục & Thẻ */}
+              {onEditMeta && (
+                <TouchableOpacity
+                  style={styles.metaBtn}
+                  onPress={(e) => {
+                    if (e && e.stopPropagation) e.stopPropagation();
+                    onEditMeta(lecture);
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Phân loại bài giảng"
+                >
+                  <Text style={styles.metaIconText}>🏷️</Text>
+                </TouchableOpacity>
+              )}
+
               {/* Nút Xóa */}
               {onDelete && (
                 <TouchableOpacity
@@ -195,6 +212,22 @@ export default function LectureCard({
               💡 {lecture.summary}
             </Text>
           ) : null}
+
+          {/* Thư mục & Thẻ phân loại (Yêu cầu 8) */}
+          {(lecture?.folder || (lecture?.tags && lecture.tags.length > 0)) && (
+            <View style={styles.folderTagsRow}>
+              {lecture?.folder ? (
+                <View style={styles.folderBadge}>
+                  <Text style={styles.folderBadgeText}>📁 {lecture.folder}</Text>
+                </View>
+              ) : null}
+              {lecture?.tags && lecture.tags.map((tag, tIdx) => (
+                <View key={tIdx} style={styles.tagBadge}>
+                  <Text style={styles.tagBadgeText}>#{tag}</Text>
+                </View>
+              ))}
+            </View>
+          )}
 
           {/* Hàng nhãn phụ & Tác vụ nhanh */}
           <View style={styles.footerRow}>
@@ -438,6 +471,19 @@ const styles = StyleSheet.create({
   deleteIconText: {
     fontSize: 11,
   },
+  metaBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: borderRadius.sm - 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  metaIconText: {
+    fontSize: 11,
+  },
   title: {
     fontSize: 13.5,
     fontWeight: '700',
@@ -450,6 +496,38 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     lineHeight: 16,
     marginBottom: 6,
+  },
+  folderTagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginBottom: 6,
+  },
+  folderBadge: {
+    backgroundColor: 'rgba(2, 132, 199, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.3)',
+  },
+  folderBadgeText: {
+    color: '#38bdf8',
+    fontSize: 9.5,
+    fontWeight: '700',
+  },
+  tagBadge: {
+    backgroundColor: 'rgba(148, 163, 184, 0.12)',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+  },
+  tagBadgeText: {
+    color: '#cbd5e1',
+    fontSize: 9,
+    fontWeight: '500',
   },
   footerRow: {
     flexDirection: 'row',

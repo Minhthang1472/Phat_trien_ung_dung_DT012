@@ -14,6 +14,7 @@ export const STORAGE_KEYS = {
   RECENT_LECTURES: '@lecture_ai_recent_history',
   FAVORITES: '@lecture_ai_favorites',
   PLAYBACK_PROGRESS: '@lecture_ai_playback_progress',
+  CUSTOM_FOLDERS: '@lecture_ai_custom_folders',
 };
 
 export const SUPPORTED_LANGUAGES = [

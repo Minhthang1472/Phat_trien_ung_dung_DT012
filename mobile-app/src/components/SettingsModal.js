@@ -52,7 +52,7 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
     setSaving(true);
     try {
       await apiService.setBaseUrl(url);
-      Alert.alert('Thành công', 'Đã lưu cấu hình máy chủ Backend');
+      Alert.alert('Thành công', 'Đã lưu cấu hình máy chủ API');
       if (onSaved) onSaved(url);
       onClose();
     } catch (err) {
@@ -185,6 +185,7 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
                 </TouchableOpacity>
               </View>
             </View>
+
 
             {/* Mục 2: Quản lý bộ nhớ đệm */}
             <View style={styles.sectionCard}>
@@ -333,10 +334,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
+  presetChipActive: {
+    backgroundColor: 'rgba(99, 102, 241, 0.3)',
+    borderColor: colors.primaryLight,
+  },
   presetChipText: {
     fontSize: 11,
-    color: colors.primaryLight,
+    color: colors.textMuted,
     fontWeight: '500',
+  },
+  presetChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
   },
   resultBox: {
     borderWidth: 1,

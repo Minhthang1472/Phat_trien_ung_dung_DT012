@@ -13,6 +13,7 @@ import tempfile
 
 from app.core.config import settings
 from app.firebase_database import firebase_service
+from pydantic import BaseModel
 from app.models.schemas import ProcessVideoRequest, ProcessVideoResponse, SubtitleSegment, LookaheadSubtitleRequest, BurnSubtitlesRequest
 from app.services.audio_service import audio_service
 from app.services.whisper_service import whisper_service
@@ -66,6 +67,40 @@ def read_root():
         "docs_url": "/docs"
     }
 
+# Bộ lưu trữ trạng thái các tác vụ bị hủy ngang (Yêu cầu 1)
+cancelled_jobs: set = set()
+streaming_jobs: dict = {}
+
+@app.post("/api/video/cancel/{job_id}")
+async def cancel_job(job_id: str):
+    """Cơ chế ngắt ngang tiến trình đang chạy (Yêu cầu 1)."""
+    cancelled_jobs.add(job_id)
+    if job_id in streaming_jobs:
+        streaming_jobs[job_id]["is_cancelled"] = True
+    logger.info(f"Đã kích hoạt ngắt ngang cho tác vụ: {job_id}")
+    return {"success": True, "message": f"Tác vụ {job_id} đã được gửi tín hiệu dừng."}
+
+
+class UpdateLectureMetaRequest(BaseModel):
+    video_url: str
+    folder: Optional[str] = None
+    tags: Optional[List[str]] = None
+
+
+@app.post("/api/lecture/meta")
+async def update_lecture_meta(req: UpdateLectureMetaRequest):
+    """Cập nhật thư mục và gắn nhãn phân loại bài giảng (Yêu cầu 8)."""
+    cached = firebase_service.get_lecture_cache(req.video_url)
+    if cached:
+        if req.folder is not None:
+            cached["folder"] = req.folder
+        if req.tags is not None:
+            cached["tags"] = req.tags
+        firebase_service.save_lecture_cache(req.video_url, cached)
+        return {"success": True, "lecture": cached}
+    return {"success": False, "message": "Bài giảng không tồn tại trong bộ nhớ"}
+
+
 @app.post("/api/video/process", response_model=ProcessVideoResponse)
 async def process_video(request: ProcessVideoRequest):
     """
@@ -80,50 +115,77 @@ async def process_video(request: ProcessVideoRequest):
     if not url:
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp URL bài giảng hợp lệ.")
 
-    # 1. Kiểm tra cache trong Firebase Firestore (tiết kiệm 100% Token Gemini!)
-    target_lang = (request.target_language or "vi").lower().strip()
-    cached_fb = firebase_service.get_lecture_cache(url)
-    if cached_fb:
-        cached_fb["quiz"] = normalize_quiz(cached_fb.get("quiz", []))
-        cached_fb["mindmap"] = normalize_mindmap(
-            cached_fb.get("mindmap"),
-            default_title=cached_fb.get("title", ""),
-            key_points=cached_fb.get("key_points"),
-            terms=cached_fb.get("formulas_and_terms")
-        )
-        cached_fb["exercises"] = normalize_exercises(
-            cached_fb.get("exercises"),
-            key_points=cached_fb.get("key_points")
-        )
-        cached_lang = (cached_fb.get("language") or "").lower().strip()
-        segs = cached_fb.get("segments", [])
-        # Nếu cache đã đúng ngôn ngữ đích và đã có tiếng Việt
-        if cached_lang == target_lang:
-            logger.info(f"Tìm thấy kết quả trong FIREBASE CACHE đúng ngôn ngữ ({target_lang}): {url}")
-            return cached_fb
-        elif segs:
-            logger.info(f"Bản cache có ngôn ngữ '{cached_lang}', tiến hành dịch thuật sang '{target_lang}' bằng Gemini AI...")
-            src_lang = cached_fb.get("detected_language") or cached_lang or "en"
-            cached_fb["segments"] = translation_service.translate_segments(
-                segs,
-                source_lang=src_lang,
-                target_lang=target_lang
-            )
-            cached_fb["language"] = target_lang
-            firebase_service.save_lecture_cache(url, cached_fb)
-            return cached_fb
+    # 0. Kiểm tra tín hiệu hủy ngang trước khi bắt đầu (Yêu cầu 1)
+    if request.job_id and request.job_id in cancelled_jobs:
+        cancelled_jobs.discard(request.job_id)
+        raise HTTPException(status_code=499, detail="Tác vụ đã bị người dùng hủy ngang.")
 
-    # 2. Bóc tách âm thanh siêu nhẹ bằng yt-dlp
+    # 1. Kiểm tra cache trong Firebase Firestore (tiết kiệm 100% Token Gemini!)
+    # Nếu người dùng yêu cầu cắt mốc thời gian tùy chỉnh thì bỏ qua cache để xử lý đoạn được chọn (Yêu cầu 4)
+    has_custom_range = (request.start_time is not None and request.start_time > 0) or (request.end_time is not None and request.end_time > 0)
+    target_lang = (request.target_language or "vi").lower().strip()
+    
+    if not has_custom_range:
+        cached_fb = firebase_service.get_lecture_cache(url)
+        if cached_fb:
+            cached_fb["quiz"] = normalize_quiz(cached_fb.get("quiz", []))
+            cached_fb["mindmap"] = normalize_mindmap(
+                cached_fb.get("mindmap"),
+                default_title=cached_fb.get("title", ""),
+                key_points=cached_fb.get("key_points"),
+                terms=cached_fb.get("formulas_and_terms")
+            )
+            cached_fb["exercises"] = normalize_exercises(
+                cached_fb.get("exercises"),
+                key_points=cached_fb.get("key_points")
+            )
+            if request.folder:
+                cached_fb["folder"] = request.folder
+            if request.tags:
+                cached_fb["tags"] = request.tags
+            cached_lang = (cached_fb.get("language") or "").lower().strip()
+            segs = cached_fb.get("segments", [])
+            # Nếu cache đã đúng ngôn ngữ đích và đã có tiếng Việt
+            if cached_lang == target_lang:
+                logger.info(f"Tìm thấy kết quả trong FIREBASE CACHE đúng ngôn ngữ ({target_lang}): {url}")
+                return cached_fb
+            elif segs:
+                logger.info(f"Bản cache có ngôn ngữ '{cached_lang}', tiến hành dịch thuật sang '{target_lang}' bằng Gemini AI...")
+                src_lang = cached_fb.get("detected_language") or cached_lang or "en"
+                cached_fb["segments"] = translation_service.translate_segments(
+                    segs,
+                    source_lang=src_lang,
+                    target_lang=target_lang
+                )
+                cached_fb["language"] = target_lang
+                firebase_service.save_lecture_cache(url, cached_fb)
+                return cached_fb
+
+    # 2. Bóc tách âm thanh siêu nhẹ bằng yt-dlp & Xác minh bản quyền DRM (Yêu cầu 4, 6)
     try:
         audio_info = audio_service.extract_audio_from_url(
             url, 
-            duration_limit_sec=request.max_duration_seconds
+            duration_limit_sec=request.max_duration_seconds,
+            start_time_sec=request.start_time or 0,
+            end_time_sec=request.end_time
         )
+    except ValueError as ve:
+        # Lỗi chặn do bản quyền / DRM
+        logger.warning(f"Từ chối tải URL do chính sách bản quyền/DRM: {ve}")
+        raise HTTPException(status_code=403, detail=str(ve))
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Lỗi khi bóc tách âm thanh: {e}")
         raise HTTPException(status_code=500, detail=f"Không thể bóc tách âm thanh từ URL ({e})")
+
+    # Kiểm tra tín hiệu hủy sau khi tải âm thanh (Yêu cầu 1)
+    if request.job_id and request.job_id in cancelled_jobs:
+        if os.path.exists(audio_info.get("audio_path", "")):
+            try: os.remove(audio_info["audio_path"])
+            except Exception: pass
+        cancelled_jobs.discard(request.job_id)
+        raise HTTPException(status_code=499, detail="Tác vụ đã bị người dùng hủy ngang.")
 
     audio_path = audio_info["audio_path"]
 
@@ -143,6 +205,18 @@ async def process_video(request: ProcessVideoRequest):
         if os.path.exists(audio_path):
             try: os.remove(audio_path)
             except Exception: pass
+
+    # Kiểm tra tín hiệu hủy sau khi phiên âm (Yêu cầu 1)
+    if request.job_id and request.job_id in cancelled_jobs:
+        cancelled_jobs.discard(request.job_id)
+        raise HTTPException(status_code=499, detail="Tác vụ đã bị người dùng hủy ngang.")
+
+    # Hiệu chỉnh mốc timestamps nếu xử lý từ mốc thời gian bắt đầu > 0 (Yêu cầu 4)
+    start_offset = float(audio_info.get("start_time_offset", 0) or 0)
+    if start_offset > 0:
+        for seg in segments:
+            seg["start"] = round(float(seg.get("start", 0)) + start_offset, 2)
+            seg["end"] = round(float(seg.get("end", 0)) + start_offset, 2)
 
     # Lưu giữ nguyên văn lời người nói vào original_text để phục vụ chế độ song ngữ
     for seg in segments:
@@ -177,11 +251,17 @@ async def process_video(request: ProcessVideoRequest):
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
         "quiz": normalize_quiz(summary_data.get("quiz", [])),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=audio_info["title"], key_points=summary_data.get("key_points")),
-        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points"))
+        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
+        "folder": request.folder or None,
+        "tags": request.tags or [],
+        "copyright_status": audio_info.get("copyright_status", "verified_clean"),
     }
 
     # 6. Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
     firebase_service.save_lecture_cache(url, result)
+
+    if request.job_id:
+        cancelled_jobs.discard(request.job_id)
 
     return result
 
@@ -242,13 +322,22 @@ async def process_lookahead_window(request: LookaheadSubtitleRequest):
 async def upload_video(
     file: UploadFile = File(..., description="File bài giảng tải lên (.mp3, .wav, .mp4, .m4a)"),
     max_duration_seconds: Optional[int] = Form(None, description="Số giây muốn test (để trống để chạy hết)"),
+    start_time: Optional[float] = Form(None, description="Mốc thời gian bắt đầu muốn xử lý (giây)"),
+    end_time: Optional[float] = Form(None, description="Mốc thời gian kết thúc muốn xử lý (giây)"),
+    job_id: Optional[str] = Form(None, description="Mã định danh tác vụ để hỗ trợ hủy ngang"),
     source_language: Optional[str] = Form("auto", description="Ngôn ngữ nguồn (auto, vi, en, ja...)"),
     target_language: Optional[str] = Form("vi", description="Ngôn ngữ phụ đề muốn xuất (vi, en, ja...)"),
-    include_quiz: Optional[bool] = Form(True, description="Tùy chọn tạo bài trắc nghiệm hay không")
+    include_quiz: Optional[bool] = Form(True, description="Tùy chọn tạo bài trắc nghiệm hay không"),
+    folder: Optional[str] = Form(None, description="Thư mục phân loại bài giảng"),
+    tags: Optional[str] = Form("", description="Danh sách nhãn phân loại, phân cách bằng dấu phẩy")
 ):
     """
     Tiếp nhận file ghi âm hoặc video bài giảng tải trực tiếp từ máy tính (Giới hạn tối đa 150MB)
     """
+    if job_id and job_id in cancelled_jobs:
+        cancelled_jobs.discard(job_id)
+        raise HTTPException(status_code=499, detail="Tác vụ đã bị người dùng hủy ngang.")
+
     MAX_MEDIA_UPLOAD_SIZE = 150 * 1024 * 1024  # 150MB
     ALLOWED_MEDIA_EXTENSIONS = (
         ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v",
@@ -282,13 +371,22 @@ async def upload_video(
         audio_info = audio_service.extract_audio_from_file(
             file_bytes=contents,
             filename=file.filename or "upload_audio.mp4",
-            duration_limit_sec=max_duration_seconds
+            duration_limit_sec=max_duration_seconds,
+            start_time_sec=start_time or 0,
+            end_time_sec=end_time
         )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Lỗi khi đọc file upload: {e}")
         raise HTTPException(status_code=400, detail=f"Không thể xử lý file tải lên: {e}")
+
+    if job_id and job_id in cancelled_jobs:
+        if os.path.exists(audio_info.get("audio_path", "")):
+            try: os.remove(audio_info["audio_path"])
+            except Exception: pass
+        cancelled_jobs.discard(job_id)
+        raise HTTPException(status_code=499, detail="Tác vụ đã bị người dùng hủy ngang.")
 
     audio_path = audio_info["audio_path"]
 
@@ -306,6 +404,17 @@ async def upload_video(
         if os.path.exists(audio_path):
             try: os.remove(audio_path)
             except Exception: pass
+
+    if job_id and job_id in cancelled_jobs:
+        cancelled_jobs.discard(job_id)
+        raise HTTPException(status_code=499, detail="Tác vụ đã bị người dùng hủy ngang.")
+
+    # Hiệu chỉnh mốc timestamps nếu xử lý từ mốc thời gian bắt đầu > 0
+    start_offset = float(audio_info.get("start_time_offset", 0) or 0)
+    if start_offset > 0:
+        for seg in segments:
+            seg["start"] = round(float(seg.get("start", 0)) + start_offset, 2)
+            seg["end"] = round(float(seg.get("end", 0)) + start_offset, 2)
 
     # Lưu giữ nguyên văn lời người nói vào original_text để phục vụ chế độ song ngữ
     for seg in segments:
@@ -325,6 +434,8 @@ async def upload_video(
     include_q = True if include_quiz is None else include_quiz
     summary_data = summary_service.summarize_transcript(full_transcript, include_quiz=include_q)
 
+    tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
     result = {
         "video_url": f"local_file://{file.filename}",
         "media_url": media_stream_url,
@@ -338,11 +449,17 @@ async def upload_video(
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
         "quiz": normalize_quiz(summary_data.get("quiz", [])),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=audio_info["title"], key_points=summary_data.get("key_points")),
-        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points"))
+        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
+        "folder": folder or None,
+        "tags": tags_list,
+        "copyright_status": "verified_clean"
     }
 
     # Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
     firebase_service.save_lecture_cache(result["video_url"], result)
+
+    if job_id:
+        cancelled_jobs.discard(job_id)
 
     return result
 

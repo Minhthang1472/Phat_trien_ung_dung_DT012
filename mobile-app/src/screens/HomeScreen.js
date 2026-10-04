@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -202,6 +202,36 @@ export default function HomeScreen({ onNavigate }) {
   const [serverStatus, setServerStatus] = useState({ online: false });
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
+
+  // Cơ chế ngắt ngang tiến trình (Task Cancellation - Yêu cầu 1)
+  const [activeJobId, setActiveJobId] = useState(null);
+  const abortControllerRef = useRef(null);
+  const uploadCancelTokenRef = useRef(null);
+
+  // Mốc thời gian cắt đoạn & Phân loại thư mục/thẻ cho URL (Yêu cầu 4 & 8)
+  const [enableTimeRange, setEnableTimeRange] = useState(false);
+  const [timeRangeStart, setTimeRangeStart] = useState('00:00');
+  const [timeRangeEnd, setTimeRangeEnd] = useState('');
+  const [urlFolder, setUrlFolder] = useState('');
+  const [urlTags, setUrlTags] = useState('');
+
+  // Mốc thời gian cắt đoạn & Phân loại cho File Upload (Yêu cầu 4 & 8)
+  const [uploadEnableTimeRange, setUploadEnableTimeRange] = useState(false);
+  const [uploadTimeRangeStart, setUploadTimeRangeStart] = useState('00:00');
+  const [uploadTimeRangeEnd, setUploadTimeRangeEnd] = useState('');
+  const [uploadFolder, setUploadFolder] = useState('');
+  const [uploadTags, setUploadTags] = useState('');
+
+  // Lọc theo Thư mục & Thẻ bài giảng (Yêu cầu 8)
+  const [activeFolder, setActiveFolder] = useState('Tất cả');
+  const [activeTag, setActiveTag] = useState(null);
+
+  // Modal chỉnh sửa Thư mục & Thẻ bài giảng (Yêu cầu 8)
+  const [metaModalVisible, setMetaModalVisible] = useState(false);
+  const [metaLecture, setMetaLecture] = useState(null);
+  const [editFolderInput, setEditFolderInput] = useState('');
+  const [editTagsInput, setEditTagsInput] = useState('');
+
   // Bộ lọc, Tìm kiếm, Ghim yêu thích & Tiến độ phát video
   const [searchKeyword, setSearchKeyword] = useState('');
   const [activeCategory, setActiveCategory] = useState('all'); // 'all', 'fav', 'en', 'ja', 'upload', 'youtube'
@@ -274,6 +304,100 @@ export default function HomeScreen({ onNavigate }) {
     }
   };
 
+  // Helper đổi mm:ss hoặc hh:mm:ss sang giây (Yêu cầu 4)
+  const parseTimeToSeconds = (str) => {
+    if (!str || !str.trim()) return null;
+    const parts = str.trim().split(':').map((p) => parseFloat(p));
+    if (parts.some((p) => isNaN(p))) return null;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    if (parts.length === 1) return parts[0];
+    return null;
+  };
+
+  // Cơ chế ngắt ngang tiến trình (Task Cancellation - Yêu cầu 1)
+  const handleCancelProcessing = async () => {
+    if (activeJobId) {
+      await apiService.cancelJob(activeJobId);
+    }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    if (uploadCancelTokenRef.current && uploadCancelTokenRef.current.abort) {
+      uploadCancelTokenRef.current.abort();
+    }
+    setLoading(false);
+    setUploadProgress(null);
+    setPendingUploadFile(null);
+    setActiveJobId(null);
+    Alert.alert('Đã hủy tiến trình', 'Tiến trình xử lý video đã dừng lại để giải phóng CPU/GPU và RAM.');
+  };
+
+  // Danh sách các thư mục & thẻ tags khả dụng từ lịch sử bài giảng (Yêu cầu 8)
+  const availableFolders = useMemo(() => {
+    const set = new Set();
+    (recentLectures || []).forEach((lec) => {
+      const f = lec.folder || lec.full_data?.folder;
+      if (f && typeof f === 'string' && f.trim()) set.add(f.trim());
+    });
+    return ['Tất cả', ...Array.from(set)];
+  }, [recentLectures]);
+
+  const availableTags = useMemo(() => {
+    const set = new Set();
+    (recentLectures || []).forEach((lec) => {
+      const tags = lec.tags || lec.full_data?.tags || [];
+      if (Array.isArray(tags)) {
+        tags.forEach((t) => { if (t && typeof t === 'string' && t.trim()) set.add(t.trim()); });
+      }
+    });
+    return Array.from(set);
+  }, [recentLectures]);
+
+  // Thao tác sửa thư mục và thẻ (Yêu cầu 8)
+  const handleOpenMetaModal = (lecture) => {
+    setMetaLecture(lecture);
+    setEditFolderInput(lecture.folder || lecture.full_data?.folder || '');
+    const tags = lecture.tags || lecture.full_data?.tags || [];
+    setEditTagsInput(Array.isArray(tags) ? tags.join(', ') : '');
+    setMetaModalVisible(true);
+  };
+
+  const handleSaveLectureMeta = async () => {
+    if (!metaLecture?.video_url) return;
+    const cleanFolder = editFolderInput.trim() || null;
+    const cleanTags = editTagsInput
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+    await apiService.updateLectureMeta(metaLecture.video_url, {
+      folder: cleanFolder,
+      tags: cleanTags,
+    });
+
+    setRecentLectures((prev) =>
+      prev.map((item) => {
+        if (item.video_url === metaLecture.video_url) {
+          return {
+            ...item,
+            folder: cleanFolder,
+            tags: cleanTags,
+            full_data: {
+              ...(item.full_data || {}),
+              folder: cleanFolder,
+              tags: cleanTags,
+            },
+          };
+        }
+        return item;
+      })
+    );
+
+    setMetaModalVisible(false);
+    setMetaLecture(null);
+  };
+
   // Tính toán danh sách bài giảng sau khi lọc và sắp xếp (bài ghim luôn ưu tiên trên đầu)
   const filteredAndSortedLectures = useMemo(() => {
     const list = recentLectures || [];
@@ -302,6 +426,18 @@ export default function HomeScreen({ onNavigate }) {
         if (activeCategory === 'upload') return isLocal;
         if (activeCategory === 'youtube') return !isLocal && (lec.video_url || '').includes('youtu');
 
+        // 3. Lọc theo Thư mục môn học (Yêu cầu 8)
+        if (activeFolder && activeFolder !== 'Tất cả') {
+          const f = (lec.folder || lec.full_data?.folder || '').trim();
+          if (f !== activeFolder.trim()) return false;
+        }
+
+        // 4. Lọc theo Thẻ Tag (Yêu cầu 8)
+        if (activeTag) {
+          const tags = lec.tags || lec.full_data?.tags || [];
+          if (!tags.includes(activeTag)) return false;
+        }
+
         return true;
       })
       .sort((a, b) => {
@@ -310,7 +446,7 @@ export default function HomeScreen({ onNavigate }) {
         const bFav = favorites.includes(b.video_url) ? 1 : 0;
         return bFav - aFav;
       });
-  }, [recentLectures, searchKeyword, activeCategory, favorites]);
+  }, [recentLectures, searchKeyword, activeCategory, favorites, activeFolder, activeTag]);
 
   const handleProcessVideo = async () => {
     const trimmed = videoUrl.trim();
@@ -319,21 +455,48 @@ export default function HomeScreen({ onNavigate }) {
       return;
     }
 
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    setActiveJobId(jobId);
+    const abortCtrl = new AbortController();
+    abortControllerRef.current = abortCtrl;
+
     setLoading(true);
-    setLoadingStep('Đang kiểm tra thời lượng bài giảng...');
+    setLoadingStep('Đang xác minh bản quyền & thời lượng bài giảng...');
 
     try {
-      // 1. Kiểm tra nhanh thông tin & thời lượng video từ Backend (< 1 giây)
+      // 1. Kiểm tra nhanh thông tin & thời lượng video từ Backend (< 1 giây) kèm bản quyền (Yêu cầu 6)
       const info = await apiService.getVideoInfo(trimmed);
+      if (info.is_allowed === false) {
+        throw new Error(`Từ chối tải: ${info.copyright_status || 'Video vi phạm bản quyền hoặc có DRM bảo vệ.'}`);
+      }
+
       const durationSec = info.duration_seconds || 0;
       const isLong = durationSec >= 1800; // Ngưỡng 30 phút (1800 giây)
 
-      // 2. Nếu video từ 30 phút trở lên (và chưa có trong Cache): Tự động kích hoạt chế độ song song
-      if (isLong && !info.is_cached) {
+      // Xử lý mốc thời gian tùy chỉnh nếu bật (Yêu cầu 4)
+      let parsedStart = null;
+      let parsedEnd = null;
+      if (enableTimeRange) {
+        parsedStart = parseTimeToSeconds(timeRangeStart);
+        parsedEnd = parseTimeToSeconds(timeRangeEnd);
+        if (parsedStart !== null && parsedEnd !== null && parsedStart >= parsedEnd) {
+          throw new Error('Mốc thời gian bắt đầu phải nhỏ hơn mốc kết thúc.');
+        }
+      }
+
+      // Xử lý folder và tags (Yêu cầu 8)
+      const cleanFolder = urlFolder.trim() || null;
+      const cleanTags = urlTags
+        ? urlTags.split(',').map((t) => t.trim()).filter(Boolean)
+        : [];
+
+      // 2. Nếu video từ 30 phút trở lên và không cắt mốc và chưa có trong Cache: Tự động kích hoạt chế độ song song
+      if (isLong && !info.is_cached && !enableTimeRange) {
         const minutes = Math.round(durationSec / 60);
         setLoadingStep(`Video dài ${minutes}p (≥ 30p) - Tự động bật Xem ngay & Xử lý song song...`);
         const streamResult = await apiService.streamInit(trimmed, targetLang);
         setLoading(false);
+        setActiveJobId(null);
 
         const noticeMsg = `Video này có thời lượng dài (${minutes} phút).\n\nHệ thống đã tự động kích hoạt chế độ XEM NGAY & XỬ LÝ SONG SONG để bạn theo dõi video ngay mà không cần chờ đợi!`;
         if (Platform.OS === 'web') {
@@ -345,14 +508,32 @@ export default function HomeScreen({ onNavigate }) {
         return;
       }
 
-      // 3. Nếu video dưới 30 phút (hoặc đã có sẵn trong Cache): Xử lý toàn bộ
+      // 3. Nếu video dưới 30 phút hoặc người dùng đã chỉ định cắt đoạn: Xử lý toàn bộ
       setLoadingStep('Đang bóc tách toàn bộ phụ đề & tóm tắt AI...');
-      const result = await apiService.processVideo(trimmed, targetLang, 'auto', null, includeQuiz);
+      const result = await apiService.processVideo(trimmed, {
+        targetLanguage: targetLang,
+        sourceLanguage: 'auto',
+        maxDuration: null,
+        includeQuiz: includeQuiz,
+        startTime: parsedStart,
+        endTime: parsedEnd,
+        jobId: jobId,
+        folder: cleanFolder,
+        tags: cleanTags,
+        signal: abortCtrl.signal,
+      });
+
       setLoading(false);
+      setActiveJobId(null);
       // Chuyển sang màn hình Sync Player với kết quả
       onNavigate('SyncPlayer', { lecture: result });
     } catch (err) {
       setLoading(false);
+      setActiveJobId(null);
+      if (err.name === 'AbortError' || err.message?.includes('hủy')) {
+        Alert.alert('Đã hủy tiến trình', 'Tiến trình xử lý video đã được dừng lại theo yêu cầu của bạn.');
+        return;
+      }
       Alert.alert(
         'Không thể xử lý bài giảng',
         `${err.message}\n\nBạn có muốn mở bản bài giảng mẫu để trải nghiệm giao diện không?`,
@@ -525,6 +706,10 @@ export default function HomeScreen({ onNavigate }) {
     const fileToUpload = pendingUploadFile;
     setUploadConfigModalVisible(false);
 
+    const jobId = `upload_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    setActiveJobId(jobId);
+    uploadCancelTokenRef.current = { abort: null };
+
     // Kích hoạt thanh tiến trình (Progress Bar)
     setUploadDetails({ name: fileToUpload.name, size: fileToUpload.size });
     setUploadProgress(0);
@@ -545,6 +730,23 @@ export default function HomeScreen({ onNavigate }) {
       }
       formData.append('target_language', uploadTargetLang);
       formData.append('include_quiz', uploadIncludeQuiz ? 'true' : 'false');
+      formData.append('job_id', jobId);
+
+      // Cắt mốc thời gian nếu bật (Yêu cầu 4)
+      if (uploadEnableTimeRange) {
+        const s = parseTimeToSeconds(uploadTimeRangeStart);
+        const e = parseTimeToSeconds(uploadTimeRangeEnd);
+        if (s !== null) formData.append('start_time', s);
+        if (e !== null) formData.append('end_time', e);
+      }
+
+      // Thư mục & Thẻ phân loại (Yêu cầu 8)
+      if (uploadFolder.trim()) {
+        formData.append('folder', uploadFolder.trim());
+      }
+      if (uploadTags.trim()) {
+        formData.append('tags', uploadTags.trim());
+      }
 
       const uploadPromise = apiService.uploadWithProgress(
         '/api/video/upload',
@@ -559,7 +761,8 @@ export default function HomeScreen({ onNavigate }) {
             setAiProcessingStage('whisper');
             setAiStageProgress(45);
           }
-        }
+        },
+        uploadCancelTokenRef.current
       );
 
       // Cập nhật tiến độ trực quan đa bước trong khi AI đang bóc tách, dịch thuật & tóm tắt
@@ -595,6 +798,7 @@ export default function HomeScreen({ onNavigate }) {
       setAiProcessingStage('done');
       setAiStageProgress(100);
       setUploadProgress(100);
+      setActiveJobId(null);
 
       if (fileToUpload.localMediaUrl) {
         data.media_stream_url = fileToUpload.localMediaUrl;
@@ -614,6 +818,11 @@ export default function HomeScreen({ onNavigate }) {
       if (stageTimer) clearInterval(stageTimer);
       setUploadProgress(null);
       setPendingUploadFile(null);
+      setActiveJobId(null);
+      if (err.message?.includes('hủy')) {
+        Alert.alert('Đã hủy tiến trình', 'Tác vụ tải lên và xử lý đã được dừng lại.');
+        return;
+      }
       Alert.alert('Không thể xử lý file', err.message);
     }
   };
@@ -917,6 +1126,89 @@ export default function HomeScreen({ onNavigate }) {
             </View>
           </TouchableOpacity>
 
+          {/* Tùy chọn Cắt khoảng thời gian video (Yêu cầu 4) */}
+          <View style={styles.advancedOptionCard}>
+            <TouchableOpacity
+              style={styles.advancedOptionHeader}
+              onPress={() => setEnableTimeRange(!enableTimeRange)}
+              activeOpacity={0.8}
+            >
+              <View style={styles.advancedOptionLeft}>
+                <Text style={styles.advancedOptionIcon}>✂️</Text>
+                <View>
+                  <Text style={styles.advancedOptionTitle}>Cắt khoảng thời gian xử lý</Text>
+                  <Text style={styles.advancedOptionSub}>Chỉ dịch đoạn bạn chọn (ví dụ từ 01:30 đến 08:45)</Text>
+                </View>
+              </View>
+              <Switch
+                value={enableTimeRange}
+                onValueChange={setEnableTimeRange}
+                trackColor={{ false: '#334155', true: '#0284c7' }}
+                thumbColor={enableTimeRange ? '#38bdf8' : '#94a3b8'}
+              />
+            </TouchableOpacity>
+
+            {enableTimeRange && (
+              <View style={styles.timeRangeInputsRow}>
+                <View style={styles.timeRangeField}>
+                  <Text style={styles.timeRangeLabel}>Bắt đầu từ (mm:ss):</Text>
+                  <TextInput
+                    style={styles.timeRangeInput}
+                    value={timeRangeStart}
+                    onChangeText={setTimeRangeStart}
+                    placeholder="00:00"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+                <Text style={styles.timeRangeArrow}>➔</Text>
+                <View style={styles.timeRangeField}>
+                  <Text style={styles.timeRangeLabel}>Đến phút (mm:ss):</Text>
+                  <TextInput
+                    style={styles.timeRangeInput}
+                    value={timeRangeEnd}
+                    onChangeText={setTimeRangeEnd}
+                    placeholder="Hết video"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+              </View>
+            )}
+          </View>
+
+          {/* Tùy chọn Gắn thư mục & Thẻ phân loại (Yêu cầu 8) */}
+          <View style={styles.advancedOptionCard}>
+            <View style={styles.advancedOptionHeaderStatic}>
+              <Text style={styles.advancedOptionIcon}>📁</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.advancedOptionTitle}>Phân loại Thư mục & Thẻ bài giảng</Text>
+                <Text style={styles.advancedOptionSub}>Gom nhóm theo môn học và gắn thẻ tìm kiếm</Text>
+              </View>
+            </View>
+
+            <View style={styles.metaInputGroup}>
+              <View style={styles.metaInputField}>
+                <Text style={styles.metaInputLabel}>Thư mục môn học:</Text>
+                <TextInput
+                  style={styles.metaTextInput}
+                  value={urlFolder}
+                  onChangeText={setUrlFolder}
+                  placeholder="VD: Trí tuệ nhân tạo, Giải tích..."
+                  placeholderTextColor="#64748b"
+                />
+              </View>
+              <View style={styles.metaInputField}>
+                <Text style={styles.metaInputLabel}>Thẻ phân loại (cách nhau bởi dấu phẩy):</Text>
+                <TextInput
+                  style={styles.metaTextInput}
+                  value={urlTags}
+                  onChangeText={setUrlTags}
+                  placeholder="VD: Python, Machine Learning, Ôn thi"
+                  placeholderTextColor="#64748b"
+                />
+              </View>
+            </View>
+          </View>
+
           {/* Nhóm các nút hành động xử lý bài giảng */}
           <View style={styles.actionButtonGroup}>
             {/* Nút duy nhất: Bắt đầu Tạo Phụ đề AI (Tự động nhận diện thời lượng <30p hoặc >=30p) */}
@@ -940,6 +1232,17 @@ export default function HomeScreen({ onNavigate }) {
                 </View>
               )}
             </TouchableOpacity>
+
+            {/* Nút Hủy Xử Lý nếu đang chạy (Cơ chế ngắt ngang - Yêu cầu 1) */}
+            {loading && (
+              <TouchableOpacity
+                style={styles.cancelProcessingBtn}
+                onPress={handleCancelProcessing}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.cancelProcessingBtnText}>🛑 HỦY TIẾN TRÌNH (GIẢI PHÓNG CPU / RAM)</Text>
+              </TouchableOpacity>
+            )}
 
             {/* Nút 2: Ghép đôi Video + Phụ đề có sẵn (Giai đoạn 2) */}
             <TouchableOpacity
@@ -1082,6 +1385,53 @@ export default function HomeScreen({ onNavigate }) {
             </TouchableOpacity>
           </ScrollView>
 
+          {/* Thanh Lọc Thư Mục Môn Học (Yêu cầu 8) */}
+          <View style={styles.folderFilterContainer}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.folderFilterScroll}>
+              {availableFolders.map((fName) => (
+                <TouchableOpacity
+                  key={fName}
+                  style={[styles.folderChip, activeFolder === fName && styles.folderChipActive]}
+                  onPress={() => setActiveFolder(fName)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.folderChipText, activeFolder === fName && styles.folderChipTextActive]}>
+                    {fName === 'Tất cả' ? '📁 Tất cả thư mục' : `📁 ${fName}`}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          {/* Thanh Thẻ Tags nếu có (Yêu cầu 8) */}
+          {availableTags.length > 0 && (
+            <View style={styles.tagFilterContainer}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tagFilterScroll}>
+                {activeTag && (
+                  <TouchableOpacity
+                    style={styles.tagClearBtn}
+                    onPress={() => setActiveTag(null)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.tagClearText}>✕ Bỏ lọc thẻ</Text>
+                  </TouchableOpacity>
+                )}
+                {availableTags.map((tag) => (
+                  <TouchableOpacity
+                    key={tag}
+                    style={[styles.tagFilterChip, activeTag === tag && styles.tagFilterChipActive]}
+                    onPress={() => setActiveTag(activeTag === tag ? null : tag)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.tagFilterChipText, activeTag === tag && styles.tagFilterChipTextActive]}>
+                      #{tag}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
           {/* Danh sách thẻ bài giảng */}
           {filteredAndSortedLectures.length > 0 ? (
             filteredAndSortedLectures.map((lecture, idx) => (
@@ -1095,6 +1445,7 @@ export default function HomeScreen({ onNavigate }) {
                 onDelete={handleDeleteLecture}
                 onExportSRT={handleQuickExportSRT}
                 onExportSummary={handleQuickExportSummary}
+                onEditMeta={handleOpenMetaModal}
               />
             ))
           ) : (
@@ -1178,6 +1529,89 @@ export default function HomeScreen({ onNavigate }) {
                 trackColor={{ false: '#334155', true: colors.primary }}
                 thumbColor={uploadIncludeQuiz ? '#ffffff' : '#94a3b8'}
               />
+            </View>
+
+            {/* Tùy chọn Cắt mốc thời gian video upload (Yêu cầu 4) */}
+            <View style={styles.uploadOptionCard}>
+              <TouchableOpacity
+                style={styles.advancedOptionHeader}
+                onPress={() => setUploadEnableTimeRange(!uploadEnableTimeRange)}
+                activeOpacity={0.8}
+              >
+                <View style={styles.advancedOptionLeft}>
+                  <Text style={styles.advancedOptionIcon}>✂️</Text>
+                  <View>
+                    <Text style={styles.advancedOptionTitle}>Cắt khoảng thời gian bài giảng</Text>
+                    <Text style={styles.advancedOptionSub}>Chỉ dịch đoạn bạn chọn (VD: 00:30 đến 05:00)</Text>
+                  </View>
+                </View>
+                <Switch
+                  value={uploadEnableTimeRange}
+                  onValueChange={setUploadEnableTimeRange}
+                  trackColor={{ false: '#334155', true: '#0284c7' }}
+                  thumbColor={uploadEnableTimeRange ? '#38bdf8' : '#94a3b8'}
+                />
+              </TouchableOpacity>
+
+              {uploadEnableTimeRange && (
+                <View style={styles.timeRangeInputsRow}>
+                  <View style={styles.timeRangeField}>
+                    <Text style={styles.timeRangeLabel}>Bắt đầu từ (mm:ss):</Text>
+                    <TextInput
+                      style={styles.timeRangeInput}
+                      value={uploadTimeRangeStart}
+                      onChangeText={setUploadTimeRangeStart}
+                      placeholder="00:00"
+                      placeholderTextColor="#64748b"
+                    />
+                  </View>
+                  <Text style={styles.timeRangeArrow}>➔</Text>
+                  <View style={styles.timeRangeField}>
+                    <Text style={styles.timeRangeLabel}>Đến phút (mm:ss):</Text>
+                    <TextInput
+                      style={styles.timeRangeInput}
+                      value={uploadTimeRangeEnd}
+                      onChangeText={setUploadTimeRangeEnd}
+                      placeholder="Hết file"
+                      placeholderTextColor="#64748b"
+                    />
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* Tùy chọn Thư mục & Thẻ phân loại cho File Upload (Yêu cầu 8) */}
+            <View style={styles.uploadOptionCard}>
+              <View style={styles.advancedOptionHeaderStatic}>
+                <Text style={styles.advancedOptionIcon}>📁</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.advancedOptionTitle}>Phân loại Thư mục & Thẻ bài giảng</Text>
+                  <Text style={styles.advancedOptionSub}>Gom nhóm vào môn học và gắn thẻ tìm kiếm</Text>
+                </View>
+              </View>
+
+              <View style={styles.metaInputGroup}>
+                <View style={styles.metaInputField}>
+                  <Text style={styles.metaInputLabel}>Thư mục môn học:</Text>
+                  <TextInput
+                    style={styles.metaTextInput}
+                    value={uploadFolder}
+                    onChangeText={setUploadFolder}
+                    placeholder="VD: Trí tuệ nhân tạo, Vật lý..."
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+                <View style={styles.metaInputField}>
+                  <Text style={styles.metaInputLabel}>Thẻ phân loại (cách nhau bởi dấu phẩy):</Text>
+                  <TextInput
+                    style={styles.metaTextInput}
+                    value={uploadTags}
+                    onChangeText={setUploadTags}
+                    placeholder="VD: Lab, Thực hành, Bài tập"
+                    placeholderTextColor="#64748b"
+                  />
+                </View>
+              </View>
             </View>
 
             {/* Hàng nút bấm */}
@@ -1330,6 +1764,15 @@ export default function HomeScreen({ onNavigate }) {
               </View>
             </View>
 
+            {/* Nút Hủy Ngang Tiến Trình Upload & AI (Cơ chế ngắt ngang - Yêu cầu 1) */}
+            <TouchableOpacity
+              style={styles.cancelProgressModalBtn}
+              onPress={handleCancelProcessing}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.cancelProgressModalBtnText}>🛑 HỦY TIẾN TRÌNH ĐANG CHẠY (GIẢI PHÓNG BỘ NHỚ)</Text>
+            </TouchableOpacity>
+
             <View style={styles.progressLimitBadge}>
               <Text style={styles.progressLimitText}>
                 🎬 Sau khi hoàn tất, bạn có thể xuất video kèm phụ đề (MP4) ngay trong trình phát!
@@ -1338,6 +1781,71 @@ export default function HomeScreen({ onNavigate }) {
           </View>
         </View>
       </Modal>
+
+      {/* Modal Chỉnh Sửa Thư Mục & Thẻ Bài Giảng (Yêu cầu 8) */}
+      <Modal
+        visible={metaModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMetaModalVisible(false)}
+      >
+        <View style={styles.configModalBackdrop}>
+          <View style={styles.configModalCard}>
+            <View style={styles.configHeaderRow}>
+              <View style={styles.configIconWrap}>
+                <Text style={styles.configHeaderIcon}>🏷️</Text>
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.configModalTitle}>PHÂN LOẠI THƯ MỤC & THẺ</Text>
+                <Text style={styles.configModalSubtitle} numberOfLines={1}>
+                  {metaLecture?.title || 'Bài giảng'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={{ marginTop: spacing.md }}>
+              <Text style={styles.metaInputLabel}>Thư mục môn học:</Text>
+              <TextInput
+                style={styles.metaTextInputModal}
+                value={editFolderInput}
+                onChangeText={setEditFolderInput}
+                placeholder="VD: Trí tuệ nhân tạo, Giải tích..."
+                placeholderTextColor="#64748b"
+              />
+
+              <Text style={[styles.metaInputLabel, { marginTop: spacing.sm }]}>
+                Thẻ phân loại (cách nhau bởi dấu phẩy):
+              </Text>
+              <TextInput
+                style={styles.metaTextInputModal}
+                value={editTagsInput}
+                onChangeText={setEditTagsInput}
+                placeholder="VD: Python, Ôn thi, Machine Learning"
+                placeholderTextColor="#64748b"
+              />
+            </View>
+
+            <View style={[styles.configActionRow, { marginTop: spacing.lg }]}>
+              <TouchableOpacity
+                style={styles.configCancelBtn}
+                onPress={() => setMetaModalVisible(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.configCancelText}>Đóng</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.configSubmitBtn}
+                onPress={handleSaveLectureMeta}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.configSubmitText}>💾 LƯU THAY ĐỔI</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
 
       {/* Modal Cài đặt hệ thống */}
       <SettingsModal
@@ -2039,5 +2547,216 @@ const styles = StyleSheet.create({
     color: colors.primaryLight,
     fontSize: 12,
     fontWeight: '600',
+  },
+  advancedOptionCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm + 2,
+    borderWidth: 1,
+    borderColor: '#334155',
+    marginBottom: spacing.sm,
+  },
+  advancedOptionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  advancedOptionHeaderStatic: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: spacing.xs,
+  },
+  advancedOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  advancedOptionIcon: {
+    fontSize: 18,
+  },
+  advancedOptionTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#f8fafc',
+  },
+  advancedOptionSub: {
+    fontSize: 10.5,
+    color: '#94a3b8',
+    marginTop: 1,
+  },
+  timeRangeInputsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: '#1e293b',
+  },
+  timeRangeField: {
+    flex: 1,
+  },
+  timeRangeLabel: {
+    fontSize: 10.5,
+    color: '#94a3b8',
+    marginBottom: 3,
+  },
+  timeRangeInput: {
+    backgroundColor: '#1e293b',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#475569',
+    color: '#f8fafc',
+    fontSize: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    textAlign: 'center',
+    fontWeight: '700',
+  },
+  timeRangeArrow: {
+    fontSize: 14,
+    color: '#38bdf8',
+    marginHorizontal: 8,
+    fontWeight: '700',
+  },
+  metaInputGroup: {
+    marginTop: spacing.xs,
+  },
+  metaInputField: {
+    marginTop: 6,
+  },
+  metaInputLabel: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginBottom: 3,
+  },
+  metaTextInput: {
+    backgroundColor: '#1e293b',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#475569',
+    color: '#f8fafc',
+    fontSize: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  metaTextInputModal: {
+    backgroundColor: '#0f172a',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#475569',
+    color: '#f8fafc',
+    fontSize: 13,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 4,
+  },
+  cancelProcessingBtn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#ef4444',
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  cancelProcessingBtnText: {
+    color: '#f87171',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cancelProgressModalBtn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#ef4444',
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginTop: spacing.md,
+  },
+  cancelProgressModalBtnText: {
+    color: '#fca5a5',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  uploadOptionCard: {
+    backgroundColor: '#0f172a',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: '#334155',
+    marginTop: spacing.sm,
+  },
+  folderFilterContainer: {
+    marginTop: spacing.xs,
+    marginBottom: 4,
+  },
+  folderFilterScroll: {
+    gap: 6,
+    paddingVertical: 2,
+  },
+  folderChip: {
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 10,
+    paddingVertical: 4.5,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  folderChipActive: {
+    backgroundColor: 'rgba(2, 132, 199, 0.25)',
+    borderColor: '#0284c7',
+  },
+  folderChipText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontWeight: '600',
+  },
+  folderChipTextActive: {
+    color: '#38bdf8',
+    fontWeight: '700',
+  },
+  tagFilterContainer: {
+    marginBottom: spacing.xs + 2,
+  },
+  tagFilterScroll: {
+    gap: 6,
+    paddingVertical: 2,
+  },
+  tagClearBtn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.3)',
+  },
+  tagClearText: {
+    color: '#f87171',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  tagFilterChip: {
+    backgroundColor: '#1e293b',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  tagFilterChipActive: {
+    backgroundColor: '#4338ca',
+    borderColor: '#6366f1',
+  },
+  tagFilterChipText: {
+    fontSize: 10.5,
+    color: '#cbd5e1',
+    fontWeight: '500',
+  },
+  tagFilterChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '700',
   },
 });
