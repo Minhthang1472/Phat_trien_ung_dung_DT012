@@ -566,6 +566,28 @@ class ApiService {
       }
 
       // Trên Mobile (iOS / Android)
+      // Yêu cầu 2: Custom File Export Directory Selector
+      if (Platform.OS === 'android') {
+        try {
+          // Bật hộp thoại chọn thư mục lưu file (Native Directory Picker) trên Android
+          const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+          if (permissions.granted) {
+            // Tạo file trống tại thư mục người dùng chọn
+            const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
+              permissions.directoryUri,
+              filename,
+              mimeType
+            );
+            // Ghi nội dung vào file
+            await FileSystem.writeAsStringAsync(fileUri, content, { encoding: FileSystem.EncodingType.UTF8 });
+            return true;
+          }
+        } catch (androidErr) {
+          console.warn('Người dùng hủy chọn thư mục hoặc lỗi Storage Access:', androidErr);
+        }
+      }
+
+      // Fallback cho iOS hoặc khi Android từ chối chọn thư mục: Mở bảng Share Sheet
       const filePath = `${FileSystem.cacheDirectory}${filename}`;
       await FileSystem.writeAsStringAsync(filePath, content, { encoding: FileSystem.EncodingType.UTF8 });
       const canShare = await Sharing.isAvailableAsync();

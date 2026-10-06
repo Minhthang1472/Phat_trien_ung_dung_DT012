@@ -14,6 +14,7 @@ import { colors, spacing, borderRadius } from '../constants/theme';
 import QuizCard from '../components/QuizCard';
 import MindmapViewer from '../components/MindmapViewer';
 import ExerciseCard from '../components/ExerciseCard';
+import { apiService } from '../services/api';
 
 export default function SummaryQuizScreen({ lecture, onShare }) {
   const [subTab, setSubTab] = useState('summary'); // 'summary' | 'mindmap' | 'exercises'
@@ -89,6 +90,36 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
     } catch (err) {
       Alert.alert('Lỗi xuất tài liệu', err.message);
     }
+  };
+
+  // Tính năng tải Video Hardsub
+  const handleDownloadVideo = () => {
+    Alert.alert(
+      'Tải Video Phụ Đề',
+      'Bạn có muốn tải về video có đính kèm cứng phụ đề (Hardsub) để xem offline không?',
+      [
+        { text: 'Hủy', style: 'cancel' },
+        { 
+          text: 'Có, Tải về', 
+          onPress: async () => {
+            try {
+              Alert.alert('Đang xử lý', 'Đang ghép phụ đề vào video, vui lòng chờ...');
+              const burnResult = await apiService.burnSubtitlesIntoVideo(lecture.video_url, lecture.segments);
+              
+              const fileUri = `${FileSystem.cacheDirectory}video_phude_${Date.now()}.mp4`;
+              await FileSystem.downloadAsync(burnResult.media_url, fileUri);
+              
+              const canShare = await Sharing.isAvailableAsync();
+              if (canShare) {
+                await Sharing.shareAsync(fileUri, { mimeType: 'video/mp4', dialogTitle: 'Lưu Video Phụ Đề' });
+              }
+            } catch (err) {
+              Alert.alert('Lỗi tạo video', err.message);
+            }
+          }
+        }
+      ]
+    );
   };
 
   return (
@@ -221,7 +252,10 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
       {/* Nút Xuất / Chia sẻ tài liệu ôn tập */}
       <View style={styles.exportRow}>
         <TouchableOpacity style={styles.exportFileBtn} onPress={handleExportSummary} activeOpacity={0.8}>
-          <Text style={styles.exportFileBtnText}>📥 XUẤT FILE TÀI LIỆU</Text>
+          <Text style={styles.exportFileBtnText}>📥 TÀI LIỆU</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.exportVideoBtn} onPress={handleDownloadVideo} activeOpacity={0.8}>
+          <Text style={styles.exportVideoBtnText}>🎬 TẢI VIDEO</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.exportBtn} onPress={handleShareDoc} activeOpacity={0.8}>
           <Text style={styles.exportBtnText}>📤 CHIA SẺ</Text>
@@ -382,6 +416,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   exportFileBtnText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  exportVideoBtn: {
+    flex: 1,
+    backgroundColor: '#dc2626',
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  exportVideoBtnText: {
     color: '#ffffff',
     fontSize: 12,
     fontWeight: '700',

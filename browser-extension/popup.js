@@ -14,6 +14,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   const accordionToggle = document.getElementById("accordionToggle");
   const accordionBody = document.getElementById("accordionBody");
 
+  const inputStartTime = document.getElementById("startTime");
+  const inputEndTime = document.getElementById("endTime");
+  const btnCancelProcess = document.getElementById("btnCancelProcess");
+  let currentAbortController = null;
+  let currentJobId = null;
+
   const summarySection = document.getElementById("summarySection");
   const summaryContent = document.getElementById("summaryContent");
   const quizContent = document.getElementById("quizContent");
@@ -199,17 +205,31 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
+      btnProcessTab.style.display = "none";
+      btnCancelProcess.style.display = "block";
+      btnCancelProcess.disabled = false;
       btnProcessTab.innerText = "⏳ AI đang xử lý (Whisper + Dịch)...";
       statusText.innerText = "Đang trích xuất âm thanh & bóc tách phụ đề...";
+
+      currentAbortController = new AbortController();
+      currentJobId = "job_" + Math.random().toString(36).substr(2, 9);
+
+      const startVal = parseFloat(inputStartTime.value);
+      const endVal = parseFloat(inputEndTime.value);
+      const payload = {
+        video_url: currentTab.url,
+        target_language: targetLang.value,
+        include_quiz: includeQuizCheck.checked,
+        job_id: currentJobId
+      };
+      if (!isNaN(startVal) && startVal >= 0) payload.start_time = startVal;
+      if (!isNaN(endVal) && endVal > 0) payload.end_time = endVal;
 
       const response = await fetch("http://127.0.0.1:8000/api/video/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          video_url: currentTab.url,
-          target_language: targetLang.value,
-          include_quiz: includeQuizCheck.checked,
-        }),
+        body: JSON.stringify(payload),
+        signal: currentAbortController.signal
       });
 
       if (!response.ok) {
@@ -237,13 +257,38 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     } catch (err) {
       console.error(err);
-      statusText.innerText = `❌ Lỗi: ${err.message}`;
-      alert(`Không thể tạo phụ đề: ${err.message}`);
+      if (err.name === 'AbortError') {
+        statusText.innerText = "🚫 Tiến trình đã bị hủy.";
+      } else {
+        statusText.innerText = `❌ Lỗi: ${err.message}`;
+        alert(`Không thể tạo phụ đề: ${err.message}`);
+      }
     } finally {
+      btnProcessTab.style.display = "block";
+      btnCancelProcess.style.display = "none";
+      btnCancelProcess.innerText = "🛑 Hủy tiến trình";
       btnProcessTab.disabled = false;
       btnProcessTab.innerText = "⚡ Bắt đầu tạo phụ đề AI";
+      currentAbortController = null;
+      currentJobId = null;
     }
   });
+
+  if (btnCancelProcess) {
+    btnCancelProcess.addEventListener("click", async () => {
+      if (currentAbortController) {
+        currentAbortController.abort();
+      }
+      if (currentJobId) {
+        try {
+          await fetch(`http://127.0.0.1:8000/api/video/cancel/${currentJobId}`, { method: "POST" });
+        } catch (e) {}
+      }
+      btnCancelProcess.disabled = true;
+      btnCancelProcess.innerText = "Đang hủy...";
+      statusText.innerText = "Đã gửi yêu cầu hủy tiến trình lên máy chủ.";
+    });
+  }
 
   // 4. Bật chế độ xem nhanh tức thì (nếu có nút)
   if (btnLookahead) {

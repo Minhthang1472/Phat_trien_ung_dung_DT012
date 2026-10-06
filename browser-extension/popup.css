@@ -126,6 +126,46 @@ select:focus {
   border-color: #6366f1;
 }
 
+.field-row {
+  display: flex;
+  gap: 8px;
+}
+
+.field-half {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-half input {
+  background: #161f30;
+  border: 1px solid #233048;
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  outline: none;
+}
+
+.field-half input:focus {
+  border-color: #6366f1;
+}
+
+.btn-cancel {
+  background: #ef4444;
+  color: white;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.35);
+  font-size: 13px;
+  padding: 10px;
+  display: none;
+}
+
+.btn-cancel:hover:not(:disabled) {
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+}
+
 .checkbox-row {
   display: flex;
   flex-direction: column;
