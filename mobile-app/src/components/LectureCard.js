@@ -11,7 +11,6 @@ export default function LectureCard({
   playbackProgress,
   onExportSRT,
   onExportSummary,
-  onEditMeta,
 }) {
   const [exporting, setExporting] = useState(false);
 
@@ -164,22 +163,6 @@ export default function LectureCard({
                   <Text style={[styles.starIconText, isFavorite && styles.starIconActive]}>
                     {isFavorite ? '★' : '☆'}
                   </Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Nút Phân loại Thư mục & Thẻ */}
-              {onEditMeta && (
-                <TouchableOpacity
-                  style={styles.metaBtn}
-                  onPress={(e) => {
-                    if (e && e.stopPropagation) e.stopPropagation();
-                    onEditMeta(lecture);
-                  }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  activeOpacity={0.7}
-                  accessibilityLabel="Phân loại bài giảng"
-                >
-                  <Text style={styles.metaIconText}>🏷️</Text>
                 </TouchableOpacity>
               )}
 

@@ -143,6 +143,8 @@ class SummaryService:
         """
         if not full_text or len(full_text.strip()) < 10:
             return {
+                "folder": "Bài giảng chung",
+                "tags": ["Bài giảng", "Học tập"],
                 "summary": "Nội dung bài giảng quá ngắn để tóm tắt.",
                 "key_points": [],
                 "formulas_and_terms": [],
@@ -174,6 +176,8 @@ class SummaryService:
             ]
 
             return {
+                "folder": "Bài giảng chung",
+                "tags": ["Bài giảng", "Âm thanh", "Whisper"],
                 "summary": f"Tóm tắt sơ lược bài học: {preview}",
                 "key_points": default_kp,
                 "formulas_and_terms": default_terms,
@@ -211,8 +215,15 @@ class SummaryService:
         ---
         {condensed_text}
         ---
-        Hãy phân tích chuyên sâu nội dung trên và trả về kết quả ĐÚNG ĐỊNH DẠNG JSON sau:
+        Hãy phân tích chuyên sâu nội dung bài giảng trên, tự động phân loại chủ đề/thư mục và gắn thẻ (tags) từ khóa phù hợp nhất, rồi trả về kết quả ĐÚNG ĐỊNH DẠNG JSON sau:
         {{
+            "folder": "Tên chủ đề hoặc lĩnh vực môn học ngắn gọn của bài giảng (2-4 từ, ví dụ: 'Trí tuệ nhân tạo', 'Toán học', 'Lập trình', 'Kinh tế', 'Khoa học máy tính', 'Kỹ năng mềm')",
+            "tags": [
+                "TừKhóa1",
+                "TừKhóa2",
+                "TừKhóa3",
+                "TừKhóa4"
+            ],
             "summary": "Đoạn văn 3-5 câu tóm tắt tổng quan bài học một cách súc tích",
             "key_points": [
                 "Điểm cốt lõi thứ 1: giải thích ngắn",
@@ -293,7 +304,18 @@ class SummaryService:
             parsed = _clean_and_parse_json(response.text)
             kp = parsed.get("key_points", [])
             terms = parsed.get("formulas_and_terms", [])
+            raw_folder = parsed.get("folder")
+            folder_clean = str(raw_folder).strip() if raw_folder else "Bài giảng chung"
+            raw_tags = parsed.get("tags") or []
+            if isinstance(raw_tags, list):
+                tags_clean = [str(t).strip().replace("#", "") for t in raw_tags if str(t).strip()]
+            else:
+                tags_clean = []
+            if not tags_clean:
+                tags_clean = ["Bài giảng", "Học tập"]
             return {
+                "folder": folder_clean,
+                "tags": tags_clean,
                 "summary": parsed.get("summary", ""),
                 "key_points": kp,
                 "formulas_and_terms": terms,
@@ -314,6 +336,8 @@ class SummaryService:
             logger.error(f"Lỗi khi gọi LLM tóm tắt: {e1}")
             fallback_kp = ["Bóc tách âm thanh thành công", "Nội dung bài giảng sẵn sàng"]
             return {
+                "folder": "Bài giảng chung",
+                "tags": ["Bài giảng", "Học tập"],
                 "summary": "Tóm tắt từ phụ đề: " + full_text[:200] + "...",
                 "key_points": fallback_kp,
                 "formulas_and_terms": [],

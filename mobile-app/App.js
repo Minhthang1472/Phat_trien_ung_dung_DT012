@@ -11,7 +11,7 @@ export default function App() {
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
-      document.title = 'PHỤ ĐỀ BÀI GIẢNG AI';
+      document.title = 'PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG';
     }
   }, []);
 

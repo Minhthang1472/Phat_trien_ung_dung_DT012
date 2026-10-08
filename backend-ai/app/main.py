@@ -252,8 +252,8 @@ async def process_video(request: ProcessVideoRequest):
         "quiz": normalize_quiz(summary_data.get("quiz", [])),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=audio_info["title"], key_points=summary_data.get("key_points")),
         "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
-        "folder": request.folder or None,
-        "tags": request.tags or [],
+        "folder": request.folder or summary_data.get("folder") or "Bài giảng chung",
+        "tags": request.tags if (request.tags and len(request.tags) > 0) else (summary_data.get("tags") or ["Bài giảng"]),
         "copyright_status": audio_info.get("copyright_status", "verified_clean"),
     }
 
@@ -450,8 +450,8 @@ async def upload_video(
         "quiz": normalize_quiz(summary_data.get("quiz", [])),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=audio_info["title"], key_points=summary_data.get("key_points")),
         "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
-        "folder": folder or None,
-        "tags": tags_list,
+        "folder": folder or summary_data.get("folder") or "Bài giảng chung",
+        "tags": tags_list if len(tags_list) > 0 else (summary_data.get("tags") or ["Bài giảng"]),
         "copyright_status": "verified_clean"
     }
 
@@ -585,6 +585,8 @@ async def process_subtitle_file(
         "quiz": normalize_quiz(summary_data.get("quiz", [])),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=title or os.path.splitext(filename)[0], key_points=summary_data.get("key_points")),
         "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
+        "folder": summary_data.get("folder") or "Bài giảng chung",
+        "tags": summary_data.get("tags") or ["Bài giảng"],
     }
     firebase_service.save_lecture_cache(lecture_url, result)
     return result
@@ -771,7 +773,9 @@ async def pair_video_and_subtitles(
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
         "quiz": normalize_quiz(summary_data.get("quiz", [])),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=final_title, key_points=summary_data.get("key_points")),
-        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points"))
+        "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
+        "folder": summary_data.get("folder") or "Bài giảng chung",
+        "tags": summary_data.get("tags") or ["Bài giảng"],
     }
 
     firebase_service.save_lecture_cache(lecture_url, result)
@@ -885,6 +889,8 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
         job["quiz"] = normalize_quiz(summary_data.get("quiz", []))
         job["mindmap"] = summary_data.get("mindmap") or normalize_mindmap(None, default_title=job.get("title", ""), key_points=job.get("key_points"))
         job["exercises"] = summary_data.get("exercises") or normalize_exercises(None, key_points=job.get("key_points"))
+        job["folder"] = summary_data.get("folder") or "Bài giảng chung"
+        job["tags"] = summary_data.get("tags") or ["Bài giảng"]
         job["status"] = "completed"
         job["progress"] = 100
 
@@ -900,7 +906,9 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
             "formulas_and_terms": job["formulas_and_terms"],
             "quiz": job["quiz"],
             "mindmap": job["mindmap"],
-            "exercises": job["exercises"]
+            "exercises": job["exercises"],
+            "folder": job["folder"],
+            "tags": job["tags"]
         }
         firebase_service.save_lecture_cache(job["video_url"], full_res)
         logger.info(f"Đã hoàn thành nạp gối đầu toàn bộ video dài [{job.get('title')}]: {len(all_segments)} câu phụ đề.")

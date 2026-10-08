@@ -186,7 +186,7 @@ class ApiService {
       try {
         const errJson = await response.json();
         errMsg = errJson.detail || errMsg;
-      } catch (_) {}
+      } catch (_) { }
       throw new Error(errMsg);
     }
 
@@ -215,7 +215,7 @@ class ApiService {
       try {
         const body = await response.json();
         message = body.detail || message;
-      } catch (_) {}
+      } catch (_) { }
       throw new Error(message);
     }
     const data = await response.json();
@@ -236,7 +236,7 @@ class ApiService {
         cancelToken.abort = () => {
           try {
             xhr.abort();
-          } catch (_) {}
+          } catch (_) { }
           reject(new Error('Tác vụ tải lên đã bị người dùng hủy.'));
         };
       }
@@ -304,7 +304,7 @@ class ApiService {
       try {
         const body = await response.json();
         errMsg = body.detail || errMsg;
-      } catch (_) {}
+      } catch (_) { }
       throw new Error(errMsg);
     }
     const data = await response.json();
@@ -328,7 +328,7 @@ class ApiService {
       try {
         const body = await response.json();
         errMsg = body.detail || errMsg;
-      } catch (_) {}
+      } catch (_) { }
       throw new Error(errMsg);
     }
     return await response.json();
@@ -353,7 +353,7 @@ class ApiService {
       try {
         const body = await response.json();
         message = body.detail || message;
-      } catch (_) {}
+      } catch (_) { }
       throw new Error(message);
     }
     const data = await response.json();
@@ -672,7 +672,7 @@ class ApiService {
     text += `Ngôn ngữ: ${(lecture.language || 'vi').toUpperCase()}\n`;
     text += `Nguồn: ${lecture.video_url || ''}\n\n`;
     text += `=====================================\n`;
-    text += `TÓM TẮT BÀI HỌC (AI SUMMARY):\n`;
+    text += `TÓM TẮT NỘI DUNG BÀI HỌC (SUMMARY):\n`;
     text += `${lecture.summary || 'Chưa có tóm tắt'}\n\n`;
 
     if (lecture.key_points && lecture.key_points.length > 0) {
@@ -725,7 +725,7 @@ class ApiService {
       try {
         const data = await response.json();
         errMsg = data.detail || errMsg;
-      } catch (_) {}
+      } catch (_) { }
       throw new Error(errMsg);
     }
 

@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 // Tự động phát hiện URL mặc định theo nền tảng
 export const getDefaultApiUrl = () => {
   if (Platform.OS === 'android') {
-    return 'http://10.0.128.147:8000';
+    return 'http://10.0.2.2:8000';
   }
   // iOS Simulator hoặc Web chạy localhost
   return 'http://127.0.0.1:8000';
@@ -15,6 +15,8 @@ export const STORAGE_KEYS = {
   FAVORITES: '@lecture_ai_favorites',
   PLAYBACK_PROGRESS: '@lecture_ai_playback_progress',
   CUSTOM_FOLDERS: '@lecture_ai_custom_folders',
+  DEFAULT_FOLDER: '@lecture_ai_default_folder',
+  DEFAULT_TAGS: '@lecture_ai_default_tags',
 };
 
 export const SUPPORTED_LANGUAGES = [

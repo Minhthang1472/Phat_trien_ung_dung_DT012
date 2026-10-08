@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "PHỤ ĐỀ BÀI GIẢNG AI",
-    "slug": "phu-de-bai-giang-ai",
+    "name": "PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG",
+    "slug": "phu-de-bai-giang",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

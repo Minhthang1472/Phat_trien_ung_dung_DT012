@@ -12,12 +12,17 @@ import {
 } from 'react-native';
 import { colors, spacing, borderRadius } from '../constants/theme';
 import { apiService } from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { STORAGE_KEYS } from '../constants/config';
 
 export default function SettingsModal({ visible, onClose, onSaved, onClearedHistory }) {
   const [url, setUrl] = useState('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [defaultFolder, setDefaultFolder] = useState('');
+  const [defaultTags, setDefaultTags] = useState('');
+  const [metaSavedMsg, setMetaSavedMsg] = useState(false);
 
   useEffect(() => {
     if (visible) {
@@ -25,8 +30,27 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
         setUrl(current);
         setTestResult(null);
       });
+      AsyncStorage.getItem(STORAGE_KEYS.DEFAULT_FOLDER).then((f) => {
+        if (f) setDefaultFolder(f);
+      });
+      AsyncStorage.getItem(STORAGE_KEYS.DEFAULT_TAGS).then((t) => {
+        if (t) setDefaultTags(t);
+      });
+      setMetaSavedMsg(false);
     }
   }, [visible]);
+
+  const handleSaveMetaDefaults = async () => {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.DEFAULT_FOLDER, defaultFolder.trim());
+      await AsyncStorage.setItem(STORAGE_KEYS.DEFAULT_TAGS, defaultTags.trim());
+      setMetaSavedMsg(true);
+      setTimeout(() => setMetaSavedMsg(false), 3000);
+      Alert.alert('Thành công', 'Đã lưu cấu hình Thư mục & Thẻ bài giảng mặc định!');
+    } catch (err) {
+      Alert.alert('Lỗi', 'Không thể lưu: ' + err.message);
+    }
+  };
 
   const handleTest = async () => {
     setTesting(true);
@@ -99,9 +123,9 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
           <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
             {/* Mục 1: Máy chủ Backend */}
             <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>🌐 KẾT NỐI MÁY CHỦ BACKEND AI</Text>
+              <Text style={styles.sectionTitle}>🌐 KẾT NỐI MÁY CHỦ BACKEND</Text>
               <Text style={styles.sectionDesc}>
-                Địa chỉ FastAPI xử lý Whisper AI, dịch thuật và tóm tắt bài giảng:
+                Địa chỉ FastAPI xử lý nhận diện giọng nói, dịch thuật và tóm tắt bài giảng:
               </Text>
 
               <TextInput
@@ -130,9 +154,9 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.presetChip}
-                  onPress={() => setUrl('http://10.0.128.147:8000')}
+                  onPress={() => setUrl('http://10.0.140.239:8000')}
                 >
-                  <Text style={styles.presetChipText}>📶 Mạng LAN</Text>
+                  <Text style={styles.presetChipText}>📶 Mạng LAN (10.0.140.239)</Text>
                 </TouchableOpacity>
               </View>
 
@@ -186,7 +210,6 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
               </View>
             </View>
 
-
             {/* Mục 2: Quản lý bộ nhớ đệm */}
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>🧹 QUẢN LÝ DỮ LIỆU & BỘ NHỚ</Text>
@@ -204,15 +227,15 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
 
             {/* Mục 3: Trạng thái hệ thống AI */}
             <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>⚡ TRẠNG THÁI HỆ THỐNG AI</Text>
+              <Text style={styles.sectionTitle}>⚡ TRẠNG THÁI HỆ THỐNG</Text>
               <View style={styles.statusList}>
                 <View style={styles.statusItem}>
-                  <Text style={styles.statusLabel}>• AI Nhận diện âm thanh (ASR):</Text>
-                  <Text style={styles.statusValue}>Faster-Whisper (CUDA / CPU)</Text>
+                  <Text style={styles.statusLabel}>• Nhận diện âm thanh (ASR):</Text>
+                  <Text style={styles.statusValue}>Whisper Engine (CUDA / CPU)</Text>
                 </View>
                 <View style={styles.statusItem}>
-                  <Text style={styles.statusLabel}>• AI Tóm tắt & Trắc nghiệm:</Text>
-                  <Text style={styles.statusValue}>Google Gemini Flash</Text>
+                  <Text style={styles.statusLabel}>• Tóm tắt & Trắc nghiệm:</Text>
+                  <Text style={styles.statusValue}>Mô-đun ngôn ngữ tự nhiên</Text>
                 </View>
                 <View style={styles.statusItem}>
                   <Text style={styles.statusLabel}>• Cơ sở dữ liệu đám mây:</Text>
@@ -308,6 +331,12 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginBottom: spacing.sm,
     lineHeight: 18,
+  },
+  fieldLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: 4,
+    fontWeight: '500',
   },
   input: {
     backgroundColor: colors.background,

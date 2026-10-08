@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, spacing, borderRadius } from '../constants/theme';
 
 export default function Header({
-  title = 'PHỤ ĐỀ BÀI GIẢNG AI',
+  title = 'PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG',
   serverStatus = { online: false },
   onOpenSettings,
   onBack,

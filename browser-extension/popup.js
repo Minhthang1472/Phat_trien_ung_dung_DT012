@@ -63,12 +63,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       const res = await fetch("http://127.0.0.1:8000/", { method: "GET" });
       if (res.ok) {
         statusDot.className = "status-dot online";
-        statusText.innerText = "🟢 Backend AI Sẵn sàng (Port 8000)";
+        statusText.innerText = "🟢 Máy chủ Sẵn sàng (Port 8000)";
         return true;
       }
     } catch (_) {}
     statusDot.className = "status-dot offline";
-    statusText.innerText = "🔴 Backend AI chưa bật (Khởi động port 8000)";
+    statusText.innerText = "🔴 Máy chủ chưa bật (Khởi động port 8000)";
     return false;
   };
 
@@ -165,12 +165,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const isOnline = await checkServerHealth();
     if (!isOnline) {
-      alert("Backend AI chưa được bật! Vui lòng khởi động server Python FastAPI ở cổng 8000 trước.");
+      alert("Máy chủ chưa được bật! Vui lòng khởi động server Python FastAPI ở cổng 8000 trước.");
       return;
     }
 
     btnProcessTab.disabled = true;
-    btnProcessTab.innerText = "⏳ AI đang kiểm tra video...";
+    btnProcessTab.innerText = "⏳ Đang kiểm tra video...";
     statusText.innerText = "Đang kiểm tra thời lượng bài giảng...";
 
     try {
@@ -201,14 +201,14 @@ document.addEventListener("DOMContentLoaded", async () => {
         });
         statusText.innerText = `⚡ Đã bật xem nhanh cho video ${minutes}p! Phụ đề đang nạp liên tục.`;
         btnProcessTab.disabled = false;
-        btnProcessTab.innerText = "⚡ Bắt đầu tạo phụ đề AI";
+        btnProcessTab.innerText = "⚡ Bắt đầu tạo phụ đề";
         return;
       }
 
       btnProcessTab.style.display = "none";
       btnCancelProcess.style.display = "block";
       btnCancelProcess.disabled = false;
-      btnProcessTab.innerText = "⏳ AI đang xử lý (Whisper + Dịch)...";
+      btnProcessTab.innerText = "⏳ Đang xử lý bóc tách & dịch thuật...";
       statusText.innerText = "Đang trích xuất âm thanh & bóc tách phụ đề...";
 
       currentAbortController = new AbortController();
@@ -268,7 +268,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       btnCancelProcess.style.display = "none";
       btnCancelProcess.innerText = "🛑 Hủy tiến trình";
       btnProcessTab.disabled = false;
-      btnProcessTab.innerText = "⚡ Bắt đầu tạo phụ đề AI";
+      btnProcessTab.innerText = "⚡ Bắt đầu tạo phụ đề";
       currentAbortController = null;
       currentJobId = null;
     }

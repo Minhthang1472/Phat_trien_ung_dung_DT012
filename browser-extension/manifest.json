@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "PHỤ ĐỀ BÀI GIẢNG AI",
+  "name": "PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG",
   "version": "1.2.0",
   "description": "Tự động tạo phụ đề đồng bộ đa ngôn ngữ, song ngữ và tóm tắt bài giảng trực tiếp trên trình duyệt (YouTube, Drive, LMS...)",
   "permissions": [
@@ -15,7 +15,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "PHỤ ĐỀ BÀI GIẢNG AI"
+    "default_title": "PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG"
   },
   "content_scripts": [
     {

@@ -242,7 +242,7 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
           ) : (
             <View style={styles.emptyQuiz}>
               <Text style={styles.emptyQuizText}>
-                Chưa có câu hỏi tự luyện nào. Hãy chạy phân tích bằng AI để tạo bài tập!
+                Chưa có câu hỏi tự luyện nào. Hãy tạo phụ đề bài giảng để tạo bài tập!
               </Text>
             </View>
           )}
