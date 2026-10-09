@@ -9,11 +9,16 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Platform,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import * as LegacyFileSystem from 'expo-file-system/legacy';
 import { colors, spacing, borderRadius } from '../constants/theme';
 import { apiService } from '../services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../constants/config';
+
+const SAF = LegacyFileSystem?.StorageAccessFramework || FileSystem?.StorageAccessFramework;
 
 export default function SettingsModal({ visible, onClose, onSaved, onClearedHistory }) {
   const [url, setUrl] = useState('');
@@ -23,6 +28,7 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
   const [defaultFolder, setDefaultFolder] = useState('');
   const [defaultTags, setDefaultTags] = useState('');
   const [metaSavedMsg, setMetaSavedMsg] = useState(false);
+  const [defaultExportDir, setDefaultExportDir] = useState({ uri: null, name: null });
 
   useEffect(() => {
     if (visible) {
@@ -36,9 +42,61 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
       AsyncStorage.getItem(STORAGE_KEYS.DEFAULT_TAGS).then((t) => {
         if (t) setDefaultTags(t);
       });
+      apiService.getDefaultExportDir().then((dir) => {
+        setDefaultExportDir(dir);
+      });
       setMetaSavedMsg(false);
     }
   }, [visible]);
+
+  const handlePickDefaultFolder = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        if (SAF && typeof SAF.requestDirectoryPermissionsAsync === 'function') {
+          const permissions = await SAF.requestDirectoryPermissionsAsync();
+          if (permissions.granted) {
+            const uri = permissions.directoryUri;
+            let friendlyName = 'Thư mục đã chọn';
+            try {
+              const decoded = decodeURIComponent(uri);
+              const parts = decoded.split(':');
+              if (parts.length > 1) {
+                friendlyName = parts[parts.length - 1] || 'Thư mục đã chọn';
+              }
+            } catch (_) {}
+            await apiService.setDefaultExportDir(uri, friendlyName);
+            setDefaultExportDir({ uri, name: friendlyName });
+            Alert.alert('Thành công', `Đã cài đặt "${friendlyName}" làm thư mục tải về mặc định!`);
+            return;
+          }
+        } else if (FileSystem.Directory && typeof FileSystem.Directory.pickDirectoryAsync === 'function') {
+          const dir = await FileSystem.Directory.pickDirectoryAsync();
+          if (dir && dir.uri) {
+            const friendlyName = dir.name || 'Thư mục đã chọn';
+            await apiService.setDefaultExportDir(dir.uri, friendlyName);
+            setDefaultExportDir({ uri: dir.uri, name: friendlyName });
+            Alert.alert('Thành công', `Đã cài đặt "${friendlyName}" làm thư mục tải về mặc định!`);
+            return;
+          }
+        } else {
+          Alert.alert('Thông báo', 'Hệ thống hiện tại chưa hỗ trợ bộ chọn thư mục trực tiếp.');
+        }
+      } catch (e) {
+        Alert.alert('Lỗi', 'Không thể chọn thư mục: ' + e.message);
+      }
+    } else {
+      Alert.alert(
+        'Thông báo',
+        'Trên nền tảng này, file tải về sẽ được lưu tự động vào thư mục Tải về (Downloads) mặc định của thiết bị.'
+      );
+    }
+  };
+
+  const handleClearDefaultFolder = async () => {
+    await apiService.clearDefaultExportDir();
+    setDefaultExportDir({ uri: null, name: null });
+    Alert.alert('Đã hủy', 'Đã hủy thư mục mặc định. Ứng dụng sẽ hỏi vị trí lưu mỗi khi tải file.');
+  };
 
   const handleSaveMetaDefaults = async () => {
     try {
@@ -208,6 +266,61 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
                   <Text style={styles.btnPrimaryText}>Lưu cấu hình</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+
+            {/* Mục: Thư mục lưu file tải về mặc định */}
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>📁 THƯ MỤC TẢI VỀ MẶC ĐỊNH</Text>
+              <Text style={styles.sectionDesc}>
+                Thiết lập thư mục cố định để tự động lưu phụ đề (.srt, .vtt), tài liệu (.txt) và video (.mp4) mà không cần hỏi lại mỗi lần:
+              </Text>
+
+              {defaultExportDir?.uri ? (
+                <View style={styles.dirSelectedCard}>
+                  <View style={styles.dirSelectedInfo}>
+                    <Text style={styles.dirSelectedIcon}>📂</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.dirSelectedName} numberOfLines={1}>
+                        {defaultExportDir.name || 'Thư mục đã chọn'}
+                      </Text>
+                      <Text style={styles.dirSelectedSub}>
+                        ✓ Đang bật chế độ tự động lưu vào đây
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.dirActionRow}>
+                    <TouchableOpacity
+                      style={styles.dirChangeBtn}
+                      onPress={handlePickDefaultFolder}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.dirChangeBtnText}>🔄 Đổi thư mục</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.dirRemoveBtn}
+                      onPress={handleClearDefaultFolder}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.dirRemoveBtnText}>✕ Hủy mặc định</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.dirEmptyCard}>
+                  <Text style={styles.dirEmptyDesc}>
+                    Trạng thái: Chưa chọn (ứng dụng sẽ mở bảng hỏi vị trí lưu mỗi khi tải).
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.dirPickBtn}
+                    onPress={handlePickDefaultFolder}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.dirPickBtnText}>📂 Chọn thư mục lưu mặc định ngay</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
 
             {/* Mục 2: Quản lý bộ nhớ đệm */}
@@ -415,6 +528,92 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '600',
     fontSize: 12,
+  },
+  dirSelectedCard: {
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.35)',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginTop: 4,
+  },
+  dirSelectedInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  dirSelectedIcon: {
+    fontSize: 24,
+  },
+  dirSelectedName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#e2e8f0',
+  },
+  dirSelectedSub: {
+    fontSize: 11,
+    color: '#10b981',
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  dirActionRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'flex-end',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    paddingTop: spacing.xs,
+  },
+  dirChangeBtn: {
+    backgroundColor: 'rgba(99, 102, 241, 0.25)',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: borderRadius.sm,
+  },
+  dirChangeBtnText: {
+    color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  dirRemoveBtn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: borderRadius.sm,
+  },
+  dirRemoveBtnText: {
+    color: '#f87171',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  dirEmptyCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  dirEmptyDesc: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  dirPickBtn: {
+    backgroundColor: colors.primary,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+  },
+  dirPickBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   clearCacheBtn: {
     backgroundColor: 'rgba(239, 68, 68, 0.1)',

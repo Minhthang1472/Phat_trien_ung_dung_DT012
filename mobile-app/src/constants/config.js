@@ -17,6 +17,8 @@ export const STORAGE_KEYS = {
   CUSTOM_FOLDERS: '@lecture_ai_custom_folders',
   DEFAULT_FOLDER: '@lecture_ai_default_folder',
   DEFAULT_TAGS: '@lecture_ai_default_tags',
+  DEFAULT_EXPORT_DIR: '@lecture_ai_default_export_dir',
+  DEFAULT_EXPORT_DIR_NAME: '@lecture_ai_default_export_dir_name',
 };
 
 export const SUPPORTED_LANGUAGES = [

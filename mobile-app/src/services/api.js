@@ -1,8 +1,11 @@
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
+import * as LegacyFileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { getDefaultApiUrl, STORAGE_KEYS } from '../constants/config';
+
+const SAF = LegacyFileSystem?.StorageAccessFramework || FileSystem?.StorageAccessFramework;
 
 class ApiService {
   constructor() {
@@ -523,7 +526,44 @@ class ApiService {
   }
 
 
-  // --- Xuất file Phụ đề & Tóm tắt với Native File Picker (Yêu cầu 2) ---
+  // --- Quản lý Thư mục lưu file mặc định ---
+  async getDefaultExportDir() {
+    try {
+      const uri = await AsyncStorage.getItem(STORAGE_KEYS.DEFAULT_EXPORT_DIR);
+      const name = await AsyncStorage.getItem(STORAGE_KEYS.DEFAULT_EXPORT_DIR_NAME);
+      return { uri, name: name || (uri ? 'Thư mục đã chọn' : null) };
+    } catch (e) {
+      return { uri: null, name: null };
+    }
+  }
+
+  async setDefaultExportDir(uri, name) {
+    try {
+      if (uri) {
+        await AsyncStorage.setItem(STORAGE_KEYS.DEFAULT_EXPORT_DIR, uri);
+        await AsyncStorage.setItem(STORAGE_KEYS.DEFAULT_EXPORT_DIR_NAME, name || 'Thư mục mặc định');
+      } else {
+        await this.clearDefaultExportDir();
+      }
+      return true;
+    } catch (e) {
+      console.warn('Lỗi lưu thư mục xuất mặc định:', e);
+      return false;
+    }
+  }
+
+  async clearDefaultExportDir() {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.DEFAULT_EXPORT_DIR);
+      await AsyncStorage.removeItem(STORAGE_KEYS.DEFAULT_EXPORT_DIR_NAME);
+      return true;
+    } catch (e) {
+      console.warn('Lỗi xóa thư mục xuất mặc định:', e);
+      return false;
+    }
+  }
+
+  // --- Xuất file Phụ đề & Tóm tắt với Native File Picker hoặc Thư mục Mặc định ---
   async exportFile(filename, content, mimeType = 'text/plain') {
     try {
       if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -543,12 +583,11 @@ class ApiService {
             const writable = await fileHandle.createWritable();
             await writable.write(content);
             await writable.close();
-            return true;
+            return { success: true, isDefault: false };
           } catch (pickerErr) {
             if (pickerErr.name === 'AbortError') {
-              return false; // Người dùng bấm Hủy trên hộp thoại chọn thư mục
+              return { success: false, cancelled: true };
             }
-            // Nếu trình duyệt có quyền hạn chế, chuyển sang fallback
           }
         }
 
@@ -562,28 +601,45 @@ class ApiService {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        return true;
+        return { success: true, isDefault: false };
       }
 
-      // Trên Mobile (iOS / Android)
-      // Yêu cầu 2: Custom File Export Directory Selector
+      // Trên Mobile Android
       if (Platform.OS === 'android') {
-        try {
-          // Bật hộp thoại chọn thư mục lưu file (Native Directory Picker) trên Android
-          const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
-          if (permissions.granted) {
-            // Tạo file trống tại thư mục người dùng chọn
-            const fileUri = await FileSystem.StorageAccessFramework.createFileAsync(
-              permissions.directoryUri,
+        // 1. Kiểm tra xem người dùng đã cài đặt sẵn Thư mục lưu mặc định chưa
+        const { uri: defaultDirUri, name: defaultDirName } = await this.getDefaultExportDir();
+        if (defaultDirUri && SAF?.createFileAsync) {
+          try {
+            const fileUri = await SAF.createFileAsync(
+              defaultDirUri,
               filename,
               mimeType
             );
-            // Ghi nội dung vào file
             await FileSystem.writeAsStringAsync(fileUri, content, { encoding: FileSystem.EncodingType.UTF8 });
-            return true;
+            return { success: true, isDefault: true, dirName: defaultDirName, path: fileUri };
+          } catch (defaultDirErr) {
+            console.warn('Không thể ghi vào thư mục mặc định (có thể quyền bị thu hồi), chuyển sang chọn thủ công:', defaultDirErr);
           }
-        } catch (androidErr) {
-          console.warn('Người dùng hủy chọn thư mục hoặc lỗi Storage Access:', androidErr);
+        }
+
+        // 2. Nếu chưa có thư mục mặc định hoặc bị lỗi quyền: Bật hộp thoại chọn thư mục lưu (Native Directory Picker)
+        if (SAF?.requestDirectoryPermissionsAsync) {
+          try {
+            const permissions = await SAF.requestDirectoryPermissionsAsync();
+            if (permissions.granted) {
+              const fileUri = await SAF.createFileAsync(
+                permissions.directoryUri,
+                filename,
+                mimeType
+              );
+              await FileSystem.writeAsStringAsync(fileUri, content, { encoding: FileSystem.EncodingType.UTF8 });
+              return { success: true, isDefault: false, path: fileUri };
+            } else {
+              return { success: false, cancelled: true };
+            }
+          } catch (androidErr) {
+            console.warn('Người dùng hủy chọn thư mục hoặc lỗi Storage Access:', androidErr);
+          }
         }
       }
 
@@ -597,9 +653,50 @@ class ApiService {
           dialogTitle: `Lưu ${filename}`,
         });
       }
-      return true;
+      return { success: true, isDefault: false, path: filePath };
     } catch (err) {
       console.warn('Lỗi xuất file:', err);
+      throw err;
+    }
+  }
+
+  // --- Xuất file nhị phân (Video MP4 / Audio) vào Thư mục Mặc định hoặc Khay Share ---
+  async exportBinaryFile(filename, sourceFileUri, mimeType = 'video/mp4') {
+    try {
+      if (Platform.OS === 'android') {
+        const { uri: defaultDirUri, name: defaultDirName } = await this.getDefaultExportDir();
+        if (defaultDirUri && SAF?.createFileAsync) {
+          try {
+            const fileUri = await SAF.createFileAsync(
+              defaultDirUri,
+              filename,
+              mimeType
+            );
+            const base64Data = await FileSystem.readAsStringAsync(sourceFileUri, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+              encoding: FileSystem.EncodingType.Base64,
+            });
+            return { success: true, isDefault: true, dirName: defaultDirName, path: fileUri };
+          } catch (err) {
+            console.warn('Lỗi ghi video vào thư mục mặc định, chuyển sang Share Sheet:', err);
+          }
+        }
+      }
+
+      // Fallback sang Share Sheet hệ thống
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(sourceFileUri, {
+          mimeType,
+          dialogTitle: `Lưu ${filename}`,
+        });
+        return { success: true, isDefault: false };
+      }
+      return { success: true, isDefault: false, path: sourceFileUri };
+    } catch (err) {
+      console.warn('Lỗi xuất file nhị phân:', err);
       throw err;
     }
   }

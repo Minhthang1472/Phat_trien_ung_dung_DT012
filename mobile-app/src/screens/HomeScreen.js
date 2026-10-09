@@ -335,10 +335,12 @@ export default function HomeScreen({ onNavigate }) {
 
   const handleQuickExportSRT = async (lecture) => {
     try {
-      await apiService.exportLectureSRT(lecture);
+      const res = await apiService.exportLectureSRT(lecture);
       if (Platform.OS === 'web') {
         window.alert('Đã tải xuống file phụ đề .SRT thành công!');
-      } else {
+      } else if (res && res.isDefault) {
+        Alert.alert('Thành công', `Đã lưu file phụ đề .SRT vào thư mục mặc định:\n📂 ${res.dirName}`);
+      } else if (res && !res.cancelled) {
         Alert.alert('Thành công', 'Đã xuất file phụ đề .SRT.');
       }
     } catch (err) {
@@ -348,10 +350,12 @@ export default function HomeScreen({ onNavigate }) {
 
   const handleQuickExportSummary = async (lecture) => {
     try {
-      await apiService.exportLectureSummary(lecture);
+      const res = await apiService.exportLectureSummary(lecture);
       if (Platform.OS === 'web') {
         window.alert('Đã tải xuống bản tóm tắt bài giảng .TXT thành công!');
-      } else {
+      } else if (res && res.isDefault) {
+        Alert.alert('Thành công', `Đã lưu bản tóm tắt vào thư mục mặc định:\n📂 ${res.dirName}`);
+      } else if (res && !res.cancelled) {
         Alert.alert('Thành công', 'Đã xuất bản tóm tắt bài giảng.');
       }
     } catch (err) {

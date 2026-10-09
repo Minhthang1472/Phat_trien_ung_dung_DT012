@@ -75,17 +75,13 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
       }
 
       const safeTitle = (lecture?.title || 'summary').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
-      const filePath = `${FileSystem.cacheDirectory}${safeTitle}_summary.txt`;
-      await FileSystem.writeAsStringAsync(filePath, content, { encoding: FileSystem.EncodingType.UTF8 });
+      const filename = `${safeTitle}_Summary.txt`;
+      const res = await apiService.exportFile(filename, content, 'text/plain');
 
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(filePath, {
-          mimeType: 'text/plain',
-          dialogTitle: 'Xuất tài liệu ôn tập',
-        });
-      } else {
-        Alert.alert('Thành công', `File đã được lưu tại:\n${filePath}`);
+      if (res && res.isDefault) {
+        Alert.alert('Thành công', `Đã lưu tài liệu thành công vào thư mục mặc định:\n📂 ${res.dirName}`);
+      } else if (res && !res.cancelled) {
+        Alert.alert('Thành công', 'Đã lưu tài liệu ôn tập thành công!');
       }
     } catch (err) {
       Alert.alert('Lỗi xuất tài liệu', err.message);
@@ -106,12 +102,16 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
               Alert.alert('Đang xử lý', 'Đang ghép phụ đề vào video, vui lòng chờ...');
               const burnResult = await apiService.burnSubtitlesIntoVideo(lecture.video_url, lecture.segments);
               
-              const fileUri = `${FileSystem.cacheDirectory}video_phude_${Date.now()}.mp4`;
-              await FileSystem.downloadAsync(burnResult.media_url, fileUri);
+              const safeTitle = (lecture?.title || 'video').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
+              const filename = `${safeTitle}_PhuDe.mp4`;
+              const tempUri = `${FileSystem.cacheDirectory}video_phude_${Date.now()}.mp4`;
+              await FileSystem.downloadAsync(burnResult.media_url, tempUri);
               
-              const canShare = await Sharing.isAvailableAsync();
-              if (canShare) {
-                await Sharing.shareAsync(fileUri, { mimeType: 'video/mp4', dialogTitle: 'Lưu Video Phụ Đề' });
+              const res = await apiService.exportBinaryFile(filename, tempUri, 'video/mp4');
+              if (res && res.isDefault) {
+                Alert.alert('Thành công', `Đã lưu video có phụ đề vào thư mục mặc định:\n📂 ${res.dirName}`);
+              } else if (res && !res.cancelled) {
+                Alert.alert('Thành công', 'Đã lưu video có phụ đề thành công!');
               }
             } catch (err) {
               Alert.alert('Lỗi tạo video', err.message);
