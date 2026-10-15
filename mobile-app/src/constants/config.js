@@ -19,6 +19,8 @@ export const STORAGE_KEYS = {
   DEFAULT_TAGS: '@lecture_ai_default_tags',
   DEFAULT_EXPORT_DIR: '@lecture_ai_default_export_dir',
   DEFAULT_EXPORT_DIR_NAME: '@lecture_ai_default_export_dir_name',
+  AUTH_TOKEN: '@lecture_ai_auth_token',
+  AUTH_USER: '@lecture_ai_auth_user',
 };
 
 export const SUPPORTED_LANGUAGES = [
@@ -28,3 +30,9 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'ko', label: '한국어 🇰🇷' },
   { code: 'zh', label: '中文 🇨🇳' },
 ];
+
+export const GOOGLE_CLIENT_IDS = {
+  web: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '',
+  android: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || '',
+  ios: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '',
+};

@@ -120,7 +120,7 @@ class FirebaseService:
             logger.warning(f"Lỗi ghi dữ liệu vào Firebase Firestore: {e}")
             return False
 
-    def get_history(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_history(self, limit: int = 10, owner_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Lấy danh sách các bài giảng gần đây từ Firebase Firestore"""
         if not self.db:
             self.init_firebase()
@@ -128,11 +128,14 @@ class FirebaseService:
             return []
 
         try:
+            query = self.db.collection("lectures")
+            if owner_id:
+                query = query.where("owner_id", "==", owner_id)
             try:
-                docs = self.db.collection("lectures").order_by("cached_at", direction=firestore.Query.DESCENDING).limit(limit).stream()
+                docs = query.order_by("cached_at", direction=firestore.Query.DESCENDING).limit(limit).stream()
             except Exception as sort_err:
                 logger.warning(f"Lỗi sắp xếp cached_at, fallback sang query cơ bản: {sort_err}")
-                docs = self.db.collection("lectures").limit(limit).stream()
+                docs = query.limit(limit).stream()
 
             history = []
             for doc in docs:
@@ -166,7 +169,7 @@ class FirebaseService:
             logger.warning(f"Lỗi lấy lịch sử Firebase: {e}")
             return []
 
-    def delete_lecture(self, video_url: str) -> bool:
+    def delete_lecture(self, video_url: str, owner_id: Optional[str] = None) -> bool:
         """Xóa bài giảng khỏi Firebase Firestore"""
         if not self.db:
             self.init_firebase()
@@ -175,7 +178,11 @@ class FirebaseService:
 
         try:
             doc_id = self.get_document_id(video_url)
-            self.db.collection("lectures").document(doc_id).delete()
+            doc_ref = self.db.collection("lectures").document(doc_id)
+            doc = doc_ref.get()
+            if not doc.exists or (owner_id and doc.to_dict().get("owner_id") != owner_id):
+                return False
+            doc_ref.delete()
             logger.info(f"Đã xóa thành công bài giảng khỏi Firebase Firestore [ID: {doc_id}]")
             return True
         except Exception as e:

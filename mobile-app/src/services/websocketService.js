@@ -16,7 +16,8 @@ class WebSocketService {
   async connect(callbacks = {}) {
     this.callbacks = { ...this.callbacks, ...callbacks };
     const baseUrl = await apiService.getBaseUrl();
-    const wsUrl = baseUrl.replace(/^http/, 'ws') + '/api/live/stream';
+    const token = await apiService.getAuthToken();
+    const wsUrl = `${baseUrl.replace(/^http/, 'ws')}/api/live/stream?token=${encodeURIComponent(token || '')}`;
 
     try {
       this.ws = new WebSocket(wsUrl);

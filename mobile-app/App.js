@@ -4,6 +4,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from './src/constants/theme';
 import HomeScreen from './src/screens/HomeScreen';
 import SyncPlayerScreen from './src/screens/SyncPlayerScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
 
 export default function App() {
   const [currentRoute, setCurrentRoute] = useState('Home');
@@ -39,6 +40,7 @@ export default function App() {
               onBack={handleBack}
             />
           )}
+          {currentRoute === 'Profile' && <ProfileScreen onBack={handleBack} />}
         </View>
       </SafeAreaView>
     </SafeAreaProvider>

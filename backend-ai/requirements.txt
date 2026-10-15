@@ -1,17 +1,20 @@
 # Backend Web Framework & Server
-fastapi>=0.110.0
-uvicorn[standard]>=0.28.0
-pydantic>=2.6.0
-python-dotenv>=1.0.1
-python-multipart>=0.0.9
+fastapi==0.143.1
+uvicorn[standard]==0.54.0
+pydantic==2.14.1
+python-dotenv==1.2.4
+python-multipart==0.0.32
 
 # AI & Speech Recognition (Chạy tăng tốc trên GPU NVIDIA RTX 2050)
-faster-whisper>=1.0.0
-yt-dlp>=2024.3.10
+faster-whisper==1.2.1
+yt-dlp==2026.8.19
 
 # Database & Cloud Storage (Kho lưu trữ vĩnh cửu & Cache O(1))
-firebase-admin>=6.5.0
+firebase-admin==7.7.0
 
 # NLP & Summarization / Translation
-google-generativeai>=0.4.1
-requests>=2.31.0
+google-genai==2.31.0
+requests==2.34.2
+PyJWT==2.15.1
+google-auth==2.62.0
+redis==5.2.1

@@ -35,9 +35,34 @@ class BurnSubtitlesRequest(BaseModel):
     segments: List[SubtitleSegment] = Field(..., min_length=1)
 
 
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    display_name: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str = Field(..., min_length=20)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=20)
+    password: str
+
+
 class ProcessVideoResponse(BaseModel):
     video_url: str
     media_url: Optional[str] = None
+    media_access_token: Optional[str] = None
     title: str
     duration_seconds: float
     language: str
@@ -56,3 +81,4 @@ class ProcessVideoResponse(BaseModel):
     job_id: Optional[str] = None
     progress: Optional[int] = 100
     status: Optional[str] = "completed"
+    owner_id: Optional[str] = None

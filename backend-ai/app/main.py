@@ -1,20 +1,46 @@
 import os
 from contextlib import asynccontextmanager
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, Response
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    UploadFile,
+    File,
+    Form,
+    Query,
+    Response,
+    status,
+    Request,
+)
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import FileResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import uuid
 import logging
 import shutil
 import subprocess
 import tempfile
+import time
+from collections import defaultdict, deque
+from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.firebase_database import firebase_service
 from pydantic import BaseModel
-from app.models.schemas import ProcessVideoRequest, ProcessVideoResponse, SubtitleSegment, LookaheadSubtitleRequest, BurnSubtitlesRequest
+from app.models.schemas import (
+    ProcessVideoRequest,
+    ProcessVideoResponse,
+    SubtitleSegment,
+    LookaheadSubtitleRequest,
+    BurnSubtitlesRequest,
+    RegisterRequest,
+    LoginRequest,
+    GoogleLoginRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+)
 from app.services.audio_service import audio_service
 from app.services.whisper_service import whisper_service
 from app.services.summary_service import summary_service, normalize_quiz, normalize_mindmap, normalize_exercises
@@ -22,9 +48,49 @@ from app.services.translation_service import translation_service
 from app.services.subtitle_exporter import subtitle_exporter
 from app.services.subtitle_parser import parse_subtitle
 from app.api.websocket_router import ws_router
+from app.services.auth_service import auth_service
+from app.services.email_service import email_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn")
+_rate_buckets = defaultdict(deque)
+_redis_client = None
+
+
+def rate_limit(scope: str, max_requests: int, window_seconds: int):
+    async def dependency(request: Request):
+        client_ip = request.client.host if request.client else "unknown"
+        key = f"{scope}:{client_ip}"
+        now = time.monotonic()
+        global _redis_client
+        if settings.REDIS_URL:
+            try:
+                if _redis_client is None:
+                    import redis.asyncio as redis
+                    _redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+                redis_key = f"lecture-ai:rate:{key}"
+                count = await _redis_client.incr(redis_key)
+                if count == 1:
+                    await _redis_client.expire(redis_key, window_seconds)
+                if count > max_requests:
+                    raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu, vui lòng thử lại sau.")
+                return
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.warning("Redis rate limit unavailable, using local fallback: %s", exc)
+                _redis_client = None
+        bucket = _rate_buckets[key]
+        while bucket and now - bucket[0] > window_seconds:
+            bucket.popleft()
+        if len(bucket) >= max_requests:
+            raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu, vui lòng thử lại sau.")
+        bucket.append(now)
+    return dependency
+
+
+auth_rate_limit = rate_limit("auth", 10, 300)
+heavy_rate_limit = rate_limit("heavy", 10, 60)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,19 +108,249 @@ app = FastAPI(
 # Cấu hình CORS để Mobile App (Flutter) và Browser Extension có thể kết nối không bị chặn
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Kênh WebSocket Live-Caption Realtime
 app.include_router(ws_router)
 
-# Thư mục lưu và phát video tĩnh tải lên từ máy tính
+# Thư mục lưu video upload ngoài static public route
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+):
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Vui lòng đăng nhập để sử dụng hồ sơ người dùng.",
+        )
+    claims = auth_service.decode_token(credentials.credentials)
+    user = auth_service.get_user(claims.get("sub", ""))
+    if not user:
+        raise HTTPException(status_code=401, detail="Không tìm thấy tài khoản.")
+    return user
+
+
+def get_optional_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+):
+    if not credentials:
+        return None
+    try:
+        claims = auth_service.decode_token(credentials.credentials)
+        return auth_service.get_user(claims.get("sub", ""))
+    except HTTPException:
+        return None
+
+
+@app.get("/uploads/{filename}")
+async def serve_uploaded_media(filename: str, access_token: Optional[str] = Query(None), user=Depends(get_optional_user)):
+    if not access_token and not user:
+        raise HTTPException(status_code=401, detail="Vui lòng đăng nhập để truy cập file.")
+    safe_name = os.path.basename(filename)
+    file_path = os.path.abspath(os.path.join(UPLOAD_DIR, safe_name))
+    upload_root = os.path.abspath(UPLOAD_DIR)
+    if not file_path.startswith(upload_root + os.sep) or not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Không tìm thấy file media.")
+    media_url = f"/uploads/{safe_name}"
+    if access_token:
+        claims = auth_service.decode_media_token(access_token)
+        if claims.get("media_url") != media_url:
+            raise HTTPException(status_code=403, detail="Media token không khớp file.")
+    else:
+        if not firebase_service.db:
+            firebase_service.init_firebase()
+        if not firebase_service.db:
+            raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+        owned = list(firebase_service.db.collection("lectures").where("owner_id", "==", user["id"]).where("media_url", "==", media_url).limit(1).stream())
+        if not owned:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập file này.")
+    return FileResponse(file_path)
+
+
+def user_public_data(user):
+    return {
+        "id": user.get("id"),
+        "email": user.get("email"),
+        "display_name": user.get("display_name") or user.get("email", "").split("@")[0],
+        "created_at": user.get("created_at"),
+    }
+
+
+@app.post("/api/auth/register")
+async def register(request: RegisterRequest, _limit=Depends(auth_rate_limit)):
+    email = auth_service.validate_gmail(request.email)
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng để tạo tài khoản.")
+
+    import hashlib
+    from datetime import datetime, timezone
+
+    user_id = hashlib.sha256(email.encode("utf-8")).hexdigest()
+    user_ref = firebase_service.db.collection("users").document(user_id)
+    if user_ref.get().exists:
+        raise HTTPException(status_code=409, detail="Gmail này đã được đăng ký.")
+    user = {
+        "id": user_id,
+        "email": email,
+        "display_name": (request.display_name or email.split("@")[0]).strip()[:80],
+        "password_hash": auth_service.hash_password(request.password),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "email_verified": False,
+    }
+    user_ref.set(user)
+    verification_token = auth_service.new_email_token()
+    user["verification_token_hash"] = auth_service.token_hash(verification_token)
+    from datetime import timedelta
+    user["verification_expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    user_ref.set(user, merge=True)
+    verify_url = f"{settings.PUBLIC_API_URL}/api/auth/verify-email?token={verification_token}"
+    try:
+        await run_in_threadpool(
+            email_service.send,
+            email,
+            "Xác minh tài khoản Lecture AI",
+            f"Chào {user['display_name']},\n\nMở liên kết sau để xác minh email:\n{verify_url}\n\nLiên kết có hiệu lực trong 24 giờ.",
+        )
+    except Exception as exc:
+        user_ref.delete()
+        logger.error("Không gửi được email xác minh: %s", exc)
+        raise HTTPException(status_code=503, detail="Không gửi được email xác minh. Kiểm tra cấu hình SMTP.") from exc
+    return {"requires_verification": True, "message": "Đã gửi email xác minh. Hãy kiểm tra hộp thư Gmail."}
+
+
+@app.post("/api/auth/login")
+async def login(request: LoginRequest, _limit=Depends(auth_rate_limit)):
+    email = auth_service.validate_gmail(request.email)
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng để đăng nhập.")
+
+    import hashlib
+
+    user_id = hashlib.sha256(email.encode("utf-8")).hexdigest()
+    user = auth_service.get_user(user_id)
+    if not user or not auth_service.verify_password(request.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Gmail hoặc mật khẩu không đúng.")
+    if user.get("email_verified") is False:
+        raise HTTPException(status_code=403, detail="Hãy xác minh email Gmail trước khi đăng nhập.")
+    return {"token": auth_service.create_token(user), "user": user_public_data(user)}
+
+
+@app.get("/api/auth/verify-email")
+async def verify_email(token: str = Query(..., min_length=20)):
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    matches = list(firebase_service.db.collection("users").where("verification_token_hash", "==", auth_service.token_hash(token)).limit(1).stream())
+    if not matches:
+        raise HTTPException(status_code=400, detail="Liên kết xác minh không hợp lệ hoặc đã hết hạn.")
+    user_ref = matches[0].reference
+    user = matches[0].to_dict()
+    expires_at = user.get("verification_expires_at")
+    if expires_at and datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Liên kết xác minh đã hết hạn.")
+    user_ref.update({"email_verified": True, "verification_token_hash": None, "verification_expires_at": None})
+    return {"verified": True, "email": user.get("email")}
+
+
+@app.post("/api/auth/google")
+async def google_login(request: GoogleLoginRequest, _limit=Depends(auth_rate_limit)):
+    google_user = auth_service.verify_google_id_token(request.id_token)
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    import hashlib
+    from datetime import datetime, timezone
+
+    user_id = f"google_{google_user['provider_id']}"
+    user_ref = firebase_service.db.collection("users").document(user_id)
+    existing = user_ref.get()
+    user = existing.to_dict() if existing.exists else {
+        "id": user_id,
+        "email": google_user["email"],
+        "display_name": google_user["display_name"],
+        "avatar_url": google_user.get("avatar_url"),
+        "auth_provider": "google",
+        "email_verified": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if existing.exists:
+        user.update({"email": google_user["email"], "display_name": google_user["display_name"], "avatar_url": google_user.get("avatar_url")})
+    user_ref.set(user, merge=True)
+    return {"token": auth_service.create_token(user), "user": user_public_data(user)}
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest, _limit=Depends(auth_rate_limit)):
+    email = auth_service.validate_gmail(request.email)
+    message = "Nếu tài khoản tồn tại, email đặt lại mật khẩu đã được gửi."
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if firebase_service.db:
+        import hashlib
+        user_ref = firebase_service.db.collection("users").document(hashlib.sha256(email.encode("utf-8")).hexdigest())
+        snapshot = user_ref.get()
+        if snapshot.exists:
+            from datetime import datetime, timezone, timedelta
+            token = auth_service.new_email_token()
+            user_ref.update({"reset_token_hash": auth_service.token_hash(token), "reset_expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()})
+            reset_url = f"{settings.PUBLIC_API_URL}/api/auth/reset-password?token={token}"
+            try:
+                await run_in_threadpool(email_service.send, email, "Đặt lại mật khẩu Lecture AI", f"Mở liên kết sau trong 1 giờ để lấy token đặt lại mật khẩu:\n{reset_url}")
+            except Exception as exc:
+                logger.error("Không gửi được email reset password: %s", exc)
+    return {"message": message}
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(request: ResetPasswordRequest, _limit=Depends(auth_rate_limit)):
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    matches = list(firebase_service.db.collection("users").where("reset_token_hash", "==", auth_service.token_hash(request.token)).limit(1).stream())
+    if not matches:
+        raise HTTPException(status_code=400, detail="Token đặt lại mật khẩu không hợp lệ.")
+    user_ref = matches[0].reference
+    reset_user = matches[0].to_dict()
+    expires_at = reset_user.get("reset_expires_at")
+    if expires_at and datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Token đặt lại mật khẩu đã hết hạn.")
+    user_ref.update({"password_hash": auth_service.hash_password(request.password), "reset_token_hash": None, "reset_expires_at": None, "email_verified": True})
+    return {"reset": True, "message": "Đã cập nhật mật khẩu."}
+
+
+@app.get("/api/auth/me")
+async def get_profile(user=Depends(get_current_user)):
+    lectures = []
+    if firebase_service.db:
+        try:
+            lectures = list(firebase_service.db.collection("lectures").where("owner_id", "==", user["id"]).stream())
+        except Exception as exc:
+            logger.warning("Không lấy được thống kê tài khoản: %s", exc)
+    return {
+        "user": user_public_data(user),
+        "stats": {
+            "processed_lectures": len(lectures),
+            "total_minutes": round(sum((doc.to_dict().get("duration_seconds") or 0) for doc in lectures) / 60),
+            "saved_quizzes": sum(len(doc.to_dict().get("quiz") or []) for doc in lectures),
+        },
+    }
 
 
 @app.get("/")
@@ -72,10 +368,12 @@ cancelled_jobs: set = set()
 streaming_jobs: dict = {}
 
 @app.post("/api/video/cancel/{job_id}")
-async def cancel_job(job_id: str):
+async def cancel_job(job_id: str, user=Depends(get_current_user)):
     """Cơ chế ngắt ngang tiến trình đang chạy (Yêu cầu 1)."""
     cancelled_jobs.add(job_id)
     if job_id in streaming_jobs:
+        if streaming_jobs[job_id].get("owner_id") != user["id"]:
+            raise HTTPException(status_code=403, detail="Bạn không có quyền hủy tác vụ này.")
         streaming_jobs[job_id]["is_cancelled"] = True
     logger.info(f"Đã kích hoạt ngắt ngang cho tác vụ: {job_id}")
     return {"success": True, "message": f"Tác vụ {job_id} đã được gửi tín hiệu dừng."}
@@ -88,10 +386,10 @@ class UpdateLectureMetaRequest(BaseModel):
 
 
 @app.post("/api/lecture/meta")
-async def update_lecture_meta(req: UpdateLectureMetaRequest):
+async def update_lecture_meta(req: UpdateLectureMetaRequest, user=Depends(get_current_user)):
     """Cập nhật thư mục và gắn nhãn phân loại bài giảng (Yêu cầu 8)."""
     cached = firebase_service.get_lecture_cache(req.video_url)
-    if cached:
+    if cached and cached.get("owner_id") == user["id"]:
         if req.folder is not None:
             cached["folder"] = req.folder
         if req.tags is not None:
@@ -102,7 +400,7 @@ async def update_lecture_meta(req: UpdateLectureMetaRequest):
 
 
 @app.post("/api/video/process", response_model=ProcessVideoResponse)
-async def process_video(request: ProcessVideoRequest):
+async def process_video(request: ProcessVideoRequest, user=Depends(get_current_user), _limit=Depends(heavy_rate_limit)):
     """
     Xử lý link video (YouTube, Drive, LMS):
     1. Tải stream audio siêu nhẹ
@@ -127,7 +425,7 @@ async def process_video(request: ProcessVideoRequest):
     
     if not has_custom_range:
         cached_fb = firebase_service.get_lecture_cache(url)
-        if cached_fb:
+        if cached_fb and cached_fb.get("owner_id") == user["id"]:
             cached_fb["quiz"] = normalize_quiz(cached_fb.get("quiz", []))
             cached_fb["mindmap"] = normalize_mindmap(
                 cached_fb.get("mindmap"),
@@ -256,6 +554,10 @@ async def process_video(request: ProcessVideoRequest):
         "tags": request.tags if (request.tags and len(request.tags) > 0) else (summary_data.get("tags") or ["Bài giảng"]),
         "copyright_status": audio_info.get("copyright_status", "verified_clean"),
     }
+    if user:
+        result["owner_id"] = user["id"]
+        if media_stream_url:
+            result["media_access_token"] = auth_service.create_media_token(user["id"], media_stream_url)
 
     # 6. Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
     firebase_service.save_lecture_cache(url, result)
@@ -329,7 +631,9 @@ async def upload_video(
     target_language: Optional[str] = Form("vi", description="Ngôn ngữ phụ đề muốn xuất (vi, en, ja...)"),
     include_quiz: Optional[bool] = Form(True, description="Tùy chọn tạo bài trắc nghiệm hay không"),
     folder: Optional[str] = Form(None, description="Thư mục phân loại bài giảng"),
-    tags: Optional[str] = Form("", description="Danh sách nhãn phân loại, phân cách bằng dấu phẩy")
+    tags: Optional[str] = Form("", description="Danh sách nhãn phân loại, phân cách bằng dấu phẩy"),
+    user=Depends(get_current_user),
+    _limit=Depends(heavy_rate_limit)
 ):
     """
     Tiếp nhận file ghi âm hoặc video bài giảng tải trực tiếp từ máy tính (Giới hạn tối đa 150MB)
@@ -343,6 +647,7 @@ async def upload_video(
         ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v",
         ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"
     )
+    saved_file_path = None
     try:
         safe_fname = os.path.basename(file.filename or "lecture.mp4")
         if not safe_fname.lower().endswith(ALLOWED_MEDIA_EXTENSIONS):
@@ -376,8 +681,12 @@ async def upload_video(
             end_time_sec=end_time
         )
     except HTTPException:
+        if saved_file_path and os.path.exists(saved_file_path):
+            os.remove(saved_file_path)
         raise
     except Exception as e:
+        if saved_file_path and os.path.exists(saved_file_path):
+            os.remove(saved_file_path)
         logger.error(f"Lỗi khi đọc file upload: {e}")
         raise HTTPException(status_code=400, detail=f"Không thể xử lý file tải lên: {e}")
 
@@ -398,6 +707,8 @@ async def upload_video(
             task="transcribe"
         )
     except Exception as e:
+        if saved_file_path and os.path.exists(saved_file_path):
+            os.remove(saved_file_path)
         logger.error(f"Lỗi khi nhận diện giọng nói: {e}")
         raise HTTPException(status_code=500, detail=f"Lỗi phiên âm: {e}")
     finally:
@@ -454,6 +765,8 @@ async def upload_video(
         "tags": tags_list if len(tags_list) > 0 else (summary_data.get("tags") or ["Bài giảng"]),
         "copyright_status": "verified_clean"
     }
+    if user:
+        result["owner_id"] = user["id"]
 
     # Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
     firebase_service.save_lecture_cache(result["video_url"], result)
@@ -464,7 +777,7 @@ async def upload_video(
     return result
 
 @app.post("/api/video/burn-subtitles")
-async def burn_subtitles_into_video(request: BurnSubtitlesRequest):
+async def burn_subtitles_into_video(request: BurnSubtitlesRequest, user=Depends(get_current_user), _limit=Depends(heavy_rate_limit)):
     """Render translated subtitle timestamps directly into an uploaded MP4."""
     media_url = request.media_url
     if "/uploads/" in media_url:
@@ -476,6 +789,13 @@ async def burn_subtitles_into_video(request: BurnSubtitlesRequest):
     source_path = os.path.abspath(os.path.join(UPLOAD_DIR, source_name))
     if not source_path.startswith(os.path.abspath(UPLOAD_DIR) + os.sep) or not os.path.isfile(source_path):
         raise HTTPException(status_code=404, detail="Khong tim thay file video da upload.")
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    owned_media = list(firebase_service.db.collection("lectures").where("owner_id", "==", user["id"]).where("media_url", "==", media_url).limit(1).stream())
+    if not owned_media:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xử lý file video này.")
 
     ffmpeg_path = shutil.which(settings.FFMPEG_PATH) or (
         settings.FFMPEG_PATH if os.path.isfile(settings.FFMPEG_PATH) else None
@@ -525,6 +845,7 @@ async def burn_subtitles_into_video(request: BurnSubtitlesRequest):
 
     return {
         "media_url": f"/uploads/{output_name}",
+        "media_access_token": auth_service.create_media_token(user["id"], f"/uploads/{output_name}"),
         "filename": output_name,
         "message": "Da tao MP4 co phu de ghi cung.",
     }
@@ -538,6 +859,8 @@ async def process_subtitle_file(
     source_language: Optional[str] = Form("auto"),
     target_language: Optional[str] = Form("vi"),
     include_quiz: Optional[bool] = Form(True),
+    user=Depends(get_current_user),
+    _limit=Depends(heavy_rate_limit),
 ):
     """Translate an existing subtitle file without re-transcribing its matching video."""
     filename = file.filename or "subtitles.srt"
@@ -587,6 +910,8 @@ async def process_subtitle_file(
         "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
         "folder": summary_data.get("folder") or "Bài giảng chung",
         "tags": summary_data.get("tags") or ["Bài giảng"],
+        "owner_id": user["id"],
+        "media_access_token": auth_service.create_media_token(user["id"], media_stream_url) if media_stream_url else None,
     }
     firebase_service.save_lecture_cache(lecture_url, result)
     return result
@@ -595,7 +920,8 @@ async def process_subtitle_file(
 @app.get("/api/video/export")
 async def export_subtitles(
     video_url: str = Query(..., description="URL video bài giảng đã được xử lý"),
-    format: str = Query("srt", description="Định dạng phụ đề: 'srt' hoặc 'vtt'")
+    format: str = Query("srt", description="Định dạng phụ đề: 'srt' hoặc 'vtt'"),
+    user=Depends(get_current_user),
 ):
     """
     Xuất file phụ đề chuẩn quốc tế (.srt hoặc .vtt) để tải về máy hoặc phát trên web
@@ -603,7 +929,7 @@ async def export_subtitles(
     # Tra cứu dữ liệu phụ đề từ Firebase Firestore
     record = firebase_service.get_lecture_cache(video_url)
 
-    if not record or "segments" not in record:
+    if not record or record.get("owner_id") != user["id"] or "segments" not in record:
         raise HTTPException(status_code=404, detail="Không tìm thấy dữ liệu phụ đề cho video này trên Cloud. Hãy xử lý video trước.")
 
     segments = record["segments"]
@@ -625,11 +951,11 @@ async def export_subtitles(
     )
 
 @app.get("/api/history")
-async def get_lecture_history(limit: int = 10):
+async def get_lecture_history(limit: int = 10, user=Depends(get_current_user)):
     """
     Lấy danh sách các bài giảng người dùng đã xử lý gần đây từ Google Firebase Firestore Cloud
     """
-    items = firebase_service.get_history(limit=limit)
+    items = firebase_service.get_history(limit=limit, owner_id=user["id"])
 
     return {
         "items": items, 
@@ -639,11 +965,11 @@ async def get_lecture_history(limit: int = 10):
 
 
 @app.delete("/api/history")
-async def delete_lecture_history(video_url: str = Query(..., description="URL video bài giảng cần xóa")):
+async def delete_lecture_history(video_url: str = Query(..., description="URL video bài giảng cần xóa"), user=Depends(get_current_user)):
     """
     Xóa bài giảng khỏi kho lưu trữ Google Firebase Firestore Cloud
     """
-    success = firebase_service.delete_lecture(video_url)
+    success = firebase_service.delete_lecture(video_url, owner_id=user["id"])
     if not success:
         raise HTTPException(status_code=500, detail="Không thể xóa bài giảng khỏi CSDL.")
     return {"status": "success", "message": "Đã xóa bài giảng thành công."}
@@ -652,7 +978,9 @@ async def delete_lecture_history(video_url: str = Query(..., description="URL vi
 @app.get("/api/tts")
 async def text_to_speech(
     text: str = Query(..., description="Văn bản cần phát âm"), 
-    lang: str = Query("vi", description="Mã ngôn ngữ: vi, en, ja, ko, zh...")
+    lang: str = Query("vi", description="Mã ngôn ngữ: vi, en, ja, ko, zh..."),
+    user=Depends(get_current_user),
+    _limit=Depends(heavy_rate_limit)
 ):
     """
     Phát âm chuẩn giọng bản ngữ Google Translate (Tiếng Việt chuẩn có dấu, Tiếng Anh, Tiếng Nhật, Hàn, Trung...)
@@ -682,8 +1010,7 @@ async def text_to_speech(
                 content=response.content,
                 media_type="audio/mpeg",
                 headers={
-                    "Cache-Control": "public, max-age=86400",
-                    "Access-Control-Allow-Origin": "*"
+                    "Cache-Control": "private, max-age=86400"
                 }
             )
         else:
@@ -705,7 +1032,9 @@ async def pair_video_and_subtitles(
     video_url: Optional[str] = Form(None, description="Đường link video YouTube hoặc LMS"),
     title: Optional[str] = Form(None, description="Tiêu đề bài giảng"),
     target_language: Optional[str] = Form("vi", description="Ngôn ngữ dịch phụ đề"),
-    include_quiz: Optional[bool] = Form(True)
+    include_quiz: Optional[bool] = Form(True),
+    user=Depends(get_current_user),
+    _limit=Depends(heavy_rate_limit)
 ):
     """
     Giai đoạn 2: Nạp ghép đôi 1 Video và 1 file Phụ đề có sẵn
@@ -776,6 +1105,7 @@ async def pair_video_and_subtitles(
         "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
         "folder": summary_data.get("folder") or "Bài giảng chung",
         "tags": summary_data.get("tags") or ["Bài giảng"],
+        "owner_id": user["id"],
     }
 
     firebase_service.save_lecture_cache(lecture_url, result)
@@ -908,7 +1238,8 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
             "mindmap": job["mindmap"],
             "exercises": job["exercises"],
             "folder": job["folder"],
-            "tags": job["tags"]
+            "tags": job["tags"],
+            "owner_id": job.get("owner_id"),
         }
         firebase_service.save_lecture_cache(job["video_url"], full_res)
         logger.info(f"Đã hoàn thành nạp gối đầu toàn bộ video dài [{job.get('title')}]: {len(all_segments)} câu phụ đề.")
@@ -924,7 +1255,7 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
 
 
 @app.post("/api/video/stream-init")
-async def init_streaming_video(request: ProcessVideoRequest):
+async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_current_user), _limit=Depends(heavy_rate_limit)):
     """
     Giai đoạn 3: Bắt đầu phát video tức thì & chạy ngầm AI xử lý các phân đoạn tiếp theo
     """
@@ -933,7 +1264,7 @@ async def init_streaming_video(request: ProcessVideoRequest):
 
     # Kiểm tra Firestore Cache nếu đã từng xử lý
     cached = firebase_service.get_lecture_cache(url)
-    if cached:
+    if cached and cached.get("owner_id") == user["id"]:
         cached["is_streaming"] = False
         cached["mindmap"] = normalize_mindmap(cached.get("mindmap"), default_title=cached.get("title", ""), key_points=cached.get("key_points"))
         cached["exercises"] = normalize_exercises(cached.get("exercises"), key_points=cached.get("key_points"))
@@ -970,7 +1301,8 @@ async def init_streaming_video(request: ProcessVideoRequest):
         "status": "processing",
         "progress": 30,
         "segments": fast_segments,
-        "language": target_lang
+        "language": target_lang,
+        "owner_id": user["id"],
     }
 
     # Kích hoạt worker chạy ngầm song song
@@ -996,12 +1328,13 @@ async def init_streaming_video(request: ProcessVideoRequest):
         "formulas_and_terms": [],
         "quiz": [],
         "mindmap": normalize_mindmap(None, default_title=audio_info["title"]),
-        "exercises": []
+        "exercises": [],
+        "owner_id": user["id"],
     }
 
 
 @app.get("/api/video/stream-status")
-async def get_stream_status(job_id: str = Query(..., description="ID của phiên streaming")):
+async def get_stream_status(job_id: str = Query(..., description="ID của phiên streaming"), user=Depends(get_current_user)):
     """
     Kiểm tra trạng thái tiến trình xử lý ngầm và nhận danh sách phụ đề mới nhất
     """
@@ -1015,6 +1348,8 @@ async def get_stream_status(job_id: str = Query(..., description="ID của phiê
             "is_completed": True,
             "error": "Phiên xử lý không tồn tại hoặc server vừa khởi động lại."
         }
+    if job.get("owner_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền xem tác vụ này.")
 
     return {
         "job_id": job_id,
@@ -1032,7 +1367,7 @@ async def get_stream_status(job_id: str = Query(..., description="ID của phiê
 
 
 @app.get("/api/video/info")
-async def get_video_info_endpoint(video_url: str = Query(..., description="Đường link video YouTube hoặc bài giảng")):
+async def get_video_info_endpoint(video_url: str = Query(..., description="Đường link video YouTube hoặc bài giảng"), user=Depends(get_current_user), _limit=Depends(heavy_rate_limit)):
     """
     Kiểm tra nhanh tiêu đề và thời lượng video (< 1 giây) để phân loại:
     - Dưới 30 phút (< 1800s): Xử lý toàn bộ (transcribe full).
@@ -1044,7 +1379,7 @@ async def get_video_info_endpoint(video_url: str = Query(..., description="Đư�
     
     # Kiểm tra Firestore cache trước
     cached = firebase_service.get_lecture_cache(url)
-    if cached:
+    if cached and cached.get("owner_id") == user["id"]:
         duration = float(cached.get("duration_seconds", 0) or 0)
         return {
             "title": cached.get("title", "Bài giảng"),

@@ -21,7 +21,7 @@ Toàn bộ hệ thống Backend AI Core đã được thiết lập hoàn chỉn
 * **`faster-whisper`:** Lõi Trí tuệ nhân tạo (ASR) nhận diện giọng nói và gán mốc thời gian (timestamps) chuẩn xác, tối ưu chạy trên CPU (`int8`) hoặc GPU NVIDIA.
 * **`yt-dlp`:** Bóc tách stream âm thanh siêu nhẹ trực tiếp từ URL (YouTube, Drive, LMS) mà không cần tải cả video nặng.
 * **`firebase-admin` (>=7.5.0):** Kết nối **Google Firebase Cloud Firestore** làm kho lưu trữ vĩnh cửu và bộ nhớ đệm Cache $O(1)$ tiết kiệm 100% Token AI.
-* **`google-generativeai`:** Kết nối mô hình **Gemini 2.5 Flash** (kèm fallback **Gemini 2.0 Flash**) tóm tắt bài học (Tổng quan, Điểm cốt lõi, Thuật ngữ, Trắc nghiệm).
+* **`google-genai`:** Kết nối mô hình **Gemini 2.5 Flash** (kèm fallback **Gemini 2.5 Flash Lite**) tóm tắt bài học (Tổng quan, Điểm cốt lõi, Thuật ngữ, Trắc nghiệm).
 * **`requests`:** Module dịch thuật đa ngôn ngữ song ngữ song song, giữ nguyên mốc thời gian của từng câu.
 
 ### 3. Các dịch vụ Đám mây (Cloud Services) đã kích hoạt

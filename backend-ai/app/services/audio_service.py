@@ -3,10 +3,22 @@ import glob
 import tempfile
 import yt_dlp
 import logging
+from urllib.parse import urlparse
+from fastapi import HTTPException
+from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
 
 class AudioService:
+    @staticmethod
+    def validate_source_url(video_url: str) -> str:
+        parsed = urlparse(video_url.strip())
+        host = (parsed.hostname or "").lower().rstrip(".")
+        allowed = any(host == item or host.endswith(f".{item}") for item in settings.ALLOWED_VIDEO_HOSTS)
+        if parsed.scheme != "https" or not host or not allowed:
+            raise HTTPException(status_code=400, detail="URL không thuộc domain video được hệ thống cho phép.")
+        return video_url.strip()
+
     @staticmethod
     def verify_copyright_and_drm(info: dict) -> tuple[bool, str]:
         """
@@ -45,6 +57,7 @@ class AudioService:
         - Xác minh bản quyền & DRM trước khi tải (Yêu cầu 6)
         - Cắt đoạn theo mốc thời gian bắt đầu & kết thúc (Yêu cầu 4)
         """
+        video_url = AudioService.validate_source_url(video_url)
         temp_dir = tempfile.gettempdir()
         out_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
 
@@ -127,6 +140,7 @@ class AudioService:
         Lấy thông tin nhanh metadata video (tiêu đề, thời lượng giây) mà KHÔNG tải video/audio.
         Tích hợp kiểm tra bản quyền DRM nhanh (Yêu cầu 6).
         """
+        video_url = AudioService.validate_source_url(video_url)
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,

@@ -1,7 +1,8 @@
 import logging
 import json
 import re
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
@@ -121,10 +122,9 @@ class SummaryService:
         self.fallback_model = None
         if settings.GEMINI_API_KEY:
             try:
-                genai.configure(api_key=settings.GEMINI_API_KEY)
-                json_config = {"response_mime_type": "application/json"}
-                self.model = genai.GenerativeModel('gemini-2.5-flash', generation_config=json_config)
-                self.fallback_model = genai.GenerativeModel('gemini-3.8-flash', generation_config=json_config)
+                self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                self.model = "gemini-2.5-flash"
+                self.fallback_model = "gemini-2.5-flash-lite"
             except Exception as e:
                 logger.warning(f"Không thể khởi tạo Gemini AI: {e}")
                 self.model = None
@@ -299,8 +299,12 @@ class SummaryService:
 
             raise ValueError(f"Không thể parse JSON từ phản hồi LLM: {text[:200]}...")
 
-        def _call_model(m):
-            response = m.generate_content(prompt)
+        def _call_model(model_name):
+            response = self.client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
             parsed = _clean_and_parse_json(response.text)
             kp = parsed.get("key_points", [])
             terms = parsed.get("formulas_and_terms", [])
@@ -327,12 +331,12 @@ class SummaryService:
         try:
             return _call_model(self.model)
         except Exception as e1:
-            logger.warning(f"Lỗi khi gọi model chính gemini-2.5-flash: {e1}. Đang chuyển sang gemini-3.8-flash...")
+            logger.warning(f"Lỗi khi gọi model chính gemini-2.5-flash: {e1}. Đang chuyển sang gemini-2.5-flash-lite...")
             if self.fallback_model:
                 try:
                     return _call_model(self.fallback_model)
                 except Exception as e2:
-                    logger.error(f"Fallback gemini-3.8-flash cũng thất bại: {e2}")
+                    logger.error(f"Fallback gemini-2.5-flash-lite cũng thất bại: {e2}")
             logger.error(f"Lỗi khi gọi LLM tóm tắt: {e1}")
             fallback_kp = ["Bóc tách âm thanh thành công", "Nội dung bài giảng sẵn sàng"]
             return {

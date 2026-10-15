@@ -455,7 +455,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
     : null;
 
   // Nguồn phát file thực tế (từ bộ nhớ upload, link server /uploads/ hoặc link trực tiếp)
-  const mediaSrc =
+  const rawMediaSrc =
     burnedMediaUrl ||
     (lecture?.media_stream_url
       ? (lecture.media_stream_url.startsWith('http')
@@ -468,6 +468,9 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
         : `${serverBaseUrl}${lecture.media_url}`)
       : null) ||
     (lecture?.video_url && !lecture.video_url.startsWith('local_file://') ? lecture.video_url : null);
+  const mediaSrc = rawMediaSrc && lecture?.media_access_token && rawMediaSrc.includes('/uploads/')
+    ? `${rawMediaSrc}${rawMediaSrc.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(lecture.media_access_token)}`
+    : rawMediaSrc;
 
   const isAudioOnly = Boolean(
     (lecture?.media_mime_type && lecture.media_mime_type.startsWith('audio/')) ||

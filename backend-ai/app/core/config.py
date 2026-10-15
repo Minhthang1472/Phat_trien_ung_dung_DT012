@@ -16,5 +16,21 @@ class Settings:
     # Gemini API
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     FFMPEG_PATH: str = os.getenv("FFMPEG_PATH", "ffmpeg")
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "")
+    JWT_EXPIRE_HOURS: int = int(os.getenv("JWT_EXPIRE_HOURS", "168"))
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USERNAME: str = os.getenv("SMTP_USERNAME", "")
+    SMTP_PASSWORD: str = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM: str = os.getenv("SMTP_FROM", "")
+    PUBLIC_API_URL: str = os.getenv("PUBLIC_API_URL", "http://127.0.0.1:8000")
+    ALLOWED_VIDEO_HOSTS: list[str] = [
+        host.strip().lower() for host in os.getenv("ALLOWED_VIDEO_HOSTS", "youtube.com,youtu.be").split(",") if host.strip()
+    ]
+    CORS_ORIGINS: list[str] = [
+        origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8081").split(",") if origin.strip()
+    ]
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
 
 settings = Settings()

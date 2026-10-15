@@ -1178,6 +1178,15 @@ export default function HomeScreen({ onNavigate }) {
             ))}
           </View>
 
+          <View style={styles.workspaceTabs}>
+            <View style={[styles.workspaceTab, styles.workspaceTabActive]}>
+              <Text style={styles.workspaceTabActiveText}>Bài giảng</Text>
+            </View>
+            <TouchableOpacity style={styles.workspaceTab} onPress={() => onNavigate('Profile')}>
+              <Text style={styles.workspaceTabText}>Hồ sơ</Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Nhóm các nút hành động xử lý bài giảng */}
           <View style={styles.actionButtonGroup}>
             {/* Nút duy nhất: Bắt đầu Tạo Phụ đề AI (Tự động nhận diện thời lượng <30p hoặc >=30p) */}
@@ -2113,6 +2122,30 @@ const styles = StyleSheet.create({
   activeLangChipText: {
     color: colors.primaryLight,
     fontWeight: '700',
+  },
+  workspaceTabs: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
+    marginBottom: spacing.md,
+  },
+  workspaceTab: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  workspaceTabActive: {
+    borderBottomColor: colors.primaryLight,
+  },
+  workspaceTabText: {
+    color: colors.textMuted,
+    fontWeight: '700',
+  },
+  workspaceTabActiveText: {
+    color: colors.primaryLight,
+    fontWeight: '800',
   },
   primaryActionBtn: {
     backgroundColor: colors.primary,

@@ -100,7 +100,11 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
           onPress: async () => {
             try {
               Alert.alert('Đang xử lý', 'Đang ghép phụ đề vào video, vui lòng chờ...');
-              const burnResult = await apiService.burnSubtitlesIntoVideo(lecture.video_url, lecture.segments);
+              const sourceMediaUrl = lecture?.media_url || lecture?.media_stream_url;
+              if (!sourceMediaUrl || !sourceMediaUrl.includes('/uploads/')) {
+                throw new Error('Chỉ có thể ghi cứng phụ đề cho video đã upload lên server.');
+              }
+              const burnResult = await apiService.burnSubtitlesIntoVideo(sourceMediaUrl, lecture.segments);
               
               const safeTitle = (lecture?.title || 'video').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
               const filename = `${safeTitle}_PhuDe.mp4`;

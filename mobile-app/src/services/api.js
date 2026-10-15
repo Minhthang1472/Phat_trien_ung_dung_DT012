@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
 import * as LegacyFileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as SecureStore from 'expo-secure-store';
 import { getDefaultApiUrl, STORAGE_KEYS } from '../constants/config';
 
 const SAF = LegacyFileSystem?.StorageAccessFramework || FileSystem?.StorageAccessFramework;
@@ -60,10 +61,136 @@ class ApiService {
     }
   }
 
+  async getAuthToken() {
+    if (Platform.OS !== 'web') return SecureStore.getItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+    return AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+  }
+
+  async getAuthHeaders() {
+    const token = await this.getAuthToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  async saveAuthSession(data) {
+    if (Platform.OS !== 'web') await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_TOKEN, data.token);
+    else await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, data.token);
+    await AsyncStorage.setItem(STORAGE_KEYS.AUTH_USER, JSON.stringify(data.user));
+    return data.user;
+  }
+
+  async register(email, password, displayName = '') {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, display_name: displayName }),
+    });
+    const data = await this.parseResponse(response);
+    return this.saveAuthSession(data);
+  }
+
+  async login(email, password) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await this.parseResponse(response);
+    return this.saveAuthSession(data);
+  }
+
+  async loginWithGoogle(idToken) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: idToken }),
+    });
+    const data = await this.parseResponse(response);
+    return this.saveAuthSession(data);
+  }
+
+  async forgotPassword(email) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    return this.parseResponse(response);
+  }
+
+  async parseResponse(response) {
+    let data = null;
+    try { data = await response.json(); } catch (_) {}
+    if (!response.ok) throw new Error(data?.detail || `Lỗi HTTP ${response.status}`);
+    return data;
+  }
+
+  async getProfile() {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/me`, {
+      headers: await this.getAuthHeaders(),
+    });
+    return this.parseResponse(response);
+  }
+
+  async getSavedUser() {
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_USER);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) { return null; }
+  }
+
+  async logout() {
+    if (Platform.OS !== 'web') await SecureStore.deleteItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+    else await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+    await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_USER);
+  }
+
+  async exportUserConfig() {
+    const keys = [
+      STORAGE_KEYS.SERVER_URL,
+      STORAGE_KEYS.DEFAULT_FOLDER,
+      STORAGE_KEYS.DEFAULT_TAGS,
+      STORAGE_KEYS.DEFAULT_EXPORT_DIR_NAME,
+    ];
+    const values = await AsyncStorage.multiGet(keys);
+    const config = {
+      version: 1,
+      exported_at: new Date().toISOString(),
+      settings: Object.fromEntries(values.map(([key, value]) => [key, value || ''])),
+    };
+    return this.exportFile('lecture-ai-config.json', JSON.stringify(config, null, 2), 'application/json');
+  }
+
+  async importUserConfig(file) {
+    const raw = await FileSystem.readAsStringAsync(file.uri);
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== 1 || !parsed.settings) {
+      throw new Error('File cấu hình không đúng định dạng Lecture AI.');
+    }
+    const allowedKeys = [
+      STORAGE_KEYS.SERVER_URL,
+      STORAGE_KEYS.DEFAULT_FOLDER,
+      STORAGE_KEYS.DEFAULT_TAGS,
+      STORAGE_KEYS.DEFAULT_EXPORT_DIR_NAME,
+    ];
+    const entries = allowedKeys
+      .filter((key) => typeof parsed.settings[key] === 'string')
+      .map((key) => [key, parsed.settings[key]]);
+    await AsyncStorage.multiSet(entries);
+    this.cachedBaseUrl = null;
+    return entries.length;
+  }
+
   async getVideoInfo(videoUrl) {
     try {
       const baseUrl = await this.getBaseUrl();
-      const response = await fetch(`${baseUrl}/api/video/info?video_url=${encodeURIComponent(videoUrl)}`);
+      const response = await fetch(`${baseUrl}/api/video/info?video_url=${encodeURIComponent(videoUrl)}`, {
+        headers: await this.getAuthHeaders(),
+      });
       if (response.ok) {
         return await response.json();
       }
@@ -79,6 +206,7 @@ class ApiService {
       const baseUrl = await this.getBaseUrl();
       const response = await fetch(`${baseUrl}/api/video/cancel/${encodeURIComponent(jobId)}`, {
         method: 'POST',
+        headers: await this.getAuthHeaders(),
       });
       return response.ok;
     } catch (err) {
@@ -92,7 +220,7 @@ class ApiService {
       const baseUrl = await this.getBaseUrl();
       const response = await fetch(`${baseUrl}/api/lecture/meta`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await this.getAuthHeaders()) },
         body: JSON.stringify({ video_url: videoUrl, folder, tags }),
       });
       // Đồng bộ vào Local History
@@ -178,6 +306,7 @@ class ApiService {
       },
       body: JSON.stringify(payload),
     };
+    Object.assign(fetchOpts.headers, await this.getAuthHeaders());
     if (signal) {
       fetchOpts.signal = signal;
     }
@@ -211,6 +340,7 @@ class ApiService {
 
     const response = await fetch(`${baseUrl}/api/subtitles/process`, {
       method: 'POST',
+      headers: await this.getAuthHeaders(),
       body: formData,
     });
     if (!response.ok) {
@@ -229,11 +359,15 @@ class ApiService {
   async uploadWithProgress(endpoint, formData, onProgress, cancelToken = null) {
     const baseUrl = await this.getBaseUrl();
     const fullUrl = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
+    const authHeaders = await this.getAuthHeaders();
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', fullUrl);
       xhr.setRequestHeader('Accept', 'application/json');
+      if (authHeaders.Authorization) {
+        xhr.setRequestHeader('Authorization', authHeaders.Authorization);
+      }
 
       if (cancelToken) {
         cancelToken.abort = () => {
@@ -300,6 +434,7 @@ class ApiService {
 
     const response = await fetch(`${baseUrl}/api/video/pair`, {
       method: 'POST',
+      headers: await this.getAuthHeaders(),
       body: formData,
     });
     if (!response.ok) {
@@ -319,7 +454,7 @@ class ApiService {
     const baseUrl = await this.getBaseUrl();
     const response = await fetch(`${baseUrl}/api/video/stream-init`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await this.getAuthHeaders()) },
       body: JSON.stringify({
         video_url: videoUrl,
         target_language: targetLang,
@@ -339,33 +474,11 @@ class ApiService {
 
   async getStreamStatus(jobId) {
     const baseUrl = await this.getBaseUrl();
-    const response = await fetch(`${baseUrl}/api/video/stream-status?job_id=${encodeURIComponent(jobId)}`);
+    const response = await fetch(`${baseUrl}/api/video/stream-status?job_id=${encodeURIComponent(jobId)}`, {
+      headers: await this.getAuthHeaders(),
+    });
     if (!response.ok) return null;
     return await response.json();
-  }
-
-  async burnSubtitlesIntoVideo(mediaUrl, segments) {
-    const baseUrl = await this.getBaseUrl();
-    const response = await fetch(`${baseUrl}/api/video/burn-subtitles`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ media_url: mediaUrl, segments }),
-    });
-    if (!response.ok) {
-      let message = `Lỗi HTTP ${response.status}`;
-      try {
-        const body = await response.json();
-        message = body.detail || message;
-      } catch (_) { }
-      throw new Error(message);
-    }
-    const data = await response.json();
-    return {
-      ...data,
-      media_url: data.media_url.startsWith('http')
-        ? data.media_url
-        : `${baseUrl}${data.media_url}`,
-    };
   }
 
   async getLectureHistory(limit = 10) {
@@ -449,6 +562,7 @@ class ApiService {
       const baseUrl = await this.getBaseUrl();
       await fetch(`${baseUrl}/api/history?video_url=${encodeURIComponent(videoUrl)}`, {
         method: 'DELETE',
+        headers: await this.getAuthHeaders(),
       });
     } catch (e) {
       console.warn('Lỗi gọi xóa bài giảng trên server:', e);
@@ -826,7 +940,17 @@ class ApiService {
       throw new Error(errMsg);
     }
 
-    return await response.json();
+    const data = await response.json();
+    if (data.media_url && data.media_access_token) {
+      const separator = data.media_url.includes('?') ? '&' : '?';
+      data.media_url = `${data.media_url}${separator}access_token=${encodeURIComponent(data.media_access_token)}`;
+    }
+    return {
+      ...data,
+      media_url: data.media_url && data.media_url.startsWith('http')
+        ? data.media_url
+        : `${baseUrl}${data.media_url || ''}`,
+    };
   }
 }
 
