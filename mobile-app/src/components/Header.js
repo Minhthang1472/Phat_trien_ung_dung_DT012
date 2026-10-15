@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, spacing, borderRadius } from '../constants/theme';
 
 export default function Header({
-  title = 'LECTURE AI CAPTION',
+  title = 'PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG',
   serverStatus = { online: false },
   onOpenSettings,
   onBack,
@@ -124,3 +124,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 });
+

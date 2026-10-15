@@ -55,4 +55,37 @@ class WhisperService:
                 return self.transcribe_audio(audio_path, language, task)
             raise e
 
+    def transcribe_audio_generator(self, audio_path: str, language: str = None, task: str = "transcribe"):
+        """
+        Nhận diện giọng nói theo luồng Generator (yield từng câu ngay khi Whisper xử lý xong),
+        giúp tiến trình ngầm cho video dài có thể nạp phụ đề gối đầu liên tục theo thời gian thực.
+        """
+        self.load_model()
+        logger.info(f"Đang bóc tách theo dòng thời gian thực: {audio_path}...")
+        try:
+            segments_generator, info = self.model.transcribe(
+                audio_path,
+                beam_size=5,
+                language=language if language and language != "auto" else None,
+                task=task,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500)
+            )
+            detected_lang = info.language
+            for idx, segment in enumerate(segments_generator):
+                yield {
+                    "id": idx,
+                    "start": round(segment.start, 2),
+                    "end": round(segment.end, 2),
+                    "text": segment.text.strip(),
+                    "detected_language": detected_lang
+                }
+        except RuntimeError as e:
+            if "cublas" in str(e).lower() or "cuda" in str(e).lower():
+                logger.warning(f"Gặp lỗi CUDA ({e}). Đang tự động chuyển sang mô hình CPU...")
+                self.model = WhisperModel(settings.WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
+                yield from self.transcribe_audio_generator(audio_path, language, task)
+            else:
+                raise e
+
 whisper_service = WhisperService()

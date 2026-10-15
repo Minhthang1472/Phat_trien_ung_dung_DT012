@@ -1,32 +1,134 @@
+/* Khung chứa phụ đề nổi */
 #lecture-ai-overlay-container {
   position: fixed;
   bottom: 80px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 9999999999;
+  z-index: 2147483647; /* Đảm bảo luôn nằm trên cùng của player và fullscreen */
   pointer-events: auto;
   user-select: none;
-  cursor: grab;
+  cursor: default;
+  max-width: 85vw;
+  transition: opacity 0.2s ease;
 }
 
+/* Hộp phụ đề với hiệu ứng Glassmorphism */
 #lecture-ai-overlay-box {
-  background: rgba(15, 23, 42, 0.85);
-  backdrop-filter: blur(8px);
+  background: rgba(15, 23, 42, 0.90);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   color: #ffffff;
-  padding: 10px 20px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  font-size: 20px;
-  font-weight: 600;
+  padding: 12px 24px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65), 0 0 15px rgba(99, 102, 241, 0.25);
   text-align: center;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  max-width: 80vw;
-  line-height: 1.5;
+  line-height: 1.45;
   letter-spacing: 0.3px;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.9);
   transition: all 0.15s ease-out;
+  position: relative;
+}
+
+/* Khối bọc từng dòng để cô lập hoàn toàn vùng chọn văn bản */
+.lecture-ai-line-wrapper {
+  display: block;
+  margin: 3px 0;
+  text-align: center;
+}
+
+/* Thuộc tính chung cho từng dòng phụ đề */
+.lecture-ai-sub-line {
+  display: inline-block;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text !important;
+  position: relative;
+}
+
+/* Dòng phụ đề dịch (chính) */
+.lecture-ai-main-sub {
+  font-size: 20px;
+  font-weight: 700;
+  color: #f8fafc;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+/* Dòng phụ đề gốc (song ngữ) được tách biệt */
+.lecture-ai-orig-sub {
+  font-size: 14px;
+  font-weight: 500;
+  color: #94a3b8;
+  font-style: italic;
+  padding: 3px 12px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  margin-top: 4px;
+  transition: all 0.15s;
+}
+
+.lecture-ai-orig-sub:hover {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: #6366f1;
+  color: #e0e7ff;
+}
+
+/* Thanh điều khiển nhanh góc trên */
+.lecture-ai-controls {
+  position: absolute;
+  top: -30px;
+  right: 4px;
+  display: flex;
+  gap: 5px;
+  opacity: 0.92;
+  transition: opacity 0.2s ease;
+}
+
+#lecture-ai-overlay-container:hover .lecture-ai-controls {
+  opacity: 1;
+}
+
+.lecture-ai-btn {
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #cbd5e1;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.lecture-ai-btn:hover {
+  background: #4f46e5;
+  color: #ffffff;
+}
+
+/* Nút tay cầm chuyên dụng để kéo di chuyển */
+.lecture-ai-drag-handle {
+  cursor: grab !important;
+  background: rgba(79, 70, 229, 0.35) !important;
+  border-color: #6366f1 !important;
+  color: #e0e7ff !important;
+  font-weight: 600;
+}
+
+.lecture-ai-drag-handle:active {
+  cursor: grabbing !important;
+  background: #4f46e5 !important;
+}
+
+.lecture-ai-speaking {
+  border-color: #10b981 !important;
+  box-shadow: 0 0 18px rgba(16, 185, 129, 0.6) !important;
 }
 
 #lecture-ai-overlay-box:empty {
-  display: none;
+  display: none !important;
 }

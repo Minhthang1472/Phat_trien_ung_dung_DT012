@@ -1,18 +1,24 @@
 {
-  "name": "mobile-app",
+  "name": "phu-de-bai-giang-ai",
   "version": "1.0.0",
   "main": "index.js",
   "dependencies": {
+    "@expo/metro-runtime": "~57.0.15",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "expo": "~57.0.23",
+    "expo": "~57.0.26",
     "expo-av": "^16.0.8",
-    "expo-document-picker": "~57.0.2",
+    "expo-constants": "~57.0.21",
+    "expo-document-picker": "~57.0.3",
     "expo-file-system": "~57.0.7",
-    "expo-sharing": "~57.0.20",
+    "expo-sharing": "~57.0.22",
     "expo-status-bar": "~57.0.1",
     "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.86.3",
-    "react-native-safe-area-context": "~5.7.0"
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "^0.21.2",
+    "react-native-webview": "13.16.1",
+    "react-native-youtube-iframe": "^2.4.1"
   },
   "scripts": {
     "start": "expo start",

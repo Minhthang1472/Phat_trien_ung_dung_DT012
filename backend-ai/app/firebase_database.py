@@ -3,6 +3,14 @@ import hashlib
 import logging
 from typing import Optional, List, Dict, Any
 
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+except ImportError:
+    firebase_admin = None
+    credentials = None
+    firestore = None
+
 logger = logging.getLogger("uvicorn")
 
 class FirebaseService:
@@ -71,6 +79,17 @@ class FirebaseService:
             if doc.exists:
                 data = doc.to_dict()
                 logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE: {video_url} (Tiết kiệm 100% Token!)")
+                if "quiz" in data and isinstance(data["quiz"], list):
+                    data["quiz"] = [
+                        item if isinstance(item, dict) else {
+                            "question": str(item).strip(),
+                            "options": ["A. Hoàn toàn đồng ý", "B. Cần thêm cơ sở", "C. Không đồng ý", "D. Ý kiến khác"],
+                            "correct_answer": "A",
+                            "answer": "A",
+                            "explanation": "Câu hỏi ôn tập từ bài giảng."
+                        }
+                        for item in data["quiz"]
+                    ]
                 return data
         except Exception as e:
             logger.warning(f"Lỗi tra cứu Firebase Cache: {e}")
@@ -109,20 +128,59 @@ class FirebaseService:
             return []
 
         try:
-            docs = self.db.collection("lectures").limit(limit).stream()
+            try:
+                docs = self.db.collection("lectures").order_by("cached_at", direction=firestore.Query.DESCENDING).limit(limit).stream()
+            except Exception as sort_err:
+                logger.warning(f"Lỗi sắp xếp cached_at, fallback sang query cơ bản: {sort_err}")
+                docs = self.db.collection("lectures").limit(limit).stream()
+
             history = []
             for doc in docs:
                 data = doc.to_dict()
+                raw_q = data.get("quiz", [])
+                clean_q = [
+                    item if isinstance(item, dict) else {
+                        "question": str(item).strip(),
+                        "options": ["A. Hoàn toàn đồng ý", "B. Cần thêm cơ sở", "C. Không đồng ý", "D. Ý kiến khác"],
+                        "correct_answer": "A",
+                        "answer": "A",
+                        "explanation": "Câu hỏi ôn tập từ bài giảng."
+                    }
+                    for item in raw_q
+                ] if isinstance(raw_q, list) else []
                 history.append({
                     "video_url": data.get("video_url"),
+                    "media_url": data.get("media_url") or data.get("media_stream_url"),
+                    "media_stream_url": data.get("media_stream_url") or data.get("media_url"),
                     "title": data.get("title"),
                     "duration_seconds": data.get("duration_seconds"),
                     "language": data.get("language"),
-                    "summary": data.get("summary")
+                    "summary": data.get("summary"),
+                    "segments": data.get("segments", []),
+                    "key_points": data.get("key_points", []),
+                    "formulas_and_terms": data.get("formulas_and_terms", []),
+                    "quiz": clean_q
                 })
             return history
         except Exception as e:
             logger.warning(f"Lỗi lấy lịch sử Firebase: {e}")
             return []
 
+    def delete_lecture(self, video_url: str) -> bool:
+        """Xóa bài giảng khỏi Firebase Firestore"""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return False
+
+        try:
+            doc_id = self.get_document_id(video_url)
+            self.db.collection("lectures").document(doc_id).delete()
+            logger.info(f"Đã xóa thành công bài giảng khỏi Firebase Firestore [ID: {doc_id}]")
+            return True
+        except Exception as e:
+            logger.warning(f"Lỗi khi xóa bài giảng khỏi Firebase Firestore: {e}")
+            return False
+
 firebase_service = FirebaseService()
+

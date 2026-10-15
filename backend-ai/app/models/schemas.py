@@ -13,16 +13,46 @@ class SubtitleSegment(BaseModel):
 class ProcessVideoRequest(BaseModel):
     video_url: str = Field(..., description="Đường dẫn URL video bài giảng (YouTube, Drive, LMS)")
     max_duration_seconds: Optional[int] = Field(None, description="Số giây tối đa muốn xử lý thử nghiệm (ví dụ: 10, 30, 60). Để trống hoặc null để xử lý 100% toàn bộ video.")
+    start_time: Optional[float] = Field(None, description="Mốc thời gian bắt đầu muốn xử lý (giây)")
+    end_time: Optional[float] = Field(None, description="Mốc thời gian kết thúc muốn xử lý (giây)")
+    job_id: Optional[str] = Field(None, description="Mã định danh tác vụ để hỗ trợ hủy ngang tiến trình")
     source_language: Optional[str] = Field("auto", description="Ngôn ngữ gốc của video bài giảng")
     target_language: Optional[str] = Field("vi", description="Ngôn ngữ phụ đề muốn xuất ra (vi, en, ja, zh, ko...)")
+    include_quiz: Optional[bool] = Field(True, description="Tùy chọn tạo câu hỏi trắc nghiệm ôn tập hay không")
+    folder: Optional[str] = Field(None, description="Thư mục gom nhóm phân loại bài giảng")
+    tags: Optional[List[str]] = Field(default=[], description="Danh sách nhãn phân loại")
+
+class LookaheadSubtitleRequest(BaseModel):
+    video_url: str = Field(..., description="URL video dang phat tren trinh duyet")
+    start_seconds: float = Field(..., ge=0, description="Moc bat dau cua cua so audio")
+    window_seconds: float = Field(15, gt=0, le=20, description="Do dai cua so dem phu de")
+    source_language: Optional[str] = Field("auto")
+    target_language: Optional[str] = Field("vi")
+
+
+class BurnSubtitlesRequest(BaseModel):
+    media_url: str = Field(..., description="Duong dan /uploads cua video da tai len")
+    segments: List[SubtitleSegment] = Field(..., min_length=1)
+
 
 class ProcessVideoResponse(BaseModel):
     video_url: str
+    media_url: Optional[str] = None
     title: str
     duration_seconds: float
     language: str
+    detected_language: Optional[str] = None
     segments: List[SubtitleSegment]
     summary: Optional[str] = None
     key_points: Optional[List[str]] = []
     formulas_and_terms: Optional[List[str]] = []
     quiz: Optional[List[dict]] = []
+    mindmap: Optional[dict] = None
+    folder: Optional[str] = None
+    tags: Optional[List[str]] = []
+    copyright_status: Optional[str] = "verified_clean"
+    exercises: Optional[List[dict]] = []
+    is_streaming: Optional[bool] = False
+    job_id: Optional[str] = None
+    progress: Optional[int] = 100
+    status: Optional[str] = "completed"

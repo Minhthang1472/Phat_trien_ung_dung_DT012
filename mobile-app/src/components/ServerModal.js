@@ -55,7 +55,7 @@ export default function ServerModal({ visible, onClose, onSaved }) {
         <View style={styles.dialog}>
           <Text style={styles.title}>⚙️ Cấu hình Server Backend</Text>
           <Text style={styles.subtitle}>
-            Nhập địa chỉ máy chủ FastAPI chạy AI để kết nối từ điện thoại:
+            Nhập địa chỉ máy chủ FastAPI để kết nối từ thiết bị:
           </Text>
 
           <TextInput
@@ -103,7 +103,7 @@ export default function ServerModal({ visible, onClose, onSaved }) {
                 ]}
               >
                 {testResult.online
-                  ? '✅ Kết nối Backend AI thành công!'
+                  ? '✅ Kết nối Máy chủ Backend thành công!'
                   : `❌ Không kết nối được: ${testResult.error || 'Server offline'}`}
               </Text>
             </View>

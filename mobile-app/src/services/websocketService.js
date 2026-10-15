@@ -25,7 +25,7 @@ class WebSocketService {
         this.callbacks.onStatus({
           type: 'status',
           connected: true,
-          message: 'Đã kết nối luồng Live-Caption qua WebSocket AI!',
+          message: 'Đã kết nối luồng phụ đề trực tiếp Live-Caption!',
         });
       };
 
