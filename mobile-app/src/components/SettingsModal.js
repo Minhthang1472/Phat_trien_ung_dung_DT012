@@ -110,6 +110,24 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
     }
   };
 
+  const handleSyncFirebase = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const remoteUrl = await apiService.syncServerUrlFromFirebase();
+      if (remoteUrl) {
+        setUrl(remoteUrl);
+        Alert.alert('Đồng bộ thành công', `Đã lấy được địa chỉ máy chủ từ Firebase:\n${remoteUrl}`);
+      } else {
+        Alert.alert('Chưa có link', 'Không thể lấy URL từ Firebase (có thể Colab chưa ghi lên hoặc chưa mở quyền đọc).');
+      }
+    } catch (err) {
+      Alert.alert('Lỗi', 'Không thể đồng bộ: ' + err.message);
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const handleTest = async () => {
     setTesting(true);
     setTestResult(null);
@@ -211,10 +229,10 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
                   <Text style={styles.presetChipText}>📱 Emulator</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.presetChip}
-                  onPress={() => setUrl('http://10.0.140.239:8000')}
+                  style={[styles.presetChip, { backgroundColor: '#FFCA2820', borderColor: '#FFB300' }]}
+                  onPress={handleSyncFirebase}
                 >
-                  <Text style={styles.presetChipText}>📶 Mạng LAN (10.0.140.239)</Text>
+                  <Text style={[styles.presetChipText, { color: '#FFB300', fontWeight: 'bold' }]}>🔥 Lấy link từ Firebase</Text>
                 </TouchableOpacity>
               </View>
 

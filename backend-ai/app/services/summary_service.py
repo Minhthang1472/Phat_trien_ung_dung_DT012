@@ -1,6 +1,7 @@
 import logging
 import json
 import re
+import requests
 from google import genai
 from google.genai import types
 from app.core.config import settings
@@ -133,13 +134,21 @@ class SummaryService:
             self.model = None
             self.fallback_model = None
 
+    def is_ollama_available(self) -> bool:
+        """Kiểm tra xem Ollama Server nội bộ có đang chạy ở localhost:11434 không"""
+        try:
+            url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/tags"
+            resp = requests.get(url, timeout=1.5)
+            return resp.status_code == 200
+        except Exception:
+            return False
+
     def summarize_transcript(self, full_text: str, include_quiz: bool = True) -> dict:
         """
         Gửi transcript bài giảng để tóm tắt các ý chính và câu hỏi ôn tập:
-        1. Tổng quan bài học (summary)
-        2. Điểm cốt lõi (key_points)
-        3. Thuật ngữ / công thức quan trọng (formulas_and_terms)
-        4. Bộ câu hỏi trắc nghiệm tự ôn tập (quiz) - tùy chọn include_quiz
+        Ưu tiên 1: Ollama Local LLM (Qwen 2.5 3B trên GPU Tesla T4) - 100% Offline & Free.
+        Ưu tiên 2: Google Gemini 2.5 Flash API (Cloud AI).
+        Dự phòng: Tóm tắt cơ bản nếu không có LLM nào.
         """
         if not full_text or len(full_text.strip()) < 10:
             return {
@@ -149,41 +158,6 @@ class SummaryService:
                 "key_points": [],
                 "formulas_and_terms": [],
                 "quiz": []
-            }
-
-        if not self.model or not settings.GEMINI_API_KEY:
-            logger.info("Chưa cấu hình GEMINI_API_KEY, sinh bản tóm tắt cơ bản.")
-            words = full_text.split()
-            preview = " ".join(words[:60]) + ("..." if len(words) > 60 else "")
-            default_quiz = [
-                {
-                    "question": "Mô hình AI nào được dùng để bóc tách phụ đề và mốc thời gian trong ứng dụng?",
-                    "options": ["A. Whisper AI", "B. ResNet-50", "C. YOLOv8", "D. BERT"],
-                    "correct_answer": "A",
-                    "answer": "A. Whisper AI",
-                    "explanation": "Hệ thống sử dụng lõi faster-whisper để nhận diện giọng nói chính xác."
-                }
-            ] if include_quiz else []
-
-            default_kp = [
-                "Bóc tách âm thanh và nhận diện giọng nói AI hoàn tất.",
-                "Phụ đề đồng bộ mốc thời gian đã sẵn sàng tra cứu và xuất file.",
-                "Để kích hoạt phân tích LLM thông minh và trắc nghiệm, cấu hình GEMINI_API_KEY trong file .env."
-            ]
-            default_terms = [
-                "Speech-to-Text (ASR): Nhận diện lời nói thành phụ đề",
-                "Timestamps Alignment: Đồng bộ mốc thời gian giây"
-            ]
-
-            return {
-                "folder": "Bài giảng chung",
-                "tags": ["Bài giảng", "Âm thanh", "Whisper"],
-                "summary": f"Tóm tắt sơ lược bài học: {preview}",
-                "key_points": default_kp,
-                "formulas_and_terms": default_terms,
-                "quiz": normalize_quiz(default_quiz),
-                "mindmap": normalize_mindmap(None, default_title="Sơ đồ tư duy bài giảng", key_points=default_kp, terms=default_terms),
-                "exercises": normalize_exercises(None, key_points=default_kp)
             }
 
         quiz_schema = """
@@ -198,7 +172,7 @@ class SummaryService:
             ],
         """ if include_quiz else '"quiz": [],'
 
-        # Tối ưu hóa tốc độ: Với video dài (> 7.000 ký tự), trích chọn thông minh các phần cốt lõi để Gemini phản hồi siêu tốc (3-5 giây)
+        # Tối ưu hóa tốc độ: Với video dài (> 7.000 ký tự), trích chọn thông minh các phần cốt lõi
         condensed_text = full_text.strip()
         if len(condensed_text) > 7000:
             mid = len(condensed_text) // 2
@@ -268,20 +242,18 @@ class SummaryService:
             ]
         }}
         """
+
         def _clean_and_parse_json(raw_text: str) -> dict:
             text = raw_text.strip()
-            # Bỏ markdown code block nếu có
             if text.startswith("```"):
                 text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
                 text = re.sub(r"\s*```$", "", text).strip()
 
-            # 1. Thử parse trực tiếp
             try:
                 return json.loads(text)
             except Exception:
                 pass
 
-            # 2. Trích xuất khối nằm giữa { và } đầu-cuối
             match = re.search(r"(\{.*\})", text, re.DOTALL)
             if match:
                 candidate = match.group(1)
@@ -290,7 +262,6 @@ class SummaryService:
                 except Exception:
                     pass
 
-                # 3. Sửa lỗi phổ biến của LLM: dấu phẩy thừa trước dấu đóng } hoặc ]
                 fixed = re.sub(r",\s*([\]\}])", r"\1", candidate)
                 try:
                     return json.loads(fixed)
@@ -299,13 +270,7 @@ class SummaryService:
 
             raise ValueError(f"Không thể parse JSON từ phản hồi LLM: {text[:200]}...")
 
-        def _call_model(model_name):
-            response = self.client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json"),
-            )
-            parsed = _clean_and_parse_json(response.text)
+        def _format_parsed_result(parsed: dict) -> dict:
             kp = parsed.get("key_points", [])
             terms = parsed.get("formulas_and_terms", [])
             raw_folder = parsed.get("folder")
@@ -328,26 +293,97 @@ class SummaryService:
                 "exercises": normalize_exercises(parsed.get("exercises"), key_points=kp)
             }
 
-        try:
-            return _call_model(self.model)
-        except Exception as e1:
-            logger.warning(f"Lỗi khi gọi model chính gemini-2.5-flash: {e1}. Đang chuyển sang gemini-2.5-flash-lite...")
-            if self.fallback_model:
-                try:
-                    return _call_model(self.fallback_model)
-                except Exception as e2:
-                    logger.error(f"Fallback gemini-2.5-flash-lite cũng thất bại: {e2}")
-            logger.error(f"Lỗi khi gọi LLM tóm tắt: {e1}")
-            fallback_kp = ["Bóc tách âm thanh thành công", "Nội dung bài giảng sẵn sàng"]
-            return {
-                "folder": "Bài giảng chung",
-                "tags": ["Bài giảng", "Học tập"],
-                "summary": "Tóm tắt từ phụ đề: " + full_text[:200] + "...",
-                "key_points": fallback_kp,
-                "formulas_and_terms": [],
-                "quiz": [],
-                "mindmap": normalize_mindmap(None, default_title="Sơ đồ bài giảng", key_points=fallback_kp),
-                "exercises": normalize_exercises(None, key_points=fallback_kp)
+        # -------------------------------------------------------------
+        # 1. HÀM GỌI OLLAMA LOCAL LLM (Qwen 2.5 3B trên GPU Tesla T4)
+        # -------------------------------------------------------------
+        def _call_ollama():
+            url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/generate"
+            payload = {
+                "model": settings.OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+                "options": {
+                    "temperature": 0.2
+                }
             }
+            resp = requests.post(url, json=payload, timeout=90)
+            if resp.status_code == 200:
+                raw_text = resp.json().get("response", "")
+                parsed = _clean_and_parse_json(raw_text)
+                return _format_parsed_result(parsed)
+            raise RuntimeError(f"Ollama trả về HTTP {resp.status_code}: {resp.text[:120]}")
+
+        # -------------------------------------------------------------
+        # 2. HÀM GỌI GOOGLE GEMINI CLOUD API (Dự phòng khi không có Ollama)
+        # -------------------------------------------------------------
+        def _call_gemini(model_name):
+            response = self.client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            parsed = _clean_and_parse_json(response.text)
+            return _format_parsed_result(parsed)
+
+        # =============================================================
+        # TIẾN HÀNH THỰC THI THEO THỨ TỰ ƯU TIÊN
+        # =============================================================
+
+        # [ƯU TIÊN 1]: Chạy Ollama Local trên GPU nếu Ollama đang bật
+        if self.is_ollama_available():
+            try:
+                logger.info(f"🚀 [LOCAL AI] Đang chạy Ollama ({settings.OLLAMA_MODEL}) trực tiếp trên GPU Tesla T4...")
+                return _call_ollama()
+            except Exception as e_ollama:
+                logger.warning(f"Ollama Local gặp lỗi: {e_ollama}. Đang chuyển sang Gemini dự phòng...")
+
+        # [ƯU TIÊN 2]: Chạy Gemini nếu có cấu hình API Key
+        if self.model and settings.GEMINI_API_KEY:
+            try:
+                logger.info(f"🌐 [CLOUD AI] Đang gọi Gemini ({self.model}) để tóm tắt...")
+                return _call_gemini(self.model)
+            except Exception as e1:
+                logger.warning(f"Lỗi khi gọi model chính gemini-2.5-flash: {e1}. Đang chuyển sang gemini-2.5-flash-lite...")
+                if self.fallback_model:
+                    try:
+                        return _call_gemini(self.fallback_model)
+                    except Exception as e2:
+                        logger.error(f"Fallback gemini-2.5-flash-lite cũng thất bại: {e2}")
+
+        # [DỰ PHÒNG CUỐI CÙNG]: Bản tóm tắt cơ bản nếu không có AI nào
+        logger.info("Chưa có Ollama hoặc Gemini, sinh bản tóm tắt cơ bản.")
+        words = full_text.split()
+        preview = " ".join(words[:60]) + ("..." if len(words) > 60 else "")
+        default_quiz = [
+            {
+                "question": "Mô hình AI nào được dùng để bóc tách phụ đề và mốc thời gian trong ứng dụng?",
+                "options": ["A. Whisper AI", "B. ResNet-50", "C. YOLOv8", "D. BERT"],
+                "correct_answer": "A",
+                "answer": "A. Whisper AI",
+                "explanation": "Hệ thống sử dụng lõi faster-whisper để nhận diện giọng nói chính xác."
+            }
+        ] if include_quiz else []
+
+        default_kp = [
+            "Bóc tách âm thanh và nhận diện giọng nói AI hoàn tất.",
+            "Phụ đề đồng bộ mốc thời gian đã sẵn sàng tra cứu và xuất file.",
+            "Hệ thống hỗ trợ cả Local AI (Ollama Qwen 2.5) và Cloud AI (Gemini)."
+        ]
+        default_terms = [
+            "Speech-to-Text (ASR): Nhận diện lời nói thành phụ đề",
+            "Timestamps Alignment: Đồng bộ mốc thời gian giây"
+        ]
+
+        return {
+            "folder": "Bài giảng chung",
+            "tags": ["Bài giảng", "Âm thanh", "Whisper"],
+            "summary": f"Tóm tắt sơ lược bài học: {preview}",
+            "key_points": default_kp,
+            "formulas_and_terms": default_terms,
+            "quiz": normalize_quiz(default_quiz),
+            "mindmap": normalize_mindmap(None, default_title="Sơ đồ tư duy bài giảng", key_points=default_kp, terms=default_terms),
+            "exercises": normalize_exercises(None, key_points=default_kp)
+        }
 
 summary_service = SummaryService()

@@ -5,6 +5,7 @@ import { colors } from './src/constants/theme';
 import HomeScreen from './src/screens/HomeScreen';
 import SyncPlayerScreen from './src/screens/SyncPlayerScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import { apiService } from './src/services/api';
 
 export default function App() {
   const [currentRoute, setCurrentRoute] = useState('Home');
@@ -14,6 +15,8 @@ export default function App() {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       document.title = 'PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG';
     }
+    // Tự động kiểm tra và cập nhật link server mới nhất từ Firebase khi mở app
+    apiService.syncServerUrlFromFirebase().catch(() => {});
   }, []);
 
   const handleNavigate = (route, params = {}) => {

@@ -31,8 +31,10 @@ export const SUPPORTED_LANGUAGES = [
   { code: 'zh', label: '中文 🇨🇳' },
 ];
 
+const DEFAULT_GOOGLE_CLIENT_ID = '408015025205-j5bkhm4in0pckg9dmss73h3a8f1mdg8r.apps.googleusercontent.com';
+
 export const GOOGLE_CLIENT_IDS = {
-  web: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '408015025205-j5bkhm4in0pckg9dmss73h3a8f1mdg8r.apps.googleusercontent.com',
-  android: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || '',
-  ios: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || '',
+  web: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID,
+  android: process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID,
+  ios: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID,
 };

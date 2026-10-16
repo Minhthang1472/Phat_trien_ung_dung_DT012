@@ -22,11 +22,19 @@ export default function ProfileScreen({ onBack }) {
   const [user, setUser] = useState(null);
   const [stats, setStats] = useState({ processed_lectures: 0, total_minutes: 0, saved_quizzes: 0 });
   const [busy, setBusy] = useState(false);
+  const activeClientId = GOOGLE_CLIENT_IDS.android || GOOGLE_CLIENT_IDS.web;
   const [request, response, promptGoogle] = Google.useIdTokenAuthRequest({
+    clientId: activeClientId,
     webClientId: GOOGLE_CLIENT_IDS.web,
-    androidClientId: GOOGLE_CLIENT_IDS.android,
-    iosClientId: GOOGLE_CLIENT_IDS.ios,
+    androidClientId: activeClientId,
+    iosClientId: GOOGLE_CLIENT_IDS.ios || GOOGLE_CLIENT_IDS.web,
   });
+
+  useEffect(() => {
+    if (request?.redirectUri) {
+      console.log('🔗 GOOGLE_OAUTH_REDIRECT_URI:', request.redirectUri);
+    }
+  }, [request]);
 
   const loadProfile = async () => {
     const saved = await apiService.getSavedUser();

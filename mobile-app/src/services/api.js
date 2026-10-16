@@ -13,6 +13,33 @@ class ApiService {
     this.cachedBaseUrl = null;
   }
 
+  async syncServerUrlFromFirebase() {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(
+        'https://firestore.googleapis.com/v1/projects/ptud-dt012/databases/(default)/documents/system_config/server',
+        { signal: controller.signal }
+      );
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const data = await res.json();
+        const remoteUrl = data?.fields?.url?.stringValue;
+        if (remoteUrl && (remoteUrl.startsWith('http://') || remoteUrl.startsWith('https://'))) {
+          let clean = remoteUrl.trim();
+          if (clean.endsWith('/')) clean = clean.slice(0, -1);
+          console.log('✅ Đã tự động đồng bộ URL Server từ Firebase Firestore:', clean);
+          this.cachedBaseUrl = clean;
+          await AsyncStorage.setItem(STORAGE_KEYS.SERVER_URL, clean);
+          return clean;
+        }
+      }
+    } catch (err) {
+      console.log('Chưa đồng bộ được URL từ Firebase Firestore:', err?.message || err);
+    }
+    return null;
+  }
+
   async getBaseUrl() {
     if (this.cachedBaseUrl) return this.cachedBaseUrl;
     try {
@@ -24,6 +51,11 @@ class ApiService {
     } catch (e) {
       console.warn('Không đọc được server URL từ AsyncStorage:', e);
     }
+
+    // Tự động thử lấy từ Firebase nếu chưa có cấu hình thủ công
+    const fromFirebase = await this.syncServerUrlFromFirebase();
+    if (fromFirebase) return fromFirebase;
+
     const defaultUrl = getDefaultApiUrl();
     this.cachedBaseUrl = defaultUrl;
     return defaultUrl;
@@ -955,3 +987,4 @@ class ApiService {
 }
 
 export const apiService = new ApiService();
+export default apiService;
