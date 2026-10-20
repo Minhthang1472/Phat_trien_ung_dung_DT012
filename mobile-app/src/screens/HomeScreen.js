@@ -21,7 +21,6 @@ import { SUPPORTED_LANGUAGES } from '../constants/config';
 import { apiService } from '../services/api';
 import Header from '../components/Header';
 import LectureCard from '../components/LectureCard';
-import SettingsModal from '../components/SettingsModal';
 
 // Danh sách ngôn ngữ dịch thuật cho Popup Upload File
 const UPLOAD_LANG_OPTIONS = [
@@ -261,7 +260,6 @@ export default function HomeScreen({ onNavigate }) {
   const [recentLectures, setRecentLectures] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [serverStatus, setServerStatus] = useState({ online: false });
-  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
 
   // Cơ chế ngắt ngang tiến trình (Task Cancellation - Yêu cầu 1)
@@ -1131,7 +1129,6 @@ export default function HomeScreen({ onNavigate }) {
       <Header
         title="PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG"
         serverStatus={serverStatus}
-        onOpenSettings={() => setSettingsModalVisible(true)}
       />
 
       <ScrollView
@@ -2021,12 +2018,6 @@ export default function HomeScreen({ onNavigate }) {
           </View>
         </View>
       </Modal>
-      <SettingsModal
-        visible={settingsModalVisible}
-        onClose={() => setSettingsModalVisible(false)}
-        onSaved={checkHealthAndFetchHistory}
-        onClearedHistory={checkHealthAndFetchHistory}
-      />
     </View>
   );
 }
