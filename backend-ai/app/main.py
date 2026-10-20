@@ -459,6 +459,30 @@ async def forgot_password(request: ForgotPasswordRequest, _limit=Depends(auth_ra
         raise HTTPException(status_code=503, detail="Không thể gửi email OTP lúc này. Vui lòng kiểm tra lại cấu hình email.") from exc
 
 
+@app.post("/api/auth/verify-reset-otp")
+async def verify_reset_otp(request: VerifyOtpRequest, _limit=Depends(auth_rate_limit)):
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    import hashlib
+    clean_email = auth_service.normalize_email(request.email)
+    user_ref = firebase_service.db.collection("users").document(hashlib.sha256(clean_email.encode("utf-8")).hexdigest())
+    doc = user_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Tài khoản không tồn tại.")
+    user = doc.to_dict()
+    saved_otp = str(user.get("reset_otp", "")).strip()
+    if not saved_otp or saved_otp != request.otp.strip():
+        raise HTTPException(status_code=400, detail="Mã OTP không chính xác.")
+
+    expires_at = user.get("reset_expires_at")
+    if expires_at and datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.")
+
+    return {"valid": True, "message": "Xác nhận mã OTP thành công! Vui lòng nhập mật khẩu mới."}
+
+
 @app.post("/api/auth/reset-password-otp")
 async def reset_password_otp(request: ResetPasswordOtpRequest, _limit=Depends(auth_rate_limit)):
     if not firebase_service.db:

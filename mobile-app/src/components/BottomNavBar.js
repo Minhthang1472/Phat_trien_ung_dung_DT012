@@ -78,9 +78,59 @@ function ProfileIcon({ color }) {
   );
 }
 
+function SettingsIcon({ color }) {
+  return (
+    <View style={styles.iconBox}>
+      <View
+        style={{
+          width: 17,
+          height: 17,
+          borderRadius: 8.5,
+          borderWidth: 2,
+          borderColor: color,
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+        }}
+      >
+        <View
+          style={{
+            position: 'absolute',
+            width: 3,
+            height: 21,
+            backgroundColor: color,
+            borderRadius: 1.5,
+          }}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            width: 21,
+            height: 3,
+            backgroundColor: color,
+            borderRadius: 1.5,
+          }}
+        />
+        <View
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: 3.5,
+            backgroundColor: '#0b0f19',
+            borderWidth: 1.5,
+            borderColor: color,
+            zIndex: 2,
+          }}
+        />
+      </View>
+    </View>
+  );
+}
+
 export default function BottomNavBar({ currentRoute, onNavigate }) {
   const isHome = currentRoute === 'Home';
   const isProfile = currentRoute === 'Profile';
+  const isSettings = currentRoute === 'Settings';
 
   const activeColor = '#a855f7';
   const inactiveColor = '#64748b';
@@ -113,6 +163,20 @@ export default function BottomNavBar({ currentRoute, onNavigate }) {
           </View>
           <Text style={[styles.tabLabel, isProfile ? styles.activeLabel : styles.inactiveLabel]}>
             Hồ sơ
+          </Text>
+        </TouchableOpacity>
+
+        {/* Tab 3: Cài đặt */}
+        <TouchableOpacity
+          style={styles.tabItem}
+          onPress={() => onNavigate('Settings')}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.iconWrapper, isSettings && styles.activeIconWrapper]}>
+            <SettingsIcon color={isSettings ? activeColor : inactiveColor} />
+          </View>
+          <Text style={[styles.tabLabel, isSettings ? styles.activeLabel : styles.inactiveLabel]}>
+            Cài đặt
           </Text>
         </TouchableOpacity>
       </View>

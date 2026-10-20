@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -20,10 +21,96 @@ import Header from '../components/Header';
 
 WebBrowser.maybeCompleteAuthSession();
 
-export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip = true }) {
+// Cấu hình Hệ thống Phân bố Cấp bậc & Thăng hạng học viên
+const RANKS = [
+  {
+    id: 'bronze',
+    tier: 1,
+    name: 'Tân Binh Khởi Đầu',
+    shortName: 'Tân Binh',
+    icon: '🥉',
+    minExp: 0,
+    color: '#f97316',
+    bg: 'rgba(249, 115, 22, 0.12)',
+    desc: 'Bắt đầu hành trình tiếp thu tri thức mới',
+  },
+  {
+    id: 'silver',
+    tier: 2,
+    name: 'Học Viên Chuyên Cần',
+    shortName: 'Chuyên Cần',
+    icon: '🥈',
+    minExp: 150,
+    color: '#94a3b8',
+    bg: 'rgba(148, 163, 184, 0.12)',
+    desc: 'Nắm vững kiến thức qua nhiều bài học',
+  },
+  {
+    id: 'gold',
+    tier: 3,
+    name: 'Học Giả Tích Cực',
+    shortName: 'Tích Cực',
+    icon: '🥇',
+    minExp: 400,
+    color: '#f59e0b',
+    bg: 'rgba(245, 158, 11, 0.12)',
+    desc: 'Luyện tập câu hỏi và ôn thi thường xuyên',
+  },
+  {
+    id: 'diamond',
+    tier: 4,
+    name: 'Tinh Anh Kim Cương',
+    shortName: 'Kim Cương',
+    icon: '💎',
+    minExp: 800,
+    color: '#06b6d4',
+    bg: 'rgba(6, 182, 212, 0.12)',
+    desc: 'Kiến thức vững vàng, phản xạ xuất sắc',
+  },
+  {
+    id: 'master',
+    tier: 5,
+    name: 'Huyền Thoại Tri Thức',
+    shortName: 'Huyền Thoại',
+    icon: '👑',
+    minExp: 1500,
+    color: '#a855f7',
+    bg: 'rgba(168, 85, 247, 0.12)',
+    desc: 'Đỉnh cao học giả, hoàn thiện toàn diện',
+  },
+];
+
+const getRankDetails = (exp) => {
+  let currentIdx = 0;
+  for (let i = RANKS.length - 1; i >= 0; i--) {
+    if (exp >= RANKS[i].minExp) {
+      currentIdx = i;
+      break;
+    }
+  }
+  const current = RANKS[currentIdx];
+  const next = RANKS[currentIdx + 1] || null;
+
+  let progressPercent = 100;
+  let expNeeded = 0;
+
+  if (next) {
+    const tierExp = exp - current.minExp;
+    const tierTarget = next.minExp - current.minExp;
+    progressPercent = Math.min(100, Math.max(0, Math.round((tierExp / tierTarget) * 100)));
+    expNeeded = Math.max(0, next.minExp - exp);
+  }
+
+  return { current, next, currentIdx, progressPercent, expNeeded, totalExp: exp };
+};
+
+export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip = true, onNavigate }) {
   const [user, setUser] = useState(null);
-  const [userTab, setUserTab] = useState('dashboard'); // 'dashboard' | 'settings'
   const [stats, setStats] = useState({ processed_lectures: 0, total_minutes: 0, saved_quizzes: 0 });
+  const [streakDays, setStreakDays] = useState(0);
+  const [langStats, setLangStats] = useState({ vi: 0, en: 0 });
+  const [featureStats, setFeatureStats] = useState({ summary: 0, quiz: 0, mindmap: 0 });
+  const [refreshing, setRefreshing] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'register' | 'verify_otp' | 'forgot_password'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,9 +124,10 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
 
   // States cho Xác minh OTP và Quên mật khẩu
   const [otp, setOtp] = useState('');
-  const [forgotStep, setForgotStep] = useState(1); // 1: Nhập email, 2: Nhập OTP & Mật khẩu mới
+  const [forgotStep, setForgotStep] = useState(1); // 1: Nhập email, 2: Nhập OTP, 3: Nhập Mật khẩu mới
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [showNewPassword, setShowNewPassword] = useState(false);
 
   // States cho Đổi mật khẩu trong tài khoản
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -61,15 +149,100 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
   const loadProfile = async () => {
     try {
       const saved = await apiService.getSavedUser();
-      if (!saved) return;
+      if (!saved) {
+        setUser(null);
+        setStats({ processed_lectures: 0, total_minutes: 0, saved_quizzes: 0 });
+        setStreakDays(0);
+        setLangStats({ vi: 0, en: 0 });
+        setFeatureStats({ summary: 0, quiz: 0, mindmap: 0 });
+        return;
+      }
       setUser(saved);
+
+      // 1. Đồng bộ tức thì từ lịch sử bài giảng thực tế của người dùng
+      let localLectures = [];
+      try {
+        localLectures = await apiService.getLocalHistory();
+      } catch (_) {}
+
+      if (localLectures && localLectures.length > 0) {
+        const count = localLectures.length;
+        const totalSecs = localLectures.reduce(
+          (acc, item) => acc + (item.duration_seconds || item.full_data?.duration_seconds || 0),
+          0
+        );
+        const totalQuiz = localLectures.reduce(
+          (acc, item) => acc + (item.full_data?.quiz?.length || item.quiz?.length || 0),
+          0
+        );
+
+        // Tính chuỗi ngày học thực tế
+        const uniqueDays = new Set(
+          localLectures
+            .map((item) => (item.cached_at || item.created_at || '').substring(0, 10))
+            .filter(Boolean)
+        );
+        setStreakDays(Math.max(1, uniqueDays.size));
+
+        // Tính tỉ lệ ngôn ngữ thực tế
+        let viCount = 0;
+        let enCount = 0;
+        let sumCount = 0;
+        let qzCount = 0;
+        let mmCount = 0;
+
+        localLectures.forEach((item) => {
+          const lang = (item.language || item.full_data?.language || 'vi').toLowerCase();
+          if (lang.includes('en')) enCount++;
+          else viCount++;
+
+          if (item.summary || item.full_data?.summary) sumCount++;
+          if ((item.quiz?.length || item.full_data?.quiz?.length) > 0) qzCount++;
+          if (item.mindmap || item.full_data?.mindmap) mmCount++;
+        });
+
+        const totalLangs = viCount + enCount || 1;
+        setLangStats({
+          vi: Math.round((viCount / totalLangs) * 100),
+          en: Math.round((enCount / totalLangs) * 100),
+        });
+
+        setFeatureStats({
+          summary: Math.round((sumCount / count) * 100),
+          quiz: Math.round((qzCount / count) * 100),
+          mindmap: Math.round((mmCount / count) * 100),
+        });
+
+        setStats({
+          processed_lectures: count,
+          total_minutes: Math.round(totalSecs / 60),
+          saved_quizzes: totalQuiz,
+        });
+      } else {
+        setStreakDays(0);
+        setLangStats({ vi: 0, en: 0 });
+        setFeatureStats({ summary: 0, quiz: 0, mindmap: 0 });
+        setStats({ processed_lectures: 0, total_minutes: 0, saved_quizzes: 0 });
+      }
+
+      // 2. Đồng bộ thêm từ CSDL Cloud (/api/auth/me)
       try {
         const profile = await apiService.getProfile();
         if (profile?.user) {
           setUser(profile.user);
         }
         if (profile?.stats) {
-          setStats(profile.stats);
+          setStats((prev) => {
+            const newCount = Math.max(profile.stats.processed_lectures || 0, prev.processed_lectures || 0);
+            return {
+              processed_lectures: newCount,
+              total_minutes: Math.max(profile.stats.total_minutes || 0, prev.total_minutes || 0),
+              saved_quizzes: Math.max(profile.stats.saved_quizzes || 0, prev.saved_quizzes || 0),
+            };
+          });
+          if (profile.stats.processed_lectures > 0 && streakDays === 0) {
+            setStreakDays(1);
+          }
         }
       } catch (_) {
         // Offline or token expired fallback
@@ -267,12 +440,45 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
     }
   };
 
+  const handleVerifyResetOtp = async () => {
+    setErrorMessage('');
+    setSuccessMessage('');
+    const trimmedOtp = otp.trim();
+    if (!trimmedOtp || trimmedOtp.length !== 6 || !/^\d{6}$/.test(trimmedOtp)) {
+      setErrorMessage('Vui lòng nhập đầy đủ mã OTP 6 chữ số từ email.');
+      return;
+    }
+    setLoading(true);
+    try {
+      try {
+        const res = await apiService.verifyResetOtp(email.trim(), trimmedOtp);
+        if (res?.message) {
+          setSuccessMessage(res.message);
+        }
+      } catch (apiErr) {
+        // Nếu backend chưa có endpoint verify-reset-otp (404), chuyển tiếp sang bước 3
+        // Việc xác thực OTP sẽ được hoàn tất tại bước cuối cùng qua /api/auth/reset-password-otp
+        if (apiErr.message && (apiErr.message.includes('404') || apiErr.message.includes('Not Found'))) {
+          // Bỏ qua lỗi 404
+        } else {
+          throw apiErr;
+        }
+      }
+      setForgotStep(3);
+    } catch (err) {
+      setErrorMessage(err.message || 'Mã OTP không chính xác hoặc đã hết hạn.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleResetPasswordOtp = async () => {
     setErrorMessage('');
     setSuccessMessage('');
     const trimmedOtp = otp.trim();
-    if (!trimmedOtp || trimmedOtp.length < 4) {
-      setErrorMessage('Vui lòng nhập mã OTP.');
+    if (!trimmedOtp) {
+      setErrorMessage('Mã OTP không hợp lệ, vui lòng thử lại từ bước nhập mã.');
+      setForgotStep(2);
       return;
     }
     if (!newPassword || newPassword.length < 8) {
@@ -286,13 +492,17 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
     setLoading(true);
     try {
       const res = await apiService.resetPasswordOtp(email.trim(), trimmedOtp, newPassword);
-      setSuccessMessage(res.message || 'Đặt lại mật khẩu thành công! Vui lòng đăng nhập.');
+      setSuccessMessage(res.message || 'Đặt lại mật khẩu thành công! Vui lòng đăng nhập bằng mật khẩu mới.');
       setAuthMode('login');
+      setForgotStep(1);
       setPassword('');
       setOtp('');
       setNewPassword('');
       setConfirmNewPassword('');
     } catch (err) {
+      if (err.message && (err.message.includes('OTP') || err.message.includes('hết hạn'))) {
+        setForgotStep(2);
+      }
       setErrorMessage(err.message || 'Đặt lại mật khẩu thất bại.');
     } finally {
       setLoading(false);
@@ -366,412 +576,395 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
     );
   };
 
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await loadProfile();
+    } catch (e) {
+      console.warn('Lỗi làm mới hồ sơ:', e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const totalExp =
+    (stats.processed_lectures || 0) * 100 +
+    (stats.saved_quizzes || 0) * 10 +
+    (stats.total_minutes || 0) * 2;
+  const rankInfo = getRankDetails(totalExp);
+
   return (
     <View style={styles.container}>
-      <Header title="HỒ SƠ & TÀI KHOẢN" showBack onBack={onBack} />
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {/* Header không có nút quay về vì đã có thanh điều hướng dưới đáy */}
+      <Header title="HỒ SƠ & THỐNG KÊ" />
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.primaryLight}
+            colors={[colors.primaryLight]}
+          />
+        }
+      >
         {user ? (
           <>
-            {/* Thanh chuyển đổi 2 Tab trong Hồ sơ */}
-            <View style={styles.profileTabSwitcher}>
-              <TouchableOpacity
-                style={[styles.profileTabBtn, userTab === 'dashboard' && styles.profileTabBtnActive]}
-                onPress={() => setUserTab('dashboard')}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.profileTabBtnText, userTab === 'dashboard' && styles.profileTabBtnTextActive]}>
-                  📊 Dashboard Thống Kê
+            {/* Thẻ Hero thông tin học viên & Chuỗi học tập */}
+            <View style={styles.profileHero}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {(user.display_name || user.email || 'U')[0].toUpperCase()}
                 </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.profileTabBtn, userTab === 'settings' && styles.profileTabBtnActive]}
-                onPress={() => setUserTab('settings')}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.profileTabBtnText, userTab === 'settings' && styles.profileTabBtnTextActive]}>
-                  ⚙️ Cài Đặt & Bảo Mật
-                </Text>
-              </TouchableOpacity>
+              </View>
+              <Text style={styles.name}>{user.display_name || 'Học viên'}</Text>
+              <Text style={styles.email}>{user.email}</Text>
+              <View style={styles.badgeRow}>
+                <View style={styles.verifiedBadge}>
+                  <Text style={styles.verifiedBadgeText}>✓ Tài khoản đã xác thực</Text>
+                </View>
+                <View
+                  style={[
+                    styles.levelBadge,
+                    {
+                      backgroundColor: rankInfo.current.bg,
+                      borderColor: rankInfo.current.color,
+                      borderWidth: 1,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.levelBadgeText, { color: rankInfo.current.color }]}>
+                    {rankInfo.current.icon} {rankInfo.current.name}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Chuỗi học tập & Mục tiêu tuần */}
+              <View style={styles.streakBanner}>
+                <View style={styles.streakInfo}>
+                  <Text style={styles.streakIcon}>🔥</Text>
+                  <View>
+                    <Text style={styles.streakTitle}>Chuỗi học tập</Text>
+                    <Text style={styles.streakSubtitle}>{streakDays} ngày liên tục</Text>
+                  </View>
+                </View>
+                <View style={styles.streakDivider} />
+                <View style={styles.streakInfo}>
+                  <Text style={styles.streakIcon}>🎯</Text>
+                  <View>
+                    <Text style={styles.streakTitle}>Mục tiêu tuần</Text>
+                    <Text style={styles.streakSubtitle}>{Math.min(stats.processed_lectures || 0, 5)}/5 bài giảng</Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Thanh tiến độ mục tiêu tuần */}
+              <View style={styles.weeklyProgressBarWrap}>
+                <View style={styles.weeklyProgressHeader}>
+                  <Text style={styles.weeklyProgressLabel}>Tiến độ hoàn thành tuần này</Text>
+                  <Text style={styles.weeklyProgressPercent}>
+                    {Math.min(100, Math.round(((stats.processed_lectures || 0) / 5) * 100))}%
+                  </Text>
+                </View>
+                <View style={styles.weeklyProgressBar}>
+                  <View
+                    style={[
+                      styles.weeklyProgressFill,
+                      {
+                        width: `${Math.min(100, Math.max((stats.processed_lectures || 0) > 0 ? 15 : 0, Math.round(((stats.processed_lectures || 0) / 5) * 100)))}%`,
+                      },
+                    ]}
+                  />
+                </View>
+              </View>
             </View>
 
-            {userTab === 'dashboard' ? (
-              <>
-                {/* Thẻ Hero thông tin học viên & Chuỗi học tập */}
-                <View style={styles.profileHero}>
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>
-                      {(user.display_name || user.email || 'U')[0].toUpperCase()}
-                    </Text>
-                  </View>
-                  <Text style={styles.name}>{user.display_name || 'Học viên'}</Text>
-                  <Text style={styles.email}>{user.email}</Text>
-                  <View style={styles.badgeRow}>
-                    <View style={styles.verifiedBadge}>
-                      <Text style={styles.verifiedBadgeText}>✓ Tài khoản đã xác thực</Text>
-                    </View>
-                    <View style={styles.levelBadge}>
-                      <Text style={styles.levelBadgeText}>⭐ Học viên Tích cực</Text>
-                    </View>
-                  </View>
-
-                  {/* Chuỗi học tập & Mục tiêu tuần */}
-                  <View style={styles.streakBanner}>
-                    <View style={styles.streakInfo}>
-                      <Text style={styles.streakIcon}>🔥</Text>
-                      <View>
-                        <Text style={styles.streakTitle}>Chuỗi học tập</Text>
-                        <Text style={styles.streakSubtitle}>5 ngày liên tục</Text>
-                      </View>
-                    </View>
-                    <View style={styles.streakDivider} />
-                    <View style={styles.streakInfo}>
-                      <Text style={styles.streakIcon}>🎯</Text>
-                      <View>
-                        <Text style={styles.streakTitle}>Mục tiêu tuần</Text>
-                        <Text style={styles.streakSubtitle}>{Math.min(stats.processed_lectures || 0, 5)}/5 bài giảng</Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  {/* Thanh tiến độ mục tiêu tuần */}
-                  <View style={styles.weeklyProgressBarWrap}>
-                    <View style={styles.weeklyProgressHeader}>
-                      <Text style={styles.weeklyProgressLabel}>Tiến độ hoàn thành tuần này</Text>
-                      <Text style={styles.weeklyProgressPercent}>
-                        {Math.min(100, Math.round(((stats.processed_lectures || 0) / 5) * 100))}%
-                      </Text>
-                    </View>
-                    <View style={styles.weeklyProgressBar}>
-                      <View
-                        style={[
-                          styles.weeklyProgressFill,
-                          {
-                            width: `${Math.min(100, Math.max((stats.processed_lectures || 0) > 0 ? 15 : 0, Math.round(((stats.processed_lectures || 0) / 5) * 100)))}%`,
-                          },
-                        ]}
-                      />
-                    </View>
-                  </View>
+            {/* 4 Chỉ số KPI Thống kê cốt lõi */}
+            <Text style={styles.sectionTitle}>📈 CHỈ SỐ HỌC TẬP TỔNG QUAN</Text>
+            <View style={styles.dashboardGrid}>
+              <View style={styles.dashboardCard}>
+                <View style={[styles.dashboardCardIconBox, { backgroundColor: 'rgba(99, 102, 241, 0.2)' }]}>
+                  <Text style={styles.dashboardCardIcon}>📚</Text>
                 </View>
+                <Text style={styles.dashboardCardValue}>{stats.processed_lectures || 0}</Text>
+                <Text style={styles.dashboardCardTitle}>Bài giảng đã học</Text>
+                <Text style={styles.dashboardCardDesc}>Đã tóm tắt & sơ đồ tư duy</Text>
+              </View>
 
-                {/* 4 Chỉ số KPI Thống kê cốt lõi */}
-                <Text style={styles.sectionTitle}>📈 CHỈ SỐ HỌC TẬP TỔNG QUAN</Text>
-                <View style={styles.dashboardGrid}>
-                  <View style={styles.dashboardCard}>
-                    <View style={[styles.dashboardCardIconBox, { backgroundColor: 'rgba(99, 102, 241, 0.2)' }]}>
-                      <Text style={styles.dashboardCardIcon}>📚</Text>
-                    </View>
-                    <Text style={styles.dashboardCardValue}>{stats.processed_lectures || 0}</Text>
-                    <Text style={styles.dashboardCardTitle}>Bài giảng đã học</Text>
-                    <Text style={styles.dashboardCardDesc}>Đã tóm tắt & sơ đồ tư duy</Text>
-                  </View>
-
-                  <View style={styles.dashboardCard}>
-                    <View style={[styles.dashboardCardIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.2)' }]}>
-                      <Text style={styles.dashboardCardIcon}>⏱️</Text>
-                    </View>
-                    <Text style={styles.dashboardCardValue}>
-                      {stats.total_minutes || 0}
-                      <Text style={{ fontSize: 13, fontWeight: '600' }}> ph</Text>
-                    </Text>
-                    <Text style={styles.dashboardCardTitle}>Thời lượng học</Text>
-                    <Text style={styles.dashboardCardDesc}>Tiết kiệm 80% thời gian</Text>
-                  </View>
-
-                  <View style={styles.dashboardCard}>
-                    <View style={[styles.dashboardCardIconBox, { backgroundColor: 'rgba(245, 158, 11, 0.2)' }]}>
-                      <Text style={styles.dashboardCardIcon}>🎯</Text>
-                    </View>
-                    <Text style={styles.dashboardCardValue}>{stats.saved_quizzes || 0}</Text>
-                    <Text style={styles.dashboardCardTitle}>Câu trắc nghiệm</Text>
-                    <Text style={styles.dashboardCardDesc}>Bộ ôn tập củng cố kiến thức</Text>
-                  </View>
-
-                  <View style={styles.dashboardCard}>
-                    <View style={[styles.dashboardCardIconBox, { backgroundColor: 'rgba(236, 72, 153, 0.2)' }]}>
-                      <Text style={styles.dashboardCardIcon}>⚡</Text>
-                    </View>
-                    <Text style={styles.dashboardCardValue}>
-                      {(stats.processed_lectures || 0) > 0 ? '92%' : '0%'}
-                    </Text>
-                    <Text style={styles.dashboardCardTitle}>Hiệu quả tiếp thu</Text>
-                    <Text style={styles.dashboardCardDesc}>Độ chính xác bài ôn tập</Text>
-                  </View>
+              <View style={styles.dashboardCard}>
+                <View style={[styles.dashboardCardIconBox, { backgroundColor: 'rgba(16, 185, 129, 0.2)' }]}>
+                  <Text style={styles.dashboardCardIcon}>⏱️</Text>
                 </View>
+                <Text style={styles.dashboardCardValue}>
+                  {stats.total_minutes || 0}
+                  <Text style={{ fontSize: 13, fontWeight: '600' }}> ph</Text>
+                </Text>
+                <Text style={styles.dashboardCardTitle}>Thời lượng học</Text>
+                <Text style={styles.dashboardCardDesc}>Tiết kiệm 80% thời gian</Text>
+              </View>
 
-                {/* Phân bổ Ngôn ngữ & Tính năng AI */}
-                <Text style={styles.sectionTitle}>🌐 PHÂN BỔ NGÔN NGỮ & ĐỊNH DẠNG</Text>
-                <View style={styles.analyticsCard}>
-                  <View style={styles.analyticRow}>
-                    <View style={styles.analyticLabelWrap}>
-                      <Text style={styles.analyticLabel}>🇻🇳 Tiếng Việt</Text>
-                      <Text style={styles.analyticValue}>85%</Text>
-                    </View>
-                    <View style={styles.analyticBar}>
-                      <View style={[styles.analyticFill, { width: '85%', backgroundColor: '#6366f1' }]} />
-                    </View>
-                  </View>
-
-                  <View style={styles.analyticRow}>
-                    <View style={styles.analyticLabelWrap}>
-                      <Text style={styles.analyticLabel}>🇺🇸 Tiếng Anh</Text>
-                      <Text style={styles.analyticValue}>15%</Text>
-                    </View>
-                    <View style={styles.analyticBar}>
-                      <View style={[styles.analyticFill, { width: '15%', backgroundColor: '#ec4899' }]} />
-                    </View>
-                  </View>
-
-                  <View style={styles.analyticDivider} />
-
-                  <View style={styles.featureBreakdown}>
-                    <View style={styles.featureItem}>
-                      <Text style={styles.featureEmoji}>📝</Text>
-                      <Text style={styles.featureTitle}>Tóm tắt AI</Text>
-                      <Text style={styles.featureTag}>100%</Text>
-                    </View>
-                    <View style={styles.featureItem}>
-                      <Text style={styles.featureEmoji}>🧠</Text>
-                      <Text style={styles.featureTitle}>Trắc nghiệm</Text>
-                      <Text style={styles.featureTag}>88%</Text>
-                    </View>
-                    <View style={styles.featureItem}>
-                      <Text style={styles.featureEmoji}>🗺️</Text>
-                      <Text style={styles.featureTitle}>Mindmap</Text>
-                      <Text style={styles.featureTag}>94%</Text>
-                    </View>
-                  </View>
+              <View style={styles.dashboardCard}>
+                <View style={[styles.dashboardCardIconBox, { backgroundColor: 'rgba(245, 158, 11, 0.2)' }]}>
+                  <Text style={styles.dashboardCardIcon}>🎯</Text>
                 </View>
+                <Text style={styles.dashboardCardValue}>{stats.saved_quizzes || 0}</Text>
+                <Text style={styles.dashboardCardTitle}>Câu trắc nghiệm</Text>
+                <Text style={styles.dashboardCardDesc}>Bộ ôn tập củng cố kiến thức</Text>
+              </View>
 
-                {/* Huy hiệu thành tích học tập */}
-                <Text style={styles.sectionTitle}>🏆 HUY HIỆU THÀNH TÍCH</Text>
-                <View style={styles.achievementsGrid}>
-                  <View style={[styles.achievementBadge, (stats.processed_lectures || 0) >= 1 && styles.achievementBadgeUnlocked]}>
-                    <Text style={styles.achievementIcon}>🎓</Text>
-                    <Text style={styles.achievementTitle}>Tân Binh Tiên Phong</Text>
-                    <Text style={styles.achievementSubtitle}>Hoàn thành bài đầu</Text>
-                    <Text style={styles.achievementStatus}>
-                      {(stats.processed_lectures || 0) >= 1 ? '✓ Đã mở khóa' : '🔒 Đang khóa'}
-                    </Text>
-                  </View>
-
-                  <View style={[styles.achievementBadge, styles.achievementBadgeUnlocked]}>
-                    <Text style={styles.achievementIcon}>⚡</Text>
-                    <Text style={styles.achievementTitle}>Tốc Độ Ánh Sáng</Text>
-                    <Text style={styles.achievementSubtitle}>Tóm tắt AI tức thì</Text>
-                    <Text style={styles.achievementStatus}>✓ Đã mở khóa</Text>
-                  </View>
-
-                  <View style={[styles.achievementBadge, (stats.saved_quizzes || 0) >= 5 && styles.achievementBadgeUnlocked]}>
-                    <Text style={styles.achievementIcon}>🎯</Text>
-                    <Text style={styles.achievementTitle}>Bậc Thầy Trắc Nghiệm</Text>
-                    <Text style={styles.achievementSubtitle}>Ôn tập 5+ câu hỏi</Text>
-                    <Text style={styles.achievementStatus}>
-                      {(stats.saved_quizzes || 0) >= 5 ? '✓ Đã mở khóa' : `${stats.saved_quizzes || 0}/5 câu`}
-                    </Text>
-                  </View>
-
-                  <View style={[styles.achievementBadge, (stats.total_minutes || 0) >= 30 && styles.achievementBadgeUnlocked]}>
-                    <Text style={styles.achievementIcon}>👑</Text>
-                    <Text style={styles.achievementTitle}>Học Viên Bền Bỉ</Text>
-                    <Text style={styles.achievementSubtitle}>30+ phút tiếp thu</Text>
-                    <Text style={styles.achievementStatus}>
-                      {(stats.total_minutes || 0) >= 30 ? '✓ Đã mở khóa' : `${stats.total_minutes || 0}/30 ph`}
-                    </Text>
-                  </View>
+              <View style={styles.dashboardCard}>
+                <View style={[styles.dashboardCardIconBox, { backgroundColor: 'rgba(236, 72, 153, 0.2)' }]}>
+                  <Text style={styles.dashboardCardIcon}>⚡</Text>
                 </View>
+                <Text style={styles.dashboardCardValue}>
+                  {(stats.processed_lectures || 0) > 0 ? `${Math.min(100, Math.round(((stats.saved_quizzes || 0) / Math.max(1, (stats.processed_lectures || 0) * 3)) * 100))}%` : '0%'}
+                </Text>
+                <Text style={styles.dashboardCardTitle}>Hiệu quả tiếp thu</Text>
+                <Text style={styles.dashboardCardDesc}>Độ chính xác bài ôn tập</Text>
+              </View>
+            </View>
 
-                {/* Nút hành động nhanh */}
-                <View style={styles.ctaBox}>
-                  <TouchableOpacity
-                    style={styles.primaryCtaBtn}
-                    onPress={onBack}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.primaryCtaText}>🚀 Bắt Đầu Bài Giảng Mới</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.secondaryCtaBtn}
-                    onPress={loadProfile}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={styles.secondaryCtaText}>🔄 Làm mới số liệu</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : (
-              <>
-                {/* TAB CÀI ĐẶT & BẢO MẬT */}
-                {/* Thẻ thông tin tài khoản thu gọn */}
-                <View style={styles.profileMiniCard}>
-                  <View style={styles.avatarMini}>
-                    <Text style={styles.avatarMiniText}>
-                      {(user.display_name || user.email || 'U')[0].toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.profileMiniName}>{user.display_name || 'Học viên'}</Text>
-                    <Text style={styles.profileMiniEmail}>{user.email}</Text>
-                  </View>
-                  <View style={styles.verifiedBadgeSmall}>
-                    <Text style={styles.verifiedBadgeSmallText}>✓ Active</Text>
-                  </View>
-                </View>
-
-                {/* Đổi mật khẩu tài khoản */}
-                <Text style={styles.sectionTitle}>🔒 ĐỔI MẬT KHẨU TÀI KHOẢN</Text>
-                <View style={styles.securityCard}>
-                  <TouchableOpacity
-                    style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 4 }}
-                    onPress={() => {
-                      setShowChangePassword(!showChangePassword);
-                      setChangeMsg('');
-                      setChangeError('');
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <Text style={{ fontSize: 16 }}>🔑</Text>
-                      <Text style={{ color: '#f8fafc', fontWeight: '700', fontSize: 13.5 }}>
-                        Cập nhật mật khẩu bảo vệ tài khoản
-                      </Text>
-                    </View>
-                    <Text style={{ color: colors.primaryLight, fontSize: 16 }}>
-                      {showChangePassword ? '▲' : '▼'}
-                    </Text>
-                  </TouchableOpacity>
-
-                  {showChangePassword && (
-                    <View style={{ marginTop: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.cardBorder }}>
-                      {changeError ? (
-                        <View style={[styles.errorBox, { marginBottom: 10 }]}>
-                          <Text style={styles.errorText}>⚠️ {changeError}</Text>
-                        </View>
-                      ) : null}
-                      {changeMsg ? (
-                        <View style={[styles.successBox, { marginBottom: 10 }]}>
-                          <Text style={styles.successText}>✓ {changeMsg}</Text>
-                        </View>
-                      ) : null}
-
-                      <View style={styles.inputField}>
-                        <Text style={styles.inputLabel}>MẬT KHẨU HIỆN TẠI</Text>
-                        <View style={styles.inputWrap}>
-                          <Text style={styles.inputIcon}>🔒</Text>
-                          <TextInput
-                            style={styles.textInput}
-                            placeholder="Nhập mật khẩu đang dùng"
-                            placeholderTextColor={colors.textMuted}
-                            value={oldPassword}
-                            onChangeText={setOldPassword}
-                            secureTextEntry
-                            autoCapitalize="none"
-                          />
-                        </View>
-                      </View>
-
-                      <View style={styles.inputField}>
-                        <Text style={styles.inputLabel}>MẬT KHẨU MỚI</Text>
-                        <View style={styles.inputWrap}>
-                          <Text style={styles.inputIcon}>✨</Text>
-                          <TextInput
-                            style={styles.textInput}
-                            placeholder="Tối thiểu 8 ký tự"
-                            placeholderTextColor={colors.textMuted}
-                            value={changeNewPass}
-                            onChangeText={setChangeNewPass}
-                            secureTextEntry
-                            autoCapitalize="none"
-                          />
-                        </View>
-                      </View>
-
-                      <View style={styles.inputField}>
-                        <Text style={styles.inputLabel}>XÁC NHẬN MẬT KHẨU MỚI</Text>
-                        <View style={styles.inputWrap}>
-                          <Text style={styles.inputIcon}>🔐</Text>
-                          <TextInput
-                            style={styles.textInput}
-                            placeholder="Nhập lại mật khẩu mới"
-                            placeholderTextColor={colors.textMuted}
-                            value={changeConfirmPass}
-                            onChangeText={setChangeConfirmPass}
-                            secureTextEntry
-                            autoCapitalize="none"
-                          />
-                        </View>
-                      </View>
-
-                      <TouchableOpacity
-                        style={[styles.submitBtn, { marginTop: 10 }, changeLoading && styles.submitBtnDisabled]}
-                        onPress={handleChangePassword}
-                        disabled={changeLoading}
-                        activeOpacity={0.8}
-                      >
-                        {changeLoading ? (
-                          <ActivityIndicator color="#fff" size="small" />
-                        ) : (
-                          <Text style={styles.submitBtnText}>Xác nhận đổi mật khẩu</Text>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </View>
-
-                {/* Bảo mật thông tin tài khoản & Quản lý phiên */}
-                <Text style={styles.sectionTitle}>🛡️ BẢO MẬT & QUẢN LÝ PHIÊN</Text>
-                <View style={styles.securityCard}>
-                  <View style={styles.securityRow}>
-                    <Text style={styles.securityLabel}>Mã định danh (ID):</Text>
-                    <Text style={styles.securityValue} numberOfLines={1}>
-                      {user.id ? `${user.id.substring(0, 16)}...` : 'Chưa cập nhật'}
-                    </Text>
-                  </View>
-                  <View style={styles.securityDivider} />
-                  <View style={styles.securityRow}>
-                    <Text style={styles.securityLabel}>Chuẩn xác thực:</Text>
-                    <Text style={styles.securityHighlight}>JWT Bearer Token (256-bit)</Text>
-                  </View>
-                  <View style={styles.securityDivider} />
-                  <View style={styles.securityRow}>
-                    <Text style={styles.securityLabel}>Mã hóa mật khẩu:</Text>
-                    <Text style={styles.securityHighlight}>PBKDF2-SHA256 (240k rounds)</Text>
-                  </View>
-                  <View style={styles.securityDivider} />
-                  <View style={styles.securityRow}>
-                    <Text style={styles.securityLabel}>Trạng thái phiên:</Text>
-                    <Text style={[styles.securityHighlight, { color: '#10b981' }]}>● Đang hoạt động an toàn</Text>
-                  </View>
-                </View>
-
-                {/* Quản lý Cấu hình & Dữ liệu */}
-                <Text style={styles.sectionTitle}>⚙️ DỮ LIỆU & SAO LƯU CẤU HÌNH</Text>
-                <TouchableOpacity
-                  style={styles.action}
-                  onPress={() =>
-                    apiService
-                      .exportUserConfig()
-                      .then(() => Alert.alert('Đã xuất', 'File cấu hình cá nhân đã sẵn sàng để chia sẻ.'))
-                      .catch((e) => Alert.alert('Lỗi xuất file', e.message))
-                  }
-                  activeOpacity={0.7}
+            {/* Phân bố Cấp bậc & Nâng hạng học viên */}
+            <Text style={styles.sectionTitle}>🎖️ PHÂN BỐ CẤP BẬC & TIẾN ĐỘ THĂNG HẠNG</Text>
+            <View style={styles.rankCard}>
+              {/* Header Thẻ Hạng Hiện Tại */}
+              <View style={styles.rankHeader}>
+                <View
+                  style={[
+                    styles.rankIconBox,
+                    {
+                      backgroundColor: rankInfo.current.bg,
+                      borderColor: rankInfo.current.color,
+                    },
+                  ]}
                 >
-                  <Text style={styles.actionText}>📤 Xuất file cấu hình cá nhân</Text>
-                  <Text style={styles.arrow}>›</Text>
-                </TouchableOpacity>
+                  <Text style={styles.rankIconLarge}>{rankInfo.current.icon}</Text>
+                </View>
+                <View style={styles.rankHeaderInfo}>
+                  <View style={styles.rankTitleRow}>
+                    <Text style={[styles.rankCurrentName, { color: rankInfo.current.color }]}>
+                      {rankInfo.current.name}
+                    </Text>
+                    <View style={[styles.rankTierTag, { backgroundColor: rankInfo.current.bg }]}>
+                      <Text style={[styles.rankTierTagText, { color: rankInfo.current.color }]}>
+                        CẤP {rankInfo.current.tier}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.rankDesc}>{rankInfo.current.desc}</Text>
+                  <Text style={styles.rankExpText}>
+                    ✨ Tích lũy: <Text style={{ color: colors.primaryLight, fontWeight: '800' }}>{rankInfo.totalExp} EXP</Text>
+                  </Text>
+                </View>
+              </View>
 
-                <TouchableOpacity style={styles.action} onPress={handleImport} activeOpacity={0.7}>
-                  <Text style={styles.actionText}>📥 Nạp file cấu hình từ thiết bị</Text>
-                  <Text style={styles.arrow}>›</Text>
-                </TouchableOpacity>
+              {/* Thanh tiến độ thăng hạng */}
+              <View style={styles.rankProgressContainer}>
+                <View style={styles.rankProgressHeader}>
+                  <Text style={styles.rankProgressLabel}>
+                    {rankInfo.next
+                      ? `Tiến độ lên ${rankInfo.next.name}`
+                      : 'Đã đạt cấp bậc cao nhất'}
+                  </Text>
+                  <Text style={[styles.rankProgressValue, { color: rankInfo.current.color }]}>
+                    {rankInfo.progressPercent}%
+                  </Text>
+                </View>
+                <View style={styles.rankProgressBar}>
+                  <View
+                    style={[
+                      styles.rankProgressFill,
+                      {
+                        width: `${Math.max(5, rankInfo.progressPercent)}%`,
+                        backgroundColor: rankInfo.current.color,
+                      },
+                    ]}
+                  />
+                </View>
+                {rankInfo.next ? (
+                  <Text style={styles.rankHintText}>
+                    🎯 Hoàn thành thêm mục tiêu để nhận{' '}
+                    <Text style={{ color: colors.primaryLight, fontWeight: '700' }}>
+                      +{rankInfo.expNeeded} EXP
+                    </Text>{' '}
+                    thăng lên {rankInfo.next.icon}{' '}
+                    <Text style={{ color: rankInfo.next.color, fontWeight: '700' }}>
+                      {rankInfo.next.name}
+                    </Text>
+                  </Text>
+                ) : (
+                  <Text style={[styles.rankHintText, { color: '#a855f7' }]}>
+                    🎉 Chúc mừng! Bạn đã chạm mốc cao nhất của bảng xếp hạng học giả!
+                  </Text>
+                )}
+              </View>
 
-                {/* Đăng xuất khỏi tài khoản */}
-                <TouchableOpacity style={[styles.action, styles.logout]} onPress={handleLogout} activeOpacity={0.7}>
-                  <Text style={styles.logoutText}>🚪 Đăng xuất khỏi tài khoản</Text>
-                </TouchableOpacity>
-              </>
-            )}
+              <View style={styles.rankDivider} />
+
+              {/* Lộ trình phân bố các hạng */}
+              <Text style={styles.rankTimelineTitle}>LỘ TRÌNH PHÂN BỐ CÁC HẠNG</Text>
+              <View style={styles.rankStepsList}>
+                {RANKS.map((r) => {
+                  const isAchieved = rankInfo.totalExp >= r.minExp;
+                  const isCurrent = rankInfo.current.id === r.id;
+                  return (
+                    <View
+                      key={r.id}
+                      style={[
+                        styles.rankStepItem,
+                        isCurrent && { borderColor: r.color, backgroundColor: r.bg, borderWidth: 1.5 },
+                        !isAchieved && { opacity: 0.5 },
+                      ]}
+                    >
+                      <View style={styles.rankStepLeft}>
+                        <Text style={styles.rankStepIcon}>{r.icon}</Text>
+                        <View>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text
+                              style={[
+                                styles.rankStepName,
+                                isCurrent && { color: r.color, fontWeight: '800' },
+                              ]}
+                            >
+                              {r.name}
+                            </Text>
+                            {isCurrent && (
+                              <View style={[styles.currentBadgeSmall, { backgroundColor: r.color }]}>
+                                <Text style={styles.currentBadgeSmallText}>Hiện tại</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.rankStepExp}>Yêu cầu: {r.minExp} EXP</Text>
+                        </View>
+                      </View>
+                      <View style={styles.rankStepRight}>
+                        <Text
+                          style={[
+                            styles.rankStepStatus,
+                            isAchieved ? { color: '#10b981' } : { color: colors.textMuted },
+                          ]}
+                        >
+                          {isAchieved ? '✓ Đã đạt' : `Còn ${r.minExp - rankInfo.totalExp} EXP`}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+
+              {/* Quy tắc tích lũy EXP */}
+              <View style={styles.expRulesBox}>
+                <Text style={styles.expRulesTitle}>⚡ QUY TẮC NHẬN ĐIỂM EXP KHI HOÀN THÀNH:</Text>
+                <View style={styles.expRulesRow}>
+                  <View style={styles.expRuleItem}>
+                    <Text style={styles.expRuleIcon}>📚</Text>
+                    <Text style={styles.expRuleText}>Hoàn thành bài giảng</Text>
+                    <Text style={styles.expRuleVal}>+100 EXP</Text>
+                  </View>
+                  <View style={styles.expRuleItem}>
+                    <Text style={styles.expRuleIcon}>🎯</Text>
+                    <Text style={styles.expRuleText}>Câu hỏi ôn tập</Text>
+                    <Text style={styles.expRuleVal}>+10 EXP</Text>
+                  </View>
+                  <View style={styles.expRuleItem}>
+                    <Text style={styles.expRuleIcon}>⏱️</Text>
+                    <Text style={styles.expRuleText}>Thời gian học tập</Text>
+                    <Text style={styles.expRuleVal}>+2 EXP / ph</Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+
+            {/* Phân bổ Ngôn ngữ & Tính năng AI */}
+            <Text style={styles.sectionTitle}>🌐 PHÂN BỔ NGÔN NGỮ & ĐỊNH DẠNG</Text>
+            <View style={styles.analyticsCard}>
+              {(stats.processed_lectures || 0) === 0 && (
+                <Text style={{ color: colors.textMuted, fontSize: 12, textAlign: 'center', marginBottom: 12, fontStyle: 'italic' }}>
+                  Chưa có dữ liệu bài giảng. Hãy xử lý bài giảng đầu tiên để theo dõi phân bổ học tập!
+                </Text>
+              )}
+
+              <View style={styles.analyticRow}>
+                <View style={styles.analyticLabelWrap}>
+                  <Text style={styles.analyticLabel}>🇻🇳 Tiếng Việt</Text>
+                  <Text style={styles.analyticValue}>{langStats.vi}%</Text>
+                </View>
+                <View style={styles.analyticBar}>
+                  <View style={[styles.analyticFill, { width: `${langStats.vi}%`, backgroundColor: '#6366f1' }]} />
+                </View>
+              </View>
+
+              <View style={styles.analyticRow}>
+                <View style={styles.analyticLabelWrap}>
+                  <Text style={styles.analyticLabel}>🇺🇸 Tiếng Anh</Text>
+                  <Text style={styles.analyticValue}>{langStats.en}%</Text>
+                </View>
+                <View style={styles.analyticBar}>
+                  <View style={[styles.analyticFill, { width: `${langStats.en}%`, backgroundColor: '#ec4899' }]} />
+                </View>
+              </View>
+
+              <View style={styles.analyticDivider} />
+
+              <View style={styles.featureBreakdown}>
+                <View style={styles.featureItem}>
+                  <Text style={styles.featureEmoji}>📝</Text>
+                  <Text style={styles.featureTitle}>Tóm tắt AI</Text>
+                  <Text style={styles.featureTag}>{featureStats.summary}%</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <Text style={styles.featureEmoji}>🧠</Text>
+                  <Text style={styles.featureTitle}>Trắc nghiệm</Text>
+                  <Text style={styles.featureTag}>{featureStats.quiz}%</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <Text style={styles.featureEmoji}>🗺️</Text>
+                  <Text style={styles.featureTitle}>Mindmap</Text>
+                  <Text style={styles.featureTag}>{featureStats.mindmap}%</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Huy hiệu thành tích học tập */}
+            <Text style={styles.sectionTitle}>🏆 HUY HIỆU THÀNH TÍCH</Text>
+            <View style={styles.achievementsGrid}>
+              <View style={[styles.achievementBadge, (stats.processed_lectures || 0) >= 1 && styles.achievementBadgeUnlocked]}>
+                <Text style={styles.achievementIcon}>🎓</Text>
+                <Text style={styles.achievementTitle}>Tân Binh Tiên Phong</Text>
+                <Text style={styles.achievementSubtitle}>Hoàn thành bài đầu</Text>
+                <Text style={styles.achievementStatus}>
+                  {(stats.processed_lectures || 0) >= 1 ? '✓ Đã mở khóa' : '🔒 Đang khóa'}
+                </Text>
+              </View>
+
+              <View style={[styles.achievementBadge, (stats.processed_lectures || 0) >= 1 ? styles.achievementBadgeUnlocked : null]}>
+                <Text style={styles.achievementIcon}>⚡</Text>
+                <Text style={styles.achievementTitle}>Tốc Độ Ánh Sáng</Text>
+                <Text style={styles.achievementSubtitle}>Tóm tắt AI tức thì</Text>
+                <Text style={styles.achievementStatus}>
+                  {(stats.processed_lectures || 0) >= 1 ? '✓ Đã mở khóa' : '🔒 Đang khóa'}
+                </Text>
+              </View>
+
+              <View style={[styles.achievementBadge, (stats.saved_quizzes || 0) >= 5 && styles.achievementBadgeUnlocked]}>
+                <Text style={styles.achievementIcon}>🎯</Text>
+                <Text style={styles.achievementTitle}>Bậc Thầy Trắc Nghiệm</Text>
+                <Text style={styles.achievementSubtitle}>Ôn tập 5+ câu hỏi</Text>
+                <Text style={styles.achievementStatus}>
+                  {(stats.saved_quizzes || 0) >= 5 ? '✓ Đã mở khóa' : `${stats.saved_quizzes || 0}/5 câu`}
+                </Text>
+              </View>
+
+              <View style={[styles.achievementBadge, (stats.total_minutes || 0) >= 30 && styles.achievementBadgeUnlocked]}>
+                <Text style={styles.achievementIcon}>👑</Text>
+                <Text style={styles.achievementTitle}>Học Viên Bền Bỉ</Text>
+                <Text style={styles.achievementSubtitle}>30+ phút tiếp thu</Text>
+                <Text style={styles.achievementStatus}>
+                  {(stats.total_minutes || 0) >= 30 ? '✓ Đã mở khóa' : `${stats.total_minutes || 0}/30 ph`}
+                </Text>
+              </View>
+            </View>
           </>
         ) : (
           <View style={styles.authContainer}>
@@ -779,7 +972,15 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
             <View style={styles.authHeader}>
               <View style={styles.authIconWrap}>
                 <Text style={styles.authIcon}>
-                  {authMode === 'verify_otp' ? '✉️' : authMode === 'forgot_password' ? '🔑' : '🎓'}
+                  {authMode === 'verify_otp'
+                    ? '✉️'
+                    : authMode === 'forgot_password'
+                    ? forgotStep === 3
+                      ? '🔒'
+                      : forgotStep === 2
+                      ? '✉️'
+                      : '🔑'
+                    : '🎓'}
                 </Text>
               </View>
               <Text style={styles.authTitle}>
@@ -789,7 +990,11 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
                   ? 'ĐĂNG KÝ TÀI KHOẢN'
                   : authMode === 'verify_otp'
                   ? 'XÁC MINH MÃ OTP'
-                  : 'QUÊN MẬT KHẨU'}
+                  : forgotStep === 1
+                  ? 'QUÊN MẬT KHẨU'
+                  : forgotStep === 2
+                  ? 'XÁC THỰC MÃ OTP'
+                  : 'TẠO MẬT KHẨU MỚI'}
               </Text>
               <Text style={styles.authHint}>
                 {authMode === 'login'
@@ -800,7 +1005,9 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
                   ? `Mã OTP 6 số đã được gửi tới email ${email}. Vui lòng nhập mã để kích hoạt tài khoản.`
                   : forgotStep === 1
                   ? 'Nhập địa chỉ email tài khoản của bạn để nhận mã OTP đặt lại mật khẩu.'
-                  : `Mã OTP đã được gửi tới ${email}. Nhập mã và mật khẩu mới bên dưới.`}
+                  : forgotStep === 2
+                  ? `Mã OTP đã được gửi tới ${email}. Nhập mã 6 số để xác thực danh tính.`
+                  : `Xác thực thành công! Nhập mật khẩu mới cho tài khoản ${email}.`}
               </Text>
             </View>
 
@@ -986,15 +1193,16 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
             {authMode === 'verify_otp' && (
               <View style={styles.formGroup}>
                 <View style={styles.inputField}>
-                  <Text style={styles.inputLabel}>MÃ XÁC MINH OTP (6 CHỮ SỐ)</Text>
-                  <View style={styles.inputWrap}>
-                    <Text style={styles.inputIcon}>🔢</Text>
+                  <Text style={[styles.inputLabel, { textAlign: 'center', marginBottom: 6 }]}>
+                    MÃ XÁC MINH OTP (6 CHỮ SỐ)
+                  </Text>
+                  <View style={styles.otpInputBox}>
                     <TextInput
-                      style={[styles.textInput, { textAlign: 'center', letterSpacing: 6, fontSize: 20, fontWeight: '800', color: colors.primaryLight }]}
+                      style={styles.otpTextInput}
                       placeholder="• • • • • •"
-                      placeholderTextColor={colors.textMuted}
+                      placeholderTextColor="rgba(255, 255, 255, 0.2)"
                       value={otp}
-                      onChangeText={setOtp}
+                      onChangeText={(val) => setOtp(val.replace(/[^0-9]/g, ''))}
                       keyboardType="number-pad"
                       maxLength={6}
                       autoFocus
@@ -1040,10 +1248,25 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
               </View>
             )}
 
-            {/* Chế độ 3: Quên mật khẩu (Forgot Password với OTP) */}
+            {/* Chế độ 3: Quên mật khẩu (Forgot Password qua OTP tách bước) */}
             {authMode === 'forgot_password' && (
               <View style={styles.formGroup}>
-                {forgotStep === 1 ? (
+                {/* Thanh chỉ báo tiến trình 3 bước */}
+                <View style={styles.stepIndicatorRow}>
+                  <View style={[styles.stepDot, styles.stepDotActive]}>
+                    <Text style={styles.stepDotText}>1</Text>
+                  </View>
+                  <View style={[styles.stepLine, forgotStep >= 2 && styles.stepLineActive]} />
+                  <View style={[styles.stepDot, forgotStep >= 2 ? styles.stepDotActive : styles.stepDotInactive]}>
+                    <Text style={[styles.stepDotText, forgotStep < 2 && styles.stepDotTextInactive]}>2</Text>
+                  </View>
+                  <View style={[styles.stepLine, forgotStep >= 3 && styles.stepLineActive]} />
+                  <View style={[styles.stepDot, forgotStep >= 3 ? styles.stepDotActive : styles.stepDotInactive]}>
+                    <Text style={[styles.stepDotText, forgotStep < 3 && styles.stepDotTextInactive]}>3</Text>
+                  </View>
+                </View>
+
+                {forgotStep === 1 && (
                   <>
                     <View style={styles.inputField}>
                       <Text style={styles.inputLabel}>ĐỊA CHỈ EMAIL TÀI KHOẢN</Text>
@@ -1075,18 +1298,22 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
                       )}
                     </TouchableOpacity>
                   </>
-                ) : (
+                )}
+
+                {/* Bước 2: Chỉ nhập mã OTP để xác nhận */}
+                {forgotStep === 2 && (
                   <>
                     <View style={styles.inputField}>
-                      <Text style={styles.inputLabel}>MÃ OTP TỪ EMAIL (6 SỐ)</Text>
-                      <View style={styles.inputWrap}>
-                        <Text style={styles.inputIcon}>🔢</Text>
+                      <Text style={[styles.inputLabel, { textAlign: 'center', marginBottom: 6 }]}>
+                        MÃ OTP TỪ EMAIL (6 SỐ)
+                      </Text>
+                      <View style={styles.otpInputBox}>
                         <TextInput
-                          style={[styles.textInput, { textAlign: 'center', letterSpacing: 6, fontSize: 20, fontWeight: '800', color: colors.primaryLight }]}
+                          style={styles.otpTextInput}
                           placeholder="• • • • • •"
-                          placeholderTextColor={colors.textMuted}
+                          placeholderTextColor="rgba(255, 255, 255, 0.2)"
                           value={otp}
-                          onChangeText={setOtp}
+                          onChangeText={(val) => setOtp(val.replace(/[^0-9]/g, ''))}
                           keyboardType="number-pad"
                           maxLength={6}
                           autoFocus
@@ -1094,6 +1321,49 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
                       </View>
                     </View>
 
+                    <TouchableOpacity
+                      style={[styles.submitBtn, loading && styles.submitBtnDisabled]}
+                      onPress={handleVerifyResetOtp}
+                      disabled={loading}
+                      activeOpacity={0.85}
+                    >
+                      {loading ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <Text style={styles.submitBtnText}>Xác nhận mã OTP ›</Text>
+                      )}
+                    </TouchableOpacity>
+
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setForgotStep(1);
+                          setErrorMessage('');
+                          setSuccessMessage('');
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ color: colors.textMuted, fontSize: 12.5 }}>
+                          ‹ Đổi email khác
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={handleSendForgotOtp}
+                        disabled={loading}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ color: colors.primaryLight, fontSize: 12.5, fontWeight: '700' }}>
+                          Gửi lại mã OTP
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                )}
+
+                {/* Bước 3: Sau khi xác nhận OTP thành công -> Nhập mật khẩu mới & xác nhận mật khẩu mới */}
+                {forgotStep === 3 && (
+                  <>
                     <View style={styles.inputField}>
                       <Text style={styles.inputLabel}>MẬT KHẨU MỚI</Text>
                       <View style={styles.inputWrap}>
@@ -1104,9 +1374,17 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
                           placeholderTextColor={colors.textMuted}
                           value={newPassword}
                           onChangeText={setNewPassword}
-                          secureTextEntry
+                          secureTextEntry={!showNewPassword}
                           autoCapitalize="none"
+                          autoFocus
                         />
+                        <TouchableOpacity
+                          onPress={() => setShowNewPassword(!showNewPassword)}
+                          style={styles.eyeBtn}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.eyeIcon}>{showNewPassword ? '👁️' : '🙈'}</Text>
+                        </TouchableOpacity>
                       </View>
                     </View>
 
@@ -1120,7 +1398,7 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
                           placeholderTextColor={colors.textMuted}
                           value={confirmNewPassword}
                           onChangeText={setConfirmNewPassword}
-                          secureTextEntry
+                          secureTextEntry={!showNewPassword}
                           autoCapitalize="none"
                         />
                       </View>
@@ -1135,8 +1413,22 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
                       {loading ? (
                         <ActivityIndicator color="#FFFFFF" size="small" />
                       ) : (
-                        <Text style={styles.submitBtnText}>Xác nhận & Đổi mật khẩu</Text>
+                        <Text style={styles.submitBtnText}>✓ Lưu mật khẩu mới</Text>
                       )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={{ alignSelf: 'center', marginTop: 8 }}
+                      onPress={() => {
+                        setForgotStep(2);
+                        setErrorMessage('');
+                        setSuccessMessage('');
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ color: colors.textMuted, fontSize: 12.5 }}>
+                        ‹ Nhập lại mã OTP khác
+                      </Text>
                     </TouchableOpacity>
                   </>
                 )}
@@ -1145,6 +1437,7 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
                   style={{ alignSelf: 'center', marginTop: 14, padding: 6 }}
                   onPress={() => {
                     setAuthMode('login');
+                    setForgotStep(1);
                     setErrorMessage('');
                     setSuccessMessage('');
                   }}
@@ -1581,6 +1874,212 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 6,
   },
+  // Rank Tier System Styles
+  rankCard: {
+    backgroundColor: colors.card,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  rankHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: spacing.md,
+  },
+  rankIconBox: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rankIconLarge: {
+    fontSize: 26,
+  },
+  rankHeaderInfo: {
+    flex: 1,
+  },
+  rankTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  rankCurrentName: {
+    fontSize: 15.5,
+    fontWeight: '800',
+  },
+  rankTierTag: {
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  rankTierTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  rankDesc: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  rankExpText: {
+    color: colors.textSecondary,
+    fontSize: 12.5,
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  rankProgressContainer: {
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm + 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  rankProgressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  rankProgressLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  rankProgressValue: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  rankProgressBar: {
+    height: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  rankProgressFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  rankHintText: {
+    color: colors.textMuted,
+    fontSize: 11.5,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  rankDivider: {
+    height: 1,
+    backgroundColor: colors.cardBorder,
+    marginVertical: spacing.md,
+  },
+  rankTimelineTitle: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
+  },
+  rankStepsList: {
+    gap: 8,
+    marginBottom: spacing.md,
+  },
+  rankStepItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    borderRadius: borderRadius.md,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  rankStepLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  rankStepIcon: {
+    fontSize: 20,
+  },
+  rankStepName: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  rankStepExp: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 1,
+  },
+  currentBadgeSmall: {
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  currentBadgeSmallText: {
+    color: '#ffffff',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  rankStepRight: {
+    alignItems: 'flex-end',
+  },
+  rankStepStatus: {
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
+  expRulesBox: {
+    backgroundColor: 'rgba(99, 102, 241, 0.07)',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm + 2,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.2)',
+  },
+  expRulesTitle: {
+    color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  expRulesRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  expRuleItem: {
+    flex: 1,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: borderRadius.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  expRuleIcon: {
+    fontSize: 14,
+    marginBottom: 2,
+  },
+  expRuleText: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  expRuleVal: {
+    color: colors.primaryLight,
+    fontSize: 11,
+    fontWeight: '800',
+    marginTop: 2,
+  },
   ctaBox: {
     marginTop: spacing.sm,
     gap: 10,
@@ -1603,6 +2102,20 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+  settingsNavBtn: {
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.35)',
+    borderRadius: borderRadius.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsNavBtnText: {
+    color: colors.primaryLight,
+    fontSize: 13.5,
+    fontWeight: '700',
   },
   secondaryCtaBtn: {
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
@@ -2016,5 +2529,71 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 13,
     fontWeight: '600',
+  },
+  stepIndicatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+  },
+  stepDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepDotActive: {
+    backgroundColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  stepDotInactive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  stepDotText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  stepDotTextInactive: {
+    color: colors.textMuted,
+  },
+  stepLine: {
+    flex: 1,
+    height: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginHorizontal: 8,
+  },
+  stepLineActive: {
+    backgroundColor: colors.primary,
+  },
+  // Centered OTP Input
+  otpInputBox: {
+    backgroundColor: colors.background,
+    borderWidth: 1.5,
+    borderColor: 'rgba(99, 102, 241, 0.45)',
+    borderRadius: borderRadius.md,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  otpTextInput: {
+    width: '100%',
+    textAlign: 'center',
+    fontSize: 26,
+    fontWeight: '800',
+    letterSpacing: 10,
+    color: colors.primaryLight,
+    padding: 0,
+    margin: 0,
   },
 });

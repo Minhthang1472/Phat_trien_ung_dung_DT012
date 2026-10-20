@@ -5,6 +5,7 @@ import { colors } from './src/constants/theme';
 import HomeScreen from './src/screens/HomeScreen';
 import SyncPlayerScreen from './src/screens/SyncPlayerScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
 import BottomNavBar from './src/components/BottomNavBar';
 import { apiService } from './src/services/api';
 
@@ -83,12 +84,19 @@ export default function App() {
                 onBack={handleBack}
                 onAuthSuccess={() => setCurrentRoute('Home')}
                 onSkip={() => setCurrentRoute('Home')}
+                onNavigate={handleNavigate}
+              />
+            )}
+            {currentRoute === 'Settings' && (
+              <SettingsScreen
+                onBack={handleBack}
+                onNavigate={handleNavigate}
               />
             )}
           </View>
 
           {/* Thanh điều hướng cố định dưới đáy (Bottom Navigation Bar) */}
-          {(currentRoute === 'Home' || currentRoute === 'Profile') && (
+          {(currentRoute === 'Home' || currentRoute === 'Profile' || currentRoute === 'Settings') && (
             <BottomNavBar
               currentRoute={currentRoute}
               onNavigate={(route) => {

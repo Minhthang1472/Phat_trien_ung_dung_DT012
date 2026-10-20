@@ -186,6 +186,16 @@ class ApiService {
     return this.parseResponse(response);
   }
 
+  async verifyResetOtp(email, otp) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/verify-reset-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, otp }),
+    });
+    return this.parseResponse(response);
+  }
+
   async resetPasswordOtp(email, otp, newPassword) {
     const baseUrl = await this.getBaseUrl();
     const response = await fetch(`${baseUrl}/api/auth/reset-password-otp`, {
