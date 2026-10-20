@@ -5,6 +5,7 @@ import { colors } from './src/constants/theme';
 import HomeScreen from './src/screens/HomeScreen';
 import SyncPlayerScreen from './src/screens/SyncPlayerScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
+import BottomNavBar from './src/components/BottomNavBar';
 import { apiService } from './src/services/api';
 
 export default function App() {
@@ -67,20 +68,33 @@ export default function App() {
       <SafeAreaView style={styles.safeArea}>
         <StatusBar barStyle="light-content" backgroundColor={colors.card} />
         <View style={styles.container}>
-          {currentRoute === 'Home' && <HomeScreen onNavigate={handleNavigate} />}
+          <View style={styles.contentArea}>
+            {currentRoute === 'Home' && <HomeScreen onNavigate={handleNavigate} />}
 
-          {currentRoute === 'SyncPlayer' && (
-            <SyncPlayerScreen
-              lecture={routeParams.lecture}
-              initialSeekTime={routeParams.initialSeekTime}
-              onBack={handleBack}
-            />
-          )}
-          {currentRoute === 'Profile' && (
-            <ProfileScreen
-              onBack={handleBack}
-              onAuthSuccess={() => setCurrentRoute('Home')}
-              onSkip={() => setCurrentRoute('Home')}
+            {currentRoute === 'SyncPlayer' && (
+              <SyncPlayerScreen
+                lecture={routeParams.lecture}
+                initialSeekTime={routeParams.initialSeekTime}
+                onBack={handleBack}
+              />
+            )}
+            {currentRoute === 'Profile' && (
+              <ProfileScreen
+                onBack={handleBack}
+                onAuthSuccess={() => setCurrentRoute('Home')}
+                onSkip={() => setCurrentRoute('Home')}
+              />
+            )}
+          </View>
+
+          {/* Thanh điều hướng cố định dưới đáy (Bottom Navigation Bar) */}
+          {(currentRoute === 'Home' || currentRoute === 'Profile') && (
+            <BottomNavBar
+              currentRoute={currentRoute}
+              onNavigate={(route) => {
+                setRouteParams({});
+                setCurrentRoute(route);
+              }}
             />
           )}
         </View>
@@ -97,6 +111,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  contentArea: {
+    flex: 1,
   },
   loadingCenter: {
     justifyContent: 'center',

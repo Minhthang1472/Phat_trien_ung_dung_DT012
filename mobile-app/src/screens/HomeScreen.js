@@ -1188,15 +1188,6 @@ export default function HomeScreen({ onNavigate }) {
             ))}
           </View>
 
-          <View style={styles.workspaceTabs}>
-            <View style={[styles.workspaceTab, styles.workspaceTabActive]}>
-              <Text style={styles.workspaceTabActiveText}>Bài giảng</Text>
-            </View>
-            <TouchableOpacity style={styles.workspaceTab} onPress={() => onNavigate('Profile')}>
-              <Text style={styles.workspaceTabText}>Hồ sơ</Text>
-            </TouchableOpacity>
-          </View>
-
           {/* Nhóm các nút hành động xử lý bài giảng */}
           <View style={styles.actionButtonGroup}>
             {/* Nút duy nhất: Bắt đầu Tạo Phụ đề AI (Tự động nhận diện thời lượng <30p hoặc >=30p) */}
