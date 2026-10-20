@@ -53,7 +53,7 @@ from app.services.subtitle_exporter import subtitle_exporter
 from app.services.subtitle_parser import parse_subtitle
 from app.api.websocket_router import ws_router
 from app.services.auth_service import auth_service
-from app.services.email_service import email_service
+from app.services.email_service import email_service, render_otp_email
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("uvicorn")
@@ -239,12 +239,14 @@ async def register(request: RegisterRequest, _limit=Depends(auth_rate_limit)):
     from datetime import timedelta
     user["verification_expires_at"] = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
     user_ref.set(user, merge=True)
+    plain_body, html_body = render_otp_email(otp, name=user["display_name"], purpose="register")
     try:
         await run_in_threadpool(
             email_service.send,
             email,
             "Mã xác minh (OTP) tài khoản Lecture AI",
-            f"Chào {user['display_name']},\n\nMã xác minh (OTP) tài khoản Lecture AI của bạn là:\n\n👉 {otp} 👈\n\nMã này có hiệu lực trong 10 phút. Vui lòng nhập mã này trên ứng dụng để hoàn tất đăng ký tài khoản.",
+            plain_body,
+            html_body,
         )
         return {
             "requires_verification": True,
@@ -361,12 +363,14 @@ async def resend_otp(request: ResendOtpRequest, _limit=Depends(auth_rate_limit))
         "verification_otp": otp,
         "verification_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
     })
+    plain_body, html_body = render_otp_email(otp, name=user.get("display_name", "Học viên"), purpose="register")
     try:
         await run_in_threadpool(
             email_service.send,
             clean_email,
             "Mã xác minh (OTP) tài khoản Lecture AI",
-            f"Chào {user['display_name']},\n\nMã xác minh (OTP) mới của bạn là:\n\n👉 {otp} 👈\n\nMã có hiệu lực trong 10 phút.",
+            plain_body,
+            html_body,
         )
         return {"message": "Đã gửi lại mã OTP mới vào hộp thư email!"}
     except Exception as exc:
@@ -440,12 +444,14 @@ async def forgot_password(request: ForgotPasswordRequest, _limit=Depends(auth_ra
         "reset_otp": otp,
         "reset_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
     })
+    plain_body, html_body = render_otp_email(otp, name=user.get("display_name", "Học viên"), purpose="reset_password")
     try:
         await run_in_threadpool(
             email_service.send,
             email,
             "Mã OTP đặt lại mật khẩu Lecture AI",
-            f"Chào {user.get('display_name', 'Học viên')},\n\nBạn đã yêu cầu đặt lại mật khẩu cho tài khoản Lecture AI.\nMã OTP của bạn là:\n\n👉 {otp} 👈\n\nMã này có hiệu lực trong 10 phút. Vui lòng nhập mã OTP và mật khẩu mới trên ứng dụng.",
+            plain_body,
+            html_body,
         )
         return {"message": "Đã gửi mã OTP đặt lại mật khẩu qua email! Hãy kiểm tra hộp thư."}
     except Exception as exc:
