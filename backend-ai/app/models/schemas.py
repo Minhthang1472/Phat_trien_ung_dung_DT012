@@ -59,6 +59,26 @@ class ResetPasswordRequest(BaseModel):
     password: str
 
 
+class VerifyOtpRequest(BaseModel):
+    email: str
+    otp: str = Field(..., min_length=4, max_length=10)
+
+
+class ResendOtpRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordOtpRequest(BaseModel):
+    email: str
+    otp: str = Field(..., min_length=4, max_length=10)
+    new_password: str = Field(..., min_length=8)
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=8)
+
+
 class ProcessVideoResponse(BaseModel):
     video_url: str
     media_url: Optional[str] = None

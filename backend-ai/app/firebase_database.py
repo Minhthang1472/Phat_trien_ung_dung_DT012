@@ -135,11 +135,13 @@ class FirebaseService:
             else:
                 return []
 
-            try:
-                docs = query.order_by("cached_at", direction=firestore.Query.DESCENDING).limit(limit).stream()
-            except Exception as sort_err:
-                logger.warning(f"Lỗi sắp xếp cached_at, fallback sang query cơ bản: {sort_err}")
-                docs = query.limit(limit).stream()
+            # Lấy danh sách bài giảng theo owner_id và sắp xếp trong bộ nhớ Python (Tránh lỗi 400 Composite Index)
+            docs = list(query.limit(limit * 2).stream())
+            def _sort_key(d):
+                data = d.to_dict()
+                return str(data.get("cached_at") or data.get("created_at") or "")
+            docs.sort(key=_sort_key, reverse=True)
+            docs = docs[:limit]
 
             history = []
             for doc in docs:

@@ -161,6 +161,51 @@ class ApiService {
     return this.parseResponse(response);
   }
 
+  async verifyOtp(email, otp) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/verify-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, otp }),
+    });
+    const data = await this.parseResponse(response);
+    if (data && data.token) {
+      const user = await this.saveAuthSession(data);
+      return { ...data, user };
+    }
+    return data;
+  }
+
+  async resendOtp(email) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/resend-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    return this.parseResponse(response);
+  }
+
+  async resetPasswordOtp(email, otp, newPassword) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/reset-password-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, otp, new_password: newPassword }),
+    });
+    return this.parseResponse(response);
+  }
+
+  async changePassword(oldPassword, newPassword) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/change-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await this.getAuthHeaders()) },
+      body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+    });
+    return this.parseResponse(response);
+  }
+
   async parseResponse(response) {
     let data = null;
     try { data = await response.json(); } catch (_) {}

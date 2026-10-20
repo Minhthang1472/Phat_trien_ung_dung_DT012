@@ -40,6 +40,10 @@ from app.models.schemas import (
     GoogleLoginRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
+    VerifyOtpRequest,
+    ResendOtpRequest,
+    ResetPasswordOtpRequest,
+    ChangePasswordRequest,
 )
 from app.services.audio_service import audio_service
 from app.services.whisper_service import whisper_service
@@ -229,21 +233,24 @@ async def register(request: RegisterRequest, _limit=Depends(auth_rate_limit)):
             "message": "Đăng ký tài khoản thành công!",
         }
 
-    user_ref.set(user)
-    verification_token = auth_service.new_email_token()
-    user["verification_token_hash"] = auth_service.token_hash(verification_token)
+    import random
+    otp = f"{random.randint(100000, 999999)}"
+    user["verification_otp"] = otp
     from datetime import timedelta
-    user["verification_expires_at"] = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    user["verification_expires_at"] = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
     user_ref.set(user, merge=True)
-    verify_url = f"{settings.PUBLIC_API_URL}/api/auth/verify-email?token={verification_token}"
     try:
         await run_in_threadpool(
             email_service.send,
             email,
-            "Xác minh tài khoản Lecture AI",
-            f"Chào {user['display_name']},\n\nMở liên kết sau để xác minh email:\n{verify_url}\n\nLiên kết có hiệu lực trong 24 giờ.",
+            "Mã xác minh (OTP) tài khoản Lecture AI",
+            f"Chào {user['display_name']},\n\nMã xác minh (OTP) tài khoản Lecture AI của bạn là:\n\n👉 {otp} 👈\n\nMã này có hiệu lực trong 10 phút. Vui lòng nhập mã này trên ứng dụng để hoàn tất đăng ký tài khoản.",
         )
-        return {"requires_verification": True, "message": "Đã gửi email xác minh. Hãy kiểm tra hộp thư email."}
+        return {
+            "requires_verification": True,
+            "email": email,
+            "message": "Đã gửi mã xác minh OTP qua email. Vui lòng kiểm tra hộp thư!",
+        }
     except Exception as exc:
         logger.warning("Không gửi được email xác minh (%s), tự động kích hoạt tài khoản: %s", email, exc)
         user["email_verified"] = True
@@ -300,6 +307,73 @@ async def login(request: LoginRequest, _limit=Depends(auth_rate_limit)):
     return {"token": auth_service.create_token(user), "user": user_public_data(user)}
 
 
+@app.post("/api/auth/verify-otp")
+async def verify_otp(request: VerifyOtpRequest, _limit=Depends(auth_rate_limit)):
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    import hashlib
+    clean_email = auth_service.normalize_email(request.email)
+    user_id = hashlib.sha256(clean_email.encode("utf-8")).hexdigest()
+    user_ref = firebase_service.db.collection("users").document(user_id)
+    doc = user_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản với email này.")
+    user = doc.to_dict()
+    if user.get("email_verified"):
+        token = auth_service.create_token(user)
+        return {"token": token, "user": user_public_data(user), "message": "Tài khoản đã được xác minh trước đó."}
+
+    saved_otp = str(user.get("verification_otp", "")).strip()
+    if not saved_otp or saved_otp != request.otp.strip():
+        raise HTTPException(status_code=400, detail="Mã OTP không chính xác. Vui lòng kiểm tra lại.")
+
+    expires_at = user.get("verification_expires_at")
+    if expires_at and datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Mã OTP đã hết hạn. Vui lòng bấm gửi lại mã mới.")
+
+    user["email_verified"] = True
+    user["verification_otp"] = None
+    user["verification_expires_at"] = None
+    user_ref.set(user, merge=True)
+    token = auth_service.create_token(user)
+    return {"token": token, "user": user_public_data(user), "message": "Xác minh tài khoản thành công!"}
+
+
+@app.post("/api/auth/resend-otp")
+async def resend_otp(request: ResendOtpRequest, _limit=Depends(auth_rate_limit)):
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    import hashlib, random
+    clean_email = auth_service.normalize_email(request.email)
+    user_id = hashlib.sha256(clean_email.encode("utf-8")).hexdigest()
+    user_ref = firebase_service.db.collection("users").document(user_id)
+    doc = user_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản với email này.")
+    user = doc.to_dict()
+    otp = f"{random.randint(100000, 999999)}"
+    from datetime import timedelta
+    user_ref.update({
+        "verification_otp": otp,
+        "verification_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+    })
+    try:
+        await run_in_threadpool(
+            email_service.send,
+            clean_email,
+            "Mã xác minh (OTP) tài khoản Lecture AI",
+            f"Chào {user['display_name']},\n\nMã xác minh (OTP) mới của bạn là:\n\n👉 {otp} 👈\n\nMã có hiệu lực trong 10 phút.",
+        )
+        return {"message": "Đã gửi lại mã OTP mới vào hộp thư email!"}
+    except Exception as exc:
+        logger.error("Lỗi gửi lại mã OTP: %s", exc)
+        raise HTTPException(status_code=503, detail="Không thể gửi email OTP lúc này. Vui lòng kiểm tra lại.") from exc
+
+
 @app.get("/api/auth/verify-email")
 async def verify_email(token: str = Query(..., min_length=20)):
     if not firebase_service.db:
@@ -349,23 +423,65 @@ async def google_login(request: GoogleLoginRequest, _limit=Depends(auth_rate_lim
 @app.post("/api/auth/forgot-password")
 async def forgot_password(request: ForgotPasswordRequest, _limit=Depends(auth_rate_limit)):
     email = auth_service.validate_gmail(request.email)
-    message = "Nếu tài khoản tồn tại, email đặt lại mật khẩu đã được gửi."
     if not firebase_service.db:
         firebase_service.init_firebase()
-    if firebase_service.db:
-        import hashlib
-        user_ref = firebase_service.db.collection("users").document(hashlib.sha256(email.encode("utf-8")).hexdigest())
-        snapshot = user_ref.get()
-        if snapshot.exists:
-            from datetime import datetime, timezone, timedelta
-            token = auth_service.new_email_token()
-            user_ref.update({"reset_token_hash": auth_service.token_hash(token), "reset_expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()})
-            reset_url = f"{settings.PUBLIC_API_URL}/api/auth/reset-password?token={token}"
-            try:
-                await run_in_threadpool(email_service.send, email, "Đặt lại mật khẩu Lecture AI", f"Mở liên kết sau trong 1 giờ để lấy token đặt lại mật khẩu:\n{reset_url}")
-            except Exception as exc:
-                logger.error("Không gửi được email reset password: %s", exc)
-    return {"message": message}
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    import hashlib, random
+    user_ref = firebase_service.db.collection("users").document(hashlib.sha256(email.encode("utf-8")).hexdigest())
+    snapshot = user_ref.get()
+    if not snapshot.exists:
+        raise HTTPException(status_code=404, detail="Email này chưa được đăng ký tài khoản.")
+
+    user = snapshot.to_dict()
+    otp = f"{random.randint(100000, 999999)}"
+    from datetime import timedelta
+    user_ref.update({
+        "reset_otp": otp,
+        "reset_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+    })
+    try:
+        await run_in_threadpool(
+            email_service.send,
+            email,
+            "Mã OTP đặt lại mật khẩu Lecture AI",
+            f"Chào {user.get('display_name', 'Học viên')},\n\nBạn đã yêu cầu đặt lại mật khẩu cho tài khoản Lecture AI.\nMã OTP của bạn là:\n\n👉 {otp} 👈\n\nMã này có hiệu lực trong 10 phút. Vui lòng nhập mã OTP và mật khẩu mới trên ứng dụng.",
+        )
+        return {"message": "Đã gửi mã OTP đặt lại mật khẩu qua email! Hãy kiểm tra hộp thư."}
+    except Exception as exc:
+        logger.error("Không gửi được email reset password OTP: %s", exc)
+        raise HTTPException(status_code=503, detail="Không thể gửi email OTP lúc này. Vui lòng kiểm tra lại cấu hình email.") from exc
+
+
+@app.post("/api/auth/reset-password-otp")
+async def reset_password_otp(request: ResetPasswordOtpRequest, _limit=Depends(auth_rate_limit)):
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    import hashlib
+    clean_email = auth_service.normalize_email(request.email)
+    user_ref = firebase_service.db.collection("users").document(hashlib.sha256(clean_email.encode("utf-8")).hexdigest())
+    doc = user_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Tài khoản không tồn tại.")
+    user = doc.to_dict()
+    saved_otp = str(user.get("reset_otp", "")).strip()
+    if not saved_otp or saved_otp != request.otp.strip():
+        raise HTTPException(status_code=400, detail="Mã OTP không chính xác.")
+
+    expires_at = user.get("reset_expires_at")
+    if expires_at and datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.")
+
+    new_hash = auth_service.hash_password(request.new_password)
+    user_ref.update({
+        "password_hash": new_hash,
+        "reset_otp": None,
+        "reset_expires_at": None,
+        "email_verified": True,
+    })
+    return {"message": "Đặt lại mật khẩu thành công! Bạn có thể đăng nhập ngay bằng mật khẩu mới."}
 
 
 @app.post("/api/auth/reset-password")
@@ -384,6 +500,25 @@ async def reset_password(request: ResetPasswordRequest, _limit=Depends(auth_rate
         raise HTTPException(status_code=400, detail="Token đặt lại mật khẩu đã hết hạn.")
     user_ref.update({"password_hash": auth_service.hash_password(request.password), "reset_token_hash": None, "reset_expires_at": None, "email_verified": True})
     return {"reset": True, "message": "Đã cập nhật mật khẩu."}
+
+
+@app.post("/api/auth/change-password")
+async def change_password(request: ChangePasswordRequest, user=Depends(get_current_user)):
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+
+    if not auth_service.verify_password(request.old_password, user.get("password_hash", "")):
+        raise HTTPException(status_code=400, detail="Mật khẩu hiện tại không đúng.")
+
+    if request.old_password == request.new_password:
+        raise HTTPException(status_code=400, detail="Mật khẩu mới phải khác mật khẩu hiện tại.")
+
+    user_ref = firebase_service.db.collection("users").document(user["id"])
+    new_hash = auth_service.hash_password(request.new_password)
+    user_ref.update({"password_hash": new_hash})
+    return {"message": "Đổi mật khẩu thành công!"}
 
 
 @app.get("/api/auth/me")
