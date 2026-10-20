@@ -180,8 +180,9 @@ async def serve_uploaded_media(filename: str, access_token: Optional[str] = Quer
 def user_public_data(user):
     return {
         "id": user.get("id"),
+        "username": user.get("username") or user.get("display_name"),
         "email": user.get("email"),
-        "display_name": user.get("display_name") or user.get("email", "").split("@")[0],
+        "display_name": user.get("display_name") or user.get("username") or user.get("email", "").split("@")[0],
         "created_at": user.get("created_at"),
     }
 
@@ -200,15 +201,34 @@ async def register(request: RegisterRequest, _limit=Depends(auth_rate_limit)):
     user_id = hashlib.sha256(email.encode("utf-8")).hexdigest()
     user_ref = firebase_service.db.collection("users").document(user_id)
     if user_ref.get().exists:
-        raise HTTPException(status_code=409, detail="Gmail này đã được đăng ký.")
+        raise HTTPException(status_code=409, detail="Email này đã được đăng ký.")
+
+    username = (request.display_name or email.split("@")[0]).strip()
+    existing_username = list(firebase_service.db.collection("users").where("username", "==", username.lower()).limit(1).stream())
+    if existing_username:
+        raise HTTPException(status_code=409, detail="Tên đăng nhập này đã được sử dụng.")
+
     user = {
         "id": user_id,
+        "username": username.lower(),
         "email": email,
-        "display_name": (request.display_name or email.split("@")[0]).strip()[:80],
+        "display_name": username[:80],
         "password_hash": auth_service.hash_password(request.password),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "email_verified": False,
     }
+
+    if not email_service.configured():
+        user["email_verified"] = True
+        user_ref.set(user)
+        token = auth_service.create_token(user)
+        return {
+            "token": token,
+            "user": user_public_data(user),
+            "requires_verification": False,
+            "message": "Đăng ký tài khoản thành công!",
+        }
+
     user_ref.set(user)
     verification_token = auth_service.new_email_token()
     user["verification_token_hash"] = auth_service.token_hash(verification_token)
@@ -223,29 +243,60 @@ async def register(request: RegisterRequest, _limit=Depends(auth_rate_limit)):
             "Xác minh tài khoản Lecture AI",
             f"Chào {user['display_name']},\n\nMở liên kết sau để xác minh email:\n{verify_url}\n\nLiên kết có hiệu lực trong 24 giờ.",
         )
+        return {"requires_verification": True, "message": "Đã gửi email xác minh. Hãy kiểm tra hộp thư email."}
     except Exception as exc:
-        user_ref.delete()
-        logger.error("Không gửi được email xác minh: %s", exc)
-        raise HTTPException(status_code=503, detail="Không gửi được email xác minh. Kiểm tra cấu hình SMTP.") from exc
-    return {"requires_verification": True, "message": "Đã gửi email xác minh. Hãy kiểm tra hộp thư Gmail."}
+        logger.warning("Không gửi được email xác minh (%s), tự động kích hoạt tài khoản: %s", email, exc)
+        user["email_verified"] = True
+        user_ref.set(user)
+        token = auth_service.create_token(user)
+        return {
+            "token": token,
+            "user": user_public_data(user),
+            "requires_verification": False,
+            "message": "Đăng ký thành công (Hệ thống đã tự động kích hoạt tài khoản).",
+        }
 
 
 @app.post("/api/auth/login")
 async def login(request: LoginRequest, _limit=Depends(auth_rate_limit)):
-    email = auth_service.validate_gmail(request.email)
     if not firebase_service.db:
         firebase_service.init_firebase()
     if not firebase_service.db:
         raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng để đăng nhập.")
 
     import hashlib
+    raw_ident = request.email.strip()
+    user = None
+    user_id = None
 
-    user_id = hashlib.sha256(email.encode("utf-8")).hexdigest()
-    user = auth_service.get_user(user_id)
+    # 1. Thử tìm bằng email nếu chuỗi có @
+    if "@" in raw_ident:
+        clean_email = auth_service.normalize_email(raw_ident)
+        user_id = hashlib.sha256(clean_email.encode("utf-8")).hexdigest()
+        user = auth_service.get_user(user_id)
+
+    # 2. Thử tìm bằng username hoặc display_name
+    if not user:
+        clean_username = raw_ident.lower()
+        matched = list(firebase_service.db.collection("users").where("username", "==", clean_username).limit(1).stream())
+        if not matched:
+            matched = list(firebase_service.db.collection("users").where("display_name", "==", raw_ident).limit(1).stream())
+        if matched:
+            user = matched[0].to_dict()
+            user_id = user.get("id")
+
     if not user or not auth_service.verify_password(request.password, user.get("password_hash", "")):
-        raise HTTPException(status_code=401, detail="Gmail hoặc mật khẩu không đúng.")
+        raise HTTPException(status_code=401, detail="Tên đăng nhập hoặc mật khẩu không đúng.")
+
     if user.get("email_verified") is False:
-        raise HTTPException(status_code=403, detail="Hãy xác minh email Gmail trước khi đăng nhập.")
+        if not email_service.configured():
+            user["email_verified"] = True
+            if user_id:
+                user_ref = firebase_service.db.collection("users").document(user_id)
+                user_ref.update({"email_verified": True})
+        else:
+            raise HTTPException(status_code=403, detail="Hãy xác minh email trước khi đăng nhập.")
+
     return {"token": auth_service.create_token(user), "user": user_public_data(user)}
 
 
@@ -951,16 +1002,23 @@ async def export_subtitles(
     )
 
 @app.get("/api/history")
-async def get_lecture_history(limit: int = 10, user=Depends(get_current_user)):
+async def get_lecture_history(limit: int = 25, user=Depends(get_optional_user)):
     """
-    Lấy danh sách các bài giảng người dùng đã xử lý gần đây từ Google Firebase Firestore Cloud
+    Lấy danh sách các bài giảng của riêng người dùng từ Google Firebase Firestore Cloud
     """
+    if not user:
+        return {
+            "items": [], 
+            "total": 0, 
+            "storage": "Google Firebase Firestore Cloud"
+        }
     items = firebase_service.get_history(limit=limit, owner_id=user["id"])
 
     return {
         "items": items, 
         "total": len(items), 
-        "storage": "Google Firebase Firestore Cloud"
+        "storage": "Google Firebase Firestore Cloud",
+        "owner_id": user["id"]
     }
 
 

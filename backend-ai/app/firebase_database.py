@@ -106,7 +106,8 @@ class FirebaseService:
             return False
 
         try:
-            doc_id = self.get_document_id(video_url)
+            owner_id = lecture_data.get("owner_id")
+            doc_id = f"{owner_id}_{self.get_document_id(video_url)}" if owner_id else self.get_document_id(video_url)
             doc_ref = self.db.collection("lectures").document(doc_id)
 
             # Sao chép và lưu trữ
@@ -114,14 +115,14 @@ class FirebaseService:
             save_payload["cached_at"] = firestore.SERVER_TIMESTAMP
 
             doc_ref.set(save_payload, merge=True)
-            logger.info(f"Đã lưu trữ thành công bài giảng vào Firebase Firestore [ID: {doc_id}]")
+            logger.info(f"Đã lưu trữ thành công bài giảng vào Firebase Firestore [ID: {doc_id}] (Owner: {owner_id})")
             return True
         except Exception as e:
             logger.warning(f"Lỗi ghi dữ liệu vào Firebase Firestore: {e}")
             return False
 
-    def get_history(self, limit: int = 10, owner_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Lấy danh sách các bài giảng gần đây từ Firebase Firestore"""
+    def get_history(self, limit: int = 25, owner_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Lấy danh sách các bài giảng gần đây từ Firebase Firestore theo riêng từng user"""
         if not self.db:
             self.init_firebase()
         if not self.db:
@@ -131,6 +132,9 @@ class FirebaseService:
             query = self.db.collection("lectures")
             if owner_id:
                 query = query.where("owner_id", "==", owner_id)
+            else:
+                return []
+
             try:
                 docs = query.order_by("cached_at", direction=firestore.Query.DESCENDING).limit(limit).stream()
             except Exception as sort_err:
@@ -162,7 +166,10 @@ class FirebaseService:
                     "segments": data.get("segments", []),
                     "key_points": data.get("key_points", []),
                     "formulas_and_terms": data.get("formulas_and_terms", []),
-                    "quiz": clean_q
+                    "quiz": clean_q,
+                    "folder": data.get("folder") or "Bài giảng chung",
+                    "tags": data.get("tags") or ["Bài giảng"],
+                    "owner_id": data.get("owner_id"),
                 })
             return history
         except Exception as e:
@@ -170,18 +177,29 @@ class FirebaseService:
             return []
 
     def delete_lecture(self, video_url: str, owner_id: Optional[str] = None) -> bool:
-        """Xóa bài giảng khỏi Firebase Firestore"""
+        """Xóa bài giảng của user khỏi Firebase Firestore"""
         if not self.db:
             self.init_firebase()
         if not self.db:
             return False
 
         try:
-            doc_id = self.get_document_id(video_url)
+            doc_id = f"{owner_id}_{self.get_document_id(video_url)}" if owner_id else self.get_document_id(video_url)
             doc_ref = self.db.collection("lectures").document(doc_id)
             doc = doc_ref.get()
-            if not doc.exists or (owner_id and doc.to_dict().get("owner_id") != owner_id):
+            if not doc.exists:
+                # Thử tìm theo ID gốc nếu chưa có tiền tố
+                legacy_id = self.get_document_id(video_url)
+                legacy_ref = self.db.collection("lectures").document(legacy_id)
+                legacy_doc = legacy_ref.get()
+                if legacy_doc.exists and (not owner_id or legacy_doc.to_dict().get("owner_id") == owner_id):
+                    legacy_ref.delete()
+                    return True
                 return False
+
+            if owner_id and doc.to_dict().get("owner_id") != owner_id:
+                return False
+
             doc_ref.delete()
             logger.info(f"Đã xóa thành công bài giảng khỏi Firebase Firestore [ID: {doc_id}]")
             return True

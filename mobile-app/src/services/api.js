@@ -118,7 +118,11 @@ class ApiService {
       body: JSON.stringify({ email, password, display_name: displayName }),
     });
     const data = await this.parseResponse(response);
-    return this.saveAuthSession(data);
+    if (data && data.token) {
+      const user = await this.saveAuthSession(data);
+      return { ...data, user };
+    }
+    return data;
   }
 
   async login(email, password) {
@@ -129,7 +133,11 @@ class ApiService {
       body: JSON.stringify({ email, password }),
     });
     const data = await this.parseResponse(response);
-    return this.saveAuthSession(data);
+    if (data && data.token) {
+      const user = await this.saveAuthSession(data);
+      return { ...data, user };
+    }
+    return data;
   }
 
   async loginWithGoogle(idToken) {
@@ -513,21 +521,34 @@ class ApiService {
     return await response.json();
   }
 
-  async getLectureHistory(limit = 10) {
+  async getUserScopedKey(baseKey) {
+    try {
+      const user = await this.getSavedUser();
+      if (user && user.id) {
+        return `${baseKey}_${user.id}`;
+      }
+    } catch (_) {}
+    return baseKey;
+  }
+
+  async getLectureHistory(limit = 25) {
     try {
       const baseUrl = await this.getBaseUrl();
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       const response = await fetch(`${baseUrl}/api/history?limit=${limit}`, {
         method: 'GET',
+        headers: await this.getAuthHeaders(),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
 
       if (response.ok) {
         const data = await response.json();
-        if (data.items && data.items.length > 0) {
+        if (data && Array.isArray(data.items)) {
+          const key = await this.getUserScopedKey(STORAGE_KEYS.RECENT_LECTURES);
+          await AsyncStorage.setItem(key, JSON.stringify(data.items));
           return data.items;
         }
       }
@@ -555,7 +576,8 @@ class ApiService {
       });
       // Giữ tối đa 20 bản ghi
       const trimmed = filtered.slice(0, 20);
-      await AsyncStorage.setItem(STORAGE_KEYS.RECENT_LECTURES, JSON.stringify(trimmed));
+      const key = await this.getUserScopedKey(STORAGE_KEYS.RECENT_LECTURES);
+      await AsyncStorage.setItem(key, JSON.stringify(trimmed));
     } catch (e) {
       console.warn('Lỗi lưu local history:', e);
     }
@@ -567,7 +589,8 @@ class ApiService {
 
   async getLocalHistory() {
     try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEYS.RECENT_LECTURES);
+      const key = await this.getUserScopedKey(STORAGE_KEYS.RECENT_LECTURES);
+      const raw = await AsyncStorage.getItem(key);
       if (raw) {
         return JSON.parse(raw);
       }
@@ -579,7 +602,8 @@ class ApiService {
 
   async clearLocalHistory() {
     try {
-      await AsyncStorage.removeItem(STORAGE_KEYS.RECENT_LECTURES);
+      const key = await this.getUserScopedKey(STORAGE_KEYS.RECENT_LECTURES);
+      await AsyncStorage.removeItem(key);
       return true;
     } catch (e) {
       console.warn('Lỗi xóa local history:', e);
@@ -604,7 +628,8 @@ class ApiService {
     try {
       const history = await this.getLocalHistory();
       const filtered = history.filter((item) => item.video_url !== videoUrl);
-      await AsyncStorage.setItem(STORAGE_KEYS.RECENT_LECTURES, JSON.stringify(filtered));
+      const key = await this.getUserScopedKey(STORAGE_KEYS.RECENT_LECTURES);
+      await AsyncStorage.setItem(key, JSON.stringify(filtered));
     } catch (e) {
       console.warn('Lỗi xóa bài giảng trong local storage:', e);
     }
@@ -626,7 +651,8 @@ class ApiService {
         percent,
         lastUpdated: Date.now(),
       };
-      await AsyncStorage.setItem(STORAGE_KEYS.PLAYBACK_PROGRESS, JSON.stringify(map));
+      const key = await this.getUserScopedKey(STORAGE_KEYS.PLAYBACK_PROGRESS);
+      await AsyncStorage.setItem(key, JSON.stringify(map));
     } catch (e) {
       console.warn('Lỗi lưu tiến độ phát:', e);
     }
@@ -634,7 +660,8 @@ class ApiService {
 
   async getPlaybackProgressMap() {
     try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEYS.PLAYBACK_PROGRESS);
+      const key = await this.getUserScopedKey(STORAGE_KEYS.PLAYBACK_PROGRESS);
+      const raw = await AsyncStorage.getItem(key);
       if (raw) return JSON.parse(raw);
     } catch (e) {
       console.warn('Lỗi đọc tiến độ phát:', e);
@@ -645,7 +672,8 @@ class ApiService {
   // --- Danh sách bài giảng Yêu thích / Ghim (Favorites / Pin) ---
   async getFavorites() {
     try {
-      const raw = await AsyncStorage.getItem(STORAGE_KEYS.FAVORITES);
+      const key = await this.getUserScopedKey(STORAGE_KEYS.FAVORITES);
+      const raw = await AsyncStorage.getItem(key);
       if (raw) return JSON.parse(raw);
     } catch (e) {
       console.warn('Lỗi đọc favorites:', e);
@@ -663,7 +691,8 @@ class ApiService {
       } else {
         updated = [videoUrl, ...favs];
       }
-      await AsyncStorage.setItem(STORAGE_KEYS.FAVORITES, JSON.stringify(updated));
+      const key = await this.getUserScopedKey(STORAGE_KEYS.FAVORITES);
+      await AsyncStorage.setItem(key, JSON.stringify(updated));
       return updated;
     } catch (e) {
       console.warn('Lỗi cập nhật favorites:', e);

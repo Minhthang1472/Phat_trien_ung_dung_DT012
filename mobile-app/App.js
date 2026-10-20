@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, StatusBar, View, Platform } from 'react-native';
+import { StyleSheet, StatusBar, View, Platform, ActivityIndicator } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { colors } from './src/constants/theme';
 import HomeScreen from './src/screens/HomeScreen';
@@ -8,8 +8,9 @@ import ProfileScreen from './src/screens/ProfileScreen';
 import { apiService } from './src/services/api';
 
 export default function App() {
-  const [currentRoute, setCurrentRoute] = useState('Home');
+  const [currentRoute, setCurrentRoute] = useState('Profile');
   const [routeParams, setRouteParams] = useState({});
+  const [checkingAuth, setCheckingAuth] = useState(true);
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -17,6 +18,25 @@ export default function App() {
     }
     // Tự động kiểm tra và cập nhật link server mới nhất từ Firebase khi mở app
     apiService.syncServerUrlFromFirebase().catch(() => {});
+
+    // Mới mở app: Nếu chưa đăng nhập thì hiện Đăng ký / Đăng nhập trước
+    // Nếu đã có phiên đăng nhập hợp lệ thì chuyển thẳng vào màn hình chính Home
+    const checkAuth = async () => {
+      try {
+        const user = await apiService.getSavedUser();
+        const token = await apiService.getAuthToken();
+        if (user && token) {
+          setCurrentRoute('Home');
+        } else {
+          setCurrentRoute('Profile');
+        }
+      } catch (_) {
+        setCurrentRoute('Profile');
+      } finally {
+        setCheckingAuth(false);
+      }
+    };
+    checkAuth();
   }, []);
 
   const handleNavigate = (route, params = {}) => {
@@ -28,6 +48,19 @@ export default function App() {
     setCurrentRoute('Home');
     setRouteParams({});
   };
+
+  if (checkingAuth) {
+    return (
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.safeArea}>
+          <StatusBar barStyle="light-content" backgroundColor={colors.card} />
+          <View style={[styles.container, styles.loadingCenter]}>
+            <ActivityIndicator size="large" color={colors.primaryLight} />
+          </View>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
+  }
 
   return (
     <SafeAreaProvider>
@@ -43,7 +76,13 @@ export default function App() {
               onBack={handleBack}
             />
           )}
-          {currentRoute === 'Profile' && <ProfileScreen onBack={handleBack} />}
+          {currentRoute === 'Profile' && (
+            <ProfileScreen
+              onBack={handleBack}
+              onAuthSuccess={() => setCurrentRoute('Home')}
+              onSkip={() => setCurrentRoute('Home')}
+            />
+          )}
         </View>
       </SafeAreaView>
     </SafeAreaProvider>
@@ -58,5 +97,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  loadingCenter: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

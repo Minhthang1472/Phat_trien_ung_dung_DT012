@@ -21,10 +21,6 @@ import { STORAGE_KEYS } from '../constants/config';
 const SAF = LegacyFileSystem?.StorageAccessFramework || FileSystem?.StorageAccessFramework;
 
 export default function SettingsModal({ visible, onClose, onSaved, onClearedHistory }) {
-  const [url, setUrl] = useState('');
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null);
-  const [saving, setSaving] = useState(false);
   const [defaultFolder, setDefaultFolder] = useState('');
   const [defaultTags, setDefaultTags] = useState('');
   const [metaSavedMsg, setMetaSavedMsg] = useState(false);
@@ -32,10 +28,6 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
 
   useEffect(() => {
     if (visible) {
-      apiService.getBaseUrl().then((current) => {
-        setUrl(current);
-        setTestResult(null);
-      });
       AsyncStorage.getItem(STORAGE_KEYS.DEFAULT_FOLDER).then((f) => {
         if (f) setDefaultFolder(f);
       });
@@ -110,58 +102,6 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
     }
   };
 
-  const handleSyncFirebase = async () => {
-    setTesting(true);
-    setTestResult(null);
-    try {
-      const remoteUrl = await apiService.syncServerUrlFromFirebase();
-      if (remoteUrl) {
-        setUrl(remoteUrl);
-        Alert.alert('Đồng bộ thành công', `Đã lấy được địa chỉ máy chủ từ Firebase:\n${remoteUrl}`);
-      } else {
-        Alert.alert('Chưa có link', 'Không thể lấy URL từ Firebase (có thể Colab chưa ghi lên hoặc chưa mở quyền đọc).');
-      }
-    } catch (err) {
-      Alert.alert('Lỗi', 'Không thể đồng bộ: ' + err.message);
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    const startTime = Date.now();
-    try {
-      await apiService.setBaseUrl(url);
-      const res = await apiService.checkServerHealth();
-      const latency = Date.now() - startTime;
-      setTestResult({ ...res, latency });
-    } catch (err) {
-      setTestResult({ online: false, error: err.message });
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const handleSave = async () => {
-    if (!url.trim()) {
-      Alert.alert('Lỗi', 'Vui lòng nhập địa chỉ máy chủ hợp lệ');
-      return;
-    }
-    setSaving(true);
-    try {
-      await apiService.setBaseUrl(url);
-      Alert.alert('Thành công', 'Đã lưu cấu hình máy chủ API');
-      if (onSaved) onSaved(url);
-      onClose();
-    } catch (err) {
-      Alert.alert('Lỗi', 'Không thể lưu cấu hình: ' + err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleClearHistory = () => {
     Alert.alert(
       'Xóa bộ nhớ đệm',
@@ -197,94 +137,6 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
           </View>
 
           <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-            {/* Mục 1: Máy chủ Backend */}
-            <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>🌐 KẾT NỐI MÁY CHỦ BACKEND</Text>
-              <Text style={styles.sectionDesc}>
-                Địa chỉ FastAPI xử lý nhận diện giọng nói, dịch thuật và tóm tắt bài giảng:
-              </Text>
-
-              <TextInput
-                style={styles.input}
-                value={url}
-                onChangeText={setUrl}
-                placeholder="http://127.0.0.1:8000"
-                placeholderTextColor={colors.textMuted}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-
-              {/* Nút gợi ý nhanh */}
-              <View style={styles.presetsRow}>
-                <TouchableOpacity
-                  style={styles.presetChip}
-                  onPress={() => setUrl('http://127.0.0.1:8000')}
-                >
-                  <Text style={styles.presetChipText}>💻 Localhost</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.presetChip}
-                  onPress={() => setUrl('http://10.0.2.2:8000')}
-                >
-                  <Text style={styles.presetChipText}>📱 Emulator</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.presetChip, { backgroundColor: '#FFCA2820', borderColor: '#FFB300' }]}
-                  onPress={handleSyncFirebase}
-                >
-                  <Text style={[styles.presetChipText, { color: '#FFB300', fontWeight: 'bold' }]}>🔥 Lấy link từ Firebase</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Kết quả kiểm tra */}
-              {testResult && (
-                <View
-                  style={[
-                    styles.resultBox,
-                    {
-                      backgroundColor: testResult.online
-                        ? 'rgba(16, 185, 129, 0.15)'
-                        : 'rgba(239, 68, 68, 0.15)',
-                      borderColor: testResult.online ? colors.success : colors.danger,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.resultText,
-                      { color: testResult.online ? colors.success : colors.danger },
-                    ]}
-                  >
-                    {testResult.online
-                      ? `✅ Máy chủ hoạt động tốt! (Phản hồi: ${testResult.latency || 0}ms)`
-                      : `❌ Không kết nối được: ${testResult.error || 'Server đang tắt'}`}
-                  </Text>
-                </View>
-              )}
-
-              {/* Hàng nút Thử & Lưu */}
-              <View style={styles.actionRow}>
-                <TouchableOpacity
-                  style={[styles.btn, styles.btnOutline]}
-                  onPress={handleTest}
-                  disabled={testing}
-                >
-                  {testing ? (
-                    <ActivityIndicator size="small" color={colors.primaryLight} />
-                  ) : (
-                    <Text style={styles.btnOutlineText}>Kiểm tra kết nối</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.btn, styles.btnPrimary]}
-                  onPress={handleSave}
-                  disabled={saving}
-                >
-                  <Text style={styles.btnPrimaryText}>Lưu cấu hình</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
 
             {/* Mục: Thư mục lưu file tải về mặc định */}
             <View style={styles.sectionCard}>

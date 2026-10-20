@@ -20,8 +20,9 @@ class AuthService:
     @staticmethod
     def validate_gmail(email: str) -> str:
         normalized = AuthService.normalize_email(email)
-        if not normalized.endswith("@gmail.com") or normalized.count("@") != 1:
-            raise HTTPException(status_code=400, detail="Vui lòng dùng địa chỉ Gmail hợp lệ.")
+        import re
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", normalized):
+            raise HTTPException(status_code=400, detail="Vui lòng dùng địa chỉ email hợp lệ.")
         return normalized
 
     @staticmethod

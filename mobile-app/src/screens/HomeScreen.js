@@ -302,22 +302,32 @@ export default function HomeScreen({ onNavigate }) {
     setServerStatus(status);
 
     try {
-      const [history, favs, pMap] = await Promise.all([
+      const [history, favs, pMap, currentUser] = await Promise.all([
         apiService.getLectureHistory(25),
         apiService.getFavorites(),
         apiService.getPlaybackProgressMap(),
+        apiService.getSavedUser(),
       ]);
 
       if (history && history.length > 0) {
         setRecentLectures(history.map(ensureAiClassification));
-      } else {
+      } else if (!currentUser) {
+        // Chỉ hiển thị bài mẫu khi ở chế độ khách chưa đăng nhập
         setRecentLectures(SAMPLE_LECTURES.map(ensureAiClassification));
+      } else {
+        // Người dùng đã đăng nhập: Hiển thị đúng danh sách bài riêng của họ (trống nếu tài khoản mới)
+        setRecentLectures([]);
       }
       setFavorites(favs || []);
       setPlaybackMap(pMap || {});
     } catch (err) {
       console.warn('Lỗi tải dữ liệu lịch sử/favorites:', err);
-      setRecentLectures(SAMPLE_LECTURES.map(ensureAiClassification));
+      const currentUser = await apiService.getSavedUser();
+      if (!currentUser) {
+        setRecentLectures(SAMPLE_LECTURES.map(ensureAiClassification));
+      } else {
+        setRecentLectures([]);
+      }
     }
   };
 
