@@ -772,8 +772,6 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
     }
     if user:
         result["owner_id"] = user["id"]
-        if media_stream_url:
-            result["media_access_token"] = auth_service.create_media_token(user["id"], media_stream_url)
 
     # 6. Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
     firebase_service.save_lecture_cache(url, result)
@@ -1127,7 +1125,6 @@ async def process_subtitle_file(
         "folder": summary_data.get("folder") or "Bài giảng chung",
         "tags": summary_data.get("tags") or ["Bài giảng"],
         "owner_id": user["id"],
-        "media_access_token": auth_service.create_media_token(user["id"], media_stream_url) if media_stream_url else None,
     }
     firebase_service.save_lecture_cache(lecture_url, result)
     return result
