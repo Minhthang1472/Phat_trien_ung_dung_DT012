@@ -48,7 +48,7 @@ export default function SettingsScreen({ onNavigate }) {
           if (profile?.user) {
             setUser(profile.user);
           }
-        } catch (_) {}
+        } catch (_) { }
       }
     } catch (e) {
       console.warn('Lỗi tải người dùng trong cài đặt:', e);
@@ -63,7 +63,7 @@ export default function SettingsScreen({ onNavigate }) {
       if (dir) {
         setDefaultExportDir(dir);
       }
-    } catch (_) {}
+    } catch (_) { }
   };
 
   useEffect(() => {
@@ -118,7 +118,7 @@ export default function SettingsScreen({ onNavigate }) {
               if (parts.length > 1) {
                 friendlyName = parts[parts.length - 1] || 'Thư mục đã chọn';
               }
-            } catch (_) {}
+            } catch (_) { }
             await apiService.setDefaultExportDir(uri, friendlyName);
             setDefaultExportDir({ uri, name: friendlyName });
             Alert.alert('Thành công', `Đã cài đặt "${friendlyName}" làm thư mục tải về mặc định!`);
@@ -362,25 +362,10 @@ export default function SettingsScreen({ onNavigate }) {
               <Text style={styles.arrow}>›</Text>
             </TouchableOpacity>
 
-            {/* Mục 5: Tài khoản & Bảo mật (Đưa xuống dưới cùng) */}
-            <Text style={styles.sectionTitle}>🔒 BẢO MẬT TÀI KHOẢN</Text>
+            {/* Mục 5: Tài khoản & Bảo mật */}
             {user ? (
               <>
-                <View style={styles.profileMiniCard}>
-                  <View style={styles.avatarMini}>
-                    <Text style={styles.avatarMiniText}>
-                      {(user.display_name || user.email || 'U')[0].toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.profileMiniName}>{user.display_name || 'Học viên'}</Text>
-                    <Text style={styles.profileMiniEmail}>{user.email}</Text>
-                  </View>
-                  <View style={styles.verifiedBadgeSmall}>
-                    <Text style={styles.verifiedBadgeSmallText}>✓ Active</Text>
-                  </View>
-                </View>
-
+                <Text style={styles.sectionTitle}>🔒 BẢO MẬT TÀI KHOẢN</Text>
                 <TouchableOpacity
                   style={styles.actionBtn}
                   onPress={() => {
@@ -405,26 +390,7 @@ export default function SettingsScreen({ onNavigate }) {
                   <Text style={styles.logoutBtnText}>🚪 Đăng xuất khỏi tài khoản</Text>
                 </TouchableOpacity>
               </>
-            ) : (
-              <View style={styles.guestCard}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <Text style={{ fontSize: 24 }}>👤</Text>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.guestTitle}>Chưa đăng nhập tài khoản</Text>
-                    <Text style={styles.guestDesc}>
-                      Đăng nhập để đồng bộ lịch sử bài giảng và bảo mật dữ liệu học tập.
-                    </Text>
-                  </View>
-                </View>
-                <TouchableOpacity
-                  style={styles.guestLoginBtn}
-                  onPress={() => onNavigate && onNavigate('Profile')}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.guestLoginBtnText}>Đăng nhập ngay ›</Text>
-                </TouchableOpacity>
-              </View>
-            )}
+            ) : null}
           </>
         )}
       </ScrollView>

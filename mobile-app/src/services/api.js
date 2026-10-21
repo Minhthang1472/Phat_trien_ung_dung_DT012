@@ -216,9 +216,24 @@ class ApiService {
     return this.parseResponse(response);
   }
 
+  async updateProfile(payload) {
+    const baseUrl = await this.getBaseUrl();
+    const bodyObj = typeof payload === 'string' ? { display_name: payload } : (payload || {});
+    const response = await fetch(`${baseUrl}/api/auth/profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(await this.getAuthHeaders()) },
+      body: JSON.stringify(bodyObj),
+    });
+    const data = await this.parseResponse(response);
+    if (data?.user) {
+      await AsyncStorage.setItem(STORAGE_KEYS.AUTH_USER, JSON.stringify(data.user));
+    }
+    return data;
+  }
+
   async parseResponse(response) {
     let data = null;
-    try { data = await response.json(); } catch (_) {}
+    try { data = await response.json(); } catch (_) { }
     if (!response.ok) throw new Error(data?.detail || `Lỗi HTTP ${response.status}`);
     return data;
   }
@@ -582,7 +597,7 @@ class ApiService {
       if (user && user.id) {
         return `${baseKey}_${user.id}`;
       }
-    } catch (_) {}
+    } catch (_) { }
     return baseKey;
   }
 

@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
+  Modal,
   Platform,
   RefreshControl,
   ScrollView,
@@ -11,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
@@ -20,6 +23,22 @@ import { apiService } from '../services/api';
 import Header from '../components/Header';
 
 WebBrowser.maybeCompleteAuthSession();
+
+// Bộ sưu tập Avatar phong cách học tập & AI
+const PRESET_AVATARS = [
+  { id: 'grad_cap', icon: '🎓', label: 'Cử nhân' },
+  { id: 'student_m', icon: '👨‍🎓', label: 'Sinh viên' },
+  { id: 'student_f', icon: '👩‍🎓', label: 'Nữ sinh' },
+  { id: 'ai_bot', icon: '🤖', label: 'AI Bot' },
+  { id: 'owl', icon: '🦉', label: 'Uyên bác' },
+  { id: 'rocket', icon: '🚀', label: 'Bứt phá' },
+  { id: 'lightbulb', icon: '💡', label: 'Sáng tạo' },
+  { id: 'fire', icon: '🔥', label: 'Nhiệt huyết' },
+  { id: 'lion', icon: '🦁', label: 'Dũng mãnh' },
+  { id: 'fox', icon: '🦊', label: 'Thông thái' },
+  { id: 'gem', icon: '💎', label: 'Tinh anh' },
+  { id: 'star', icon: '⭐', label: 'Ngôi sao' },
+];
 
 // Cấu hình Hệ thống Phân bố Cấp bậc & Thăng hạng học viên
 const RANKS = [
@@ -137,6 +156,18 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
   const [changeLoading, setChangeLoading] = useState(false);
   const [changeMsg, setChangeMsg] = useState('');
   const [changeError, setChangeError] = useState('');
+
+  // States cho Chỉnh sửa hồ sơ, Avatar & Đổi Email
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editDisplayName, setEditDisplayName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [selectedAvatar, setSelectedAvatar] = useState(null);
+  const [editEmailOtpStep, setEditEmailOtpStep] = useState(1); // 1: Form sửa, 2: Xác thực OTP
+  const [emailChangeOtp, setEmailChangeOtp] = useState('');
+  const [pendingChangeEmail, setPendingChangeEmail] = useState('');
+  const [editLoading, setEditLoading] = useState(false);
+  const [editMsg, setEditMsg] = useState('');
+  const [editError, setEditError] = useState('');
 
   const activeClientId = GOOGLE_CLIENT_IDS.android || GOOGLE_CLIENT_IDS.web;
   const [request, response, promptGoogle] = Google.useIdTokenAuthRequest({
@@ -538,6 +569,137 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
     }
   };
 
+  const handleOpenEditProfile = () => {
+    setEditDisplayName(user?.display_name || user?.username || '');
+    setEditEmail(user?.email || '');
+    setSelectedAvatar(user?.avatar || null);
+    setEditEmailOtpStep(1);
+    setEmailChangeOtp('');
+    setPendingChangeEmail('');
+    setEditMsg('');
+    setEditError('');
+    setEditModalVisible(true);
+  };
+
+  const handlePickAvatarFromDevice = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['image/*'],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+      setSelectedAvatar(asset.uri);
+    } catch (err) {
+      Alert.alert('Không thể chọn ảnh', err.message);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    const trimmedName = editDisplayName.trim();
+    if (!trimmedName) {
+      setEditError('Tên hiển thị không được để trống.');
+      return;
+    }
+
+    const currentEmail = (user?.email || '').toLowerCase().trim();
+    const newEmail = editEmail.toLowerCase().trim();
+    const isEmailChanging = newEmail && newEmail !== currentEmail;
+
+    if (isEmailChanging) {
+      if (!newEmail.includes('@') || !newEmail.includes('.')) {
+        setEditError('Địa chỉ email mới không hợp lệ.');
+        return;
+      }
+    }
+
+    setEditLoading(true);
+    setEditError('');
+    setEditMsg('');
+    try {
+      const payload = {
+        display_name: trimmedName,
+        avatar: selectedAvatar,
+      };
+
+      if (isEmailChanging) {
+        payload.email = newEmail;
+      }
+
+      const res = await apiService.updateProfile(payload);
+
+      if (res?.user) {
+        setUser(res.user);
+      }
+
+      if (res?.requires_email_otp) {
+        // Cần xác nhận mã OTP gửi tới email mới
+        setPendingChangeEmail(newEmail);
+        setEditEmailOtpStep(2);
+        setEmailChangeOtp('');
+        setEditMsg(res.message || `Mã OTP đã được gửi tới ${newEmail}. Vui lòng nhập mã để hoàn tất.`);
+      } else {
+        setEditMsg('Cập nhật hồ sơ thành công!');
+        setTimeout(() => {
+          setEditModalVisible(false);
+          setEditMsg('');
+        }, 1200);
+      }
+    } catch (err) {
+      if (!isEmailChanging && user) {
+        const localUser = { ...user, display_name: trimmedName, avatar: selectedAvatar };
+        await AsyncStorage.setItem('auth_user', JSON.stringify(localUser));
+        setUser(localUser);
+        setEditMsg('Cập nhật hồ sơ thành công!');
+        setTimeout(() => {
+          setEditModalVisible(false);
+          setEditMsg('');
+        }, 1200);
+      } else {
+        setEditError(err.message || 'Cập nhật thất bại. Vui lòng thử lại.');
+      }
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const handleConfirmEmailOtp = async () => {
+    const trimmedOtp = emailChangeOtp.trim();
+    if (!trimmedOtp || trimmedOtp.length !== 6 || !/^\d{6}$/.test(trimmedOtp)) {
+      setEditError('Vui lòng nhập đầy đủ 6 chữ số mã OTP xác nhận.');
+      return;
+    }
+
+    setEditLoading(true);
+    setEditError('');
+    setEditMsg('');
+    try {
+      const res = await apiService.updateProfile({
+        display_name: editDisplayName.trim(),
+        avatar: selectedAvatar,
+        email: pendingChangeEmail,
+        email_otp: trimmedOtp,
+      });
+
+      if (res?.user) {
+        setUser(res.user);
+      }
+
+      setEditMsg('Xác thực đổi email thành công!');
+      setTimeout(() => {
+        setEditModalVisible(false);
+        setEditEmailOtpStep(1);
+        setEmailChangeOtp('');
+        setPendingChangeEmail('');
+        setEditMsg('');
+      }, 1300);
+    } catch (err) {
+      setEditError(err.message || 'Mã OTP không chính xác hoặc đã hết hạn.');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
   const handleImport = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -613,12 +775,34 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
           <>
             {/* Thẻ Hero thông tin học viên & Chuỗi học tập */}
             <View style={styles.profileHero}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {(user.display_name || user.email || 'U')[0].toUpperCase()}
-                </Text>
-              </View>
+              <TouchableOpacity
+                style={styles.avatarWrap}
+                onPress={handleOpenEditProfile}
+                activeOpacity={0.8}
+              >
+                <View style={styles.avatar}>
+                  {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('file:') || user.avatar.startsWith('content:')) ? (
+                    <Image source={{ uri: user.avatar }} style={styles.avatarImage} />
+                  ) : user.avatar ? (
+                    <Text style={styles.avatarPresetIcon}>{user.avatar}</Text>
+                  ) : (
+                    <Text style={styles.avatarText}>
+                      {(user.display_name || user.email || 'U')[0].toUpperCase()}
+                    </Text>
+                  )}
+                </View>
+                <View style={styles.avatarEditBadge}>
+                  <Text style={styles.avatarEditBadgeIcon}>✏️</Text>
+                </View>
+              </TouchableOpacity>
               <Text style={styles.name}>{user.display_name || 'Học viên'}</Text>
+              <TouchableOpacity
+                style={styles.editProfileBtnHero}
+                onPress={handleOpenEditProfile}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.editProfileBtnHeroText}>✏️ Chỉnh sửa thông tin & Avatar</Text>
+              </TouchableOpacity>
               <Text style={styles.email}>{user.email}</Text>
               <View style={styles.badgeRow}>
                 <View style={styles.verifiedBadge}>
@@ -1530,6 +1714,227 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
           </View>
         )}
       </ScrollView>
+
+      {/* POP-UP (MODAL) CHỈNH SỬA HỒ SƠ, AVATAR & XÁC THỰC ĐỔI EMAIL */}
+      <Modal
+        visible={editModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setEditModalVisible(false);
+          setEditEmailOtpStep(1);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ fontSize: 20 }}>{editEmailOtpStep === 2 ? '🔐' : '👤'}</Text>
+                <Text style={styles.modalTitle}>
+                  {editEmailOtpStep === 2 ? 'Xác Thực Đổi Email' : 'Chỉnh Sửa Hồ Sơ & Avatar'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setEditModalVisible(false);
+                  setEditEmailOtpStep(1);
+                  setEditError('');
+                  setEditMsg('');
+                }}
+                style={styles.closeBtn}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.closeBtnText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} style={{ marginVertical: 6 }}>
+              {editError ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>⚠️ {editError}</Text>
+                </View>
+              ) : null}
+              {editMsg ? (
+                <View style={styles.successBox}>
+                  <Text style={styles.successText}>✓ {editMsg}</Text>
+                </View>
+              ) : null}
+
+              {editEmailOtpStep === 1 ? (
+                <>
+                  {/* Phần Avatar xem trước & Đổi Avatar */}
+                  <Text style={styles.editSectionLabel}>ẢNH ĐẠI DIỆN HỌC VIÊN</Text>
+                  <View style={styles.avatarPreviewRow}>
+                    <View style={styles.avatarPreviewBig}>
+                      {selectedAvatar && (selectedAvatar.startsWith('http') || selectedAvatar.startsWith('data:') || selectedAvatar.startsWith('file:') || selectedAvatar.startsWith('content:')) ? (
+                        <Image source={{ uri: selectedAvatar }} style={styles.avatarBigImage} />
+                      ) : selectedAvatar ? (
+                        <Text style={styles.avatarBigEmoji}>{selectedAvatar}</Text>
+                      ) : (
+                        <Text style={styles.avatarBigText}>
+                          {(editDisplayName || user?.email || 'U')[0].toUpperCase()}
+                        </Text>
+                      )}
+                    </View>
+
+                    <View style={styles.avatarActionCol}>
+                      <TouchableOpacity
+                        style={styles.uploadAvatarBtn}
+                        onPress={handlePickAvatarFromDevice}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.uploadAvatarBtnText}>📁 Chọn ảnh từ thiết bị</Text>
+                      </TouchableOpacity>
+
+                      {selectedAvatar && (
+                        <TouchableOpacity
+                          style={styles.removeAvatarBtn}
+                          onPress={() => setSelectedAvatar(null)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.removeAvatarBtnText}>✕ Xóa ảnh (Dùng chữ cái)</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+
+                  {/* Bộ sưu tập Avatar Preset */}
+                  <Text style={styles.editSectionSubLabel}>Hoặc chọn nhanh Avatar phong cách AI:</Text>
+                  <View style={styles.presetAvatarGrid}>
+                    {PRESET_AVATARS.map((item) => {
+                      const isSelected = selectedAvatar === item.icon;
+                      return (
+                        <TouchableOpacity
+                          key={item.id}
+                          style={[styles.presetAvatarItem, isSelected && styles.presetAvatarItemActive]}
+                          onPress={() => setSelectedAvatar(item.icon)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.presetAvatarIcon}>{item.icon}</Text>
+                          <Text style={[styles.presetAvatarLabel, isSelected && styles.presetAvatarLabelActive]}>
+                            {item.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* Phần Tên hiển thị */}
+                  <View style={{ marginTop: 14 }}>
+                    <Text style={styles.editSectionLabel}>TÊN HIỂN THỊ HỌC VIÊN</Text>
+                    <View style={styles.inputWrap}>
+                      <Text style={styles.inputIcon}>✏️</Text>
+                      <TextInput
+                        style={styles.textInput}
+                        placeholder="Nhập tên hiển thị mới"
+                        placeholderTextColor={colors.textMuted}
+                        value={editDisplayName}
+                        onChangeText={setEditDisplayName}
+                        autoCapitalize="words"
+                      />
+                    </View>
+                  </View>
+
+                  {/* Phần Email */}
+                  <View style={{ marginTop: 14 }}>
+                    <Text style={styles.editSectionLabel}>EMAIL TÀI KHOẢN (LIÊN KẾT HỆ THỐNG)</Text>
+                    <View style={styles.inputWrap}>
+                      <Text style={styles.inputIcon}>✉️</Text>
+                      <TextInput
+                        style={styles.textInput}
+                        placeholder="Nhập địa chỉ email mới"
+                        placeholderTextColor={colors.textMuted}
+                        value={editEmail}
+                        onChangeText={setEditEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
+                    <Text style={styles.emailHintText}>
+                      💡 Khi đổi sang email mới, hệ thống sẽ gửi mã OTP 6 số để xác thực trước khi cập nhật.
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                /* Bước 2: Xác thực mã OTP đổi Email */
+                <View style={styles.otpStepContainer}>
+                  <View style={styles.otpInfoBadge}>
+                    <Text style={styles.otpInfoBadgeIcon}>✉️</Text>
+                    <Text style={styles.otpInfoBadgeText}>
+                      Mã xác nhận 6 số đã được gửi đến email mới:
+                    </Text>
+                    <Text style={styles.otpTargetEmailText}>{pendingChangeEmail}</Text>
+                    <Text style={[styles.otpInfoBadgeText, { marginTop: 6, fontSize: 11 }]}>
+                      Vui lòng nhập mã OTP để hoàn tất thay đổi email tài khoản.
+                    </Text>
+                  </View>
+
+                  <Text style={styles.otpInputTitle}>NHẬP MÃ OTP (6 CHỮ SỐ)</Text>
+                  <View style={styles.otpInputWrapper}>
+                    <TextInput
+                      style={styles.otpCodeInput}
+                      placeholder="••••••"
+                      placeholderTextColor={colors.textMuted}
+                      value={emailChangeOtp}
+                      onChangeText={setEmailChangeOtp}
+                      keyboardType="numeric"
+                      maxLength={6}
+                      textAlign="center"
+                      autoFocus
+                    />
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.resendOtpBtn}
+                    onPress={handleSaveProfile}
+                    disabled={editLoading}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.resendOtpBtnText}>Chưa nhận được mã? Gửi lại OTP</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </ScrollView>
+
+            {/* Hàng nút hành động nhỏ gọn, vừa phải */}
+            <View style={styles.editModalBtnRow}>
+              <TouchableOpacity
+                style={styles.editModalCancelBtn}
+                onPress={() => {
+                  if (editEmailOtpStep === 2) {
+                    setEditEmailOtpStep(1);
+                    setEditError('');
+                    setEditMsg('');
+                  } else {
+                    setEditModalVisible(false);
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.editModalCancelBtnText}>
+                  {editEmailOtpStep === 2 ? '‹ Quay lại' : 'Hủy'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.editModalSubmitBtn, editLoading && styles.editModalSubmitBtnDisabled]}
+                onPress={editEmailOtpStep === 2 ? handleConfirmEmailOtp : handleSaveProfile}
+                disabled={editLoading}
+                activeOpacity={0.8}
+              >
+                {editLoading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.editModalSubmitBtnText}>
+                    {editEmailOtpStep === 2 ? 'Xác nhận OTP' : 'Lưu thay đổi'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -2595,5 +3000,324 @@ const styles = StyleSheet.create({
     color: colors.primaryLight,
     padding: 0,
     margin: 0,
+  },
+  // Avatar & Profile Edit Styles
+  avatarWrap: {
+    position: 'relative',
+    alignSelf: 'center',
+    marginBottom: 4,
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 40,
+  },
+  avatarPresetIcon: {
+    fontSize: 42,
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.card,
+  },
+  avatarEditBadgeIcon: {
+    fontSize: 12,
+  },
+  editProfileBtnHero: {
+    marginTop: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.4)',
+    borderRadius: borderRadius.md,
+    alignSelf: 'center',
+    marginBottom: spacing.xs,
+  },
+  editProfileBtnHeroText: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.md,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 440,
+    backgroundColor: '#111827',
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 15,
+    elevation: 10,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  modalTitle: {
+    color: colors.textPrimary,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeBtnText: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  editSectionLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  editSectionSubLabel: {
+    color: colors.textMuted,
+    fontSize: 11.5,
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  avatarPreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    padding: 12,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  avatarPreviewBig: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarBigImage: {
+    width: '100%',
+    height: '100%',
+  },
+  avatarBigEmoji: {
+    fontSize: 34,
+  },
+  avatarBigText: {
+    color: '#ffffff',
+    fontSize: 28,
+    fontWeight: '800',
+  },
+  avatarActionCol: {
+    flex: 1,
+    gap: 8,
+  },
+  uploadAvatarBtn: {
+    backgroundColor: 'rgba(99, 102, 241, 0.25)',
+    borderWidth: 1,
+    borderColor: colors.primaryLight,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: borderRadius.sm,
+    alignItems: 'center',
+  },
+  uploadAvatarBtnText: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  removeAvatarBtn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: borderRadius.sm,
+    alignItems: 'center',
+  },
+  removeAvatarBtnText: {
+    color: '#f87171',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  presetAvatarGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  presetAvatarItem: {
+    width: '22.8%',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: borderRadius.sm,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  presetAvatarItemActive: {
+    borderColor: colors.primaryLight,
+    backgroundColor: 'rgba(99, 102, 241, 0.25)',
+  },
+  presetAvatarIcon: {
+    fontSize: 22,
+  },
+  presetAvatarLabel: {
+    fontSize: 9.5,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  presetAvatarLabelActive: {
+    color: colors.primaryLight,
+    fontWeight: '700',
+  },
+  emailHintText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 6,
+    fontStyle: 'italic',
+    lineHeight: 16,
+  },
+  // Nút Hủy và Lưu nhỏ gọn, vừa phải theo yêu cầu
+  editModalBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 18,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  editModalCancelBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: borderRadius.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 36,
+  },
+  editModalCancelBtnText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  editModalSubmitBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 18,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 36,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  editModalSubmitBtnDisabled: {
+    opacity: 0.6,
+  },
+  editModalSubmitBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  // OTP Verification Step
+  otpStepContainer: {
+    paddingVertical: 6,
+  },
+  otpInfoBadge: {
+    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.25)',
+    padding: 12,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  otpInfoBadgeIcon: {
+    fontSize: 26,
+    marginBottom: 6,
+  },
+  otpInfoBadgeText: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  otpTargetEmailText: {
+    color: colors.primaryLight,
+    fontSize: 13.5,
+    fontWeight: '800',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  otpInputTitle: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  otpInputWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  otpCodeInput: {
+    width: 220,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    borderRadius: borderRadius.md,
+    color: '#ffffff',
+    fontSize: 24,
+    fontWeight: '800',
+    letterSpacing: 8,
+    paddingVertical: 10,
+    textAlign: 'center',
+  },
+  resendOtpBtn: {
+    alignSelf: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginBottom: 6,
+  },
+  resendOtpBtnText: {
+    color: colors.primaryLight,
+    fontSize: 12,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
 });

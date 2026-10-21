@@ -79,6 +79,13 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=8)
 
 
+class UpdateProfileRequest(BaseModel):
+    display_name: Optional[str] = None
+    avatar: Optional[str] = None
+    email: Optional[str] = None
+    email_otp: Optional[str] = None
+
+
 class ProcessVideoResponse(BaseModel):
     video_url: str
     media_url: Optional[str] = None

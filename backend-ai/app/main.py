@@ -44,6 +44,7 @@ from app.models.schemas import (
     ResendOtpRequest,
     ResetPasswordOtpRequest,
     ChangePasswordRequest,
+    UpdateProfileRequest,
 )
 from app.services.audio_service import audio_service
 from app.services.whisper_service import whisper_service
@@ -187,6 +188,7 @@ def user_public_data(user):
         "username": user.get("username") or user.get("display_name"),
         "email": user.get("email"),
         "display_name": user.get("display_name") or user.get("username") or user.get("email", "").split("@")[0],
+        "avatar": user.get("avatar"),
         "created_at": user.get("created_at"),
     }
 
@@ -549,6 +551,118 @@ async def change_password(request: ChangePasswordRequest, user=Depends(get_curre
     new_hash = auth_service.hash_password(request.new_password)
     user_ref.update({"password_hash": new_hash})
     return {"message": "Đổi mật khẩu thành công!"}
+
+
+@app.put("/api/auth/profile")
+async def update_profile(request: UpdateProfileRequest, user=Depends(get_current_user)):
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+
+    user_ref = firebase_service.db.collection("users").document(user["id"])
+    current_user_doc = user_ref.get()
+    current_data = current_user_doc.to_dict() if current_user_doc.exists else user
+
+    updates = {}
+    if request.display_name is not None:
+        name = request.display_name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Tên hiển thị không được để trống.")
+        updates["display_name"] = name
+        user["display_name"] = name
+
+    if request.avatar is not None:
+        updates["avatar"] = request.avatar
+        user["avatar"] = request.avatar
+
+    requires_email_otp = False
+    pending_email = None
+
+    if request.email is not None:
+        clean_email = request.email.strip().lower()
+        if not clean_email or "@" not in clean_email or "." not in clean_email:
+            raise HTTPException(status_code=400, detail="Địa chỉ email không hợp lệ.")
+
+        current_email = (current_data.get("email") or "").lower().strip()
+        if clean_email != current_email:
+            # Kiểm tra xem email mới đã thuộc về tài khoản khác chưa
+            existing = list(firebase_service.db.collection("users").where("email", "==", clean_email).limit(1).stream())
+            if existing and existing[0].id != user["id"]:
+                raise HTTPException(status_code=409, detail="Địa chỉ email này đã được sử dụng bởi tài khoản khác.")
+
+            if request.email_otp:
+                # Đang gửi mã OTP để xác nhận
+                saved_otp = str(current_data.get("email_change_otp") or "").strip()
+                saved_pending = (current_data.get("pending_email") or "").strip().lower()
+                exp_str = current_data.get("email_change_expires_at")
+
+                if not saved_otp or saved_pending != clean_email:
+                    raise HTTPException(status_code=400, detail="Chưa có yêu cầu đổi sang email này hoặc mã đã hết hiệu lực.")
+
+                if exp_str:
+                    try:
+                        exp_dt = datetime.fromisoformat(exp_str)
+                        if exp_dt < datetime.now(timezone.utc):
+                            raise HTTPException(status_code=400, detail="Mã OTP đổi email đã hết hạn. Vui lòng yêu cầu lại.")
+                    except ValueError:
+                        pass
+
+                if str(request.email_otp).strip() != saved_otp:
+                    raise HTTPException(status_code=400, detail="Mã OTP xác thực email không chính xác.")
+
+                # Khớp OTP -> đổi email thành công
+                updates["email"] = clean_email
+                updates["email_verified"] = True
+                updates["pending_email"] = None
+                updates["email_change_otp"] = None
+                updates["email_change_expires_at"] = None
+                user["email"] = clean_email
+            else:
+                # Khởi tạo yêu cầu đổi email và gửi OTP
+                import random
+                from datetime import timedelta
+                otp = f"{random.randint(100000, 999999)}"
+                updates["pending_email"] = clean_email
+                updates["email_change_otp"] = otp
+                updates["email_change_expires_at"] = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+                requires_email_otp = True
+                pending_email = clean_email
+
+                if email_service.configured():
+                    plain_body, html_body = render_otp_email(
+                        otp,
+                        name=user.get("display_name") or "Học viên",
+                        purpose="change_email",
+                    )
+                    try:
+                        await run_in_threadpool(
+                            email_service.send,
+                            clean_email,
+                            "Mã OTP xác nhận thay đổi Email Lecture AI",
+                            plain_body,
+                            html_body,
+                        )
+                    except Exception as err:
+                        logger.warning("Lỗi gửi email OTP đổi email: %s", err)
+                else:
+                    logger.info("[DEV MODE] Mã OTP đổi email cho %s là: %s", clean_email, otp)
+
+    if updates:
+        user_ref.update(updates)
+
+    if requires_email_otp:
+        return {
+            "requires_email_otp": True,
+            "pending_email": pending_email,
+            "message": f"Mã OTP 6 số đã được gửi tới {pending_email}. Vui lòng nhập mã để hoàn tất đổi email.",
+            "user": user_public_data(user),
+        }
+
+    return {
+        "message": "Cập nhật hồ sơ thành công!",
+        "user": user_public_data(user),
+    }
 
 
 @app.get("/api/auth/me")

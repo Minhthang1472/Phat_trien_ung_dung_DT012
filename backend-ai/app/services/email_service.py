@@ -7,14 +7,23 @@ from app.core.config import settings
 def render_otp_email(otp: str, name: str = "Học viên", purpose: str = "register") -> tuple[str, str]:
     """Tạo template email xác thực / đặt lại mật khẩu chuẩn quốc tế cực đẹp theo thiết kế mẫu"""
     is_reset = purpose == "reset_password"
-    title_en = "Your Lecture AI<br/><span style=\"color: #4f46e5;\">Password Reset Code</span>" if is_reset else "Your Lecture AI<br/><span style=\"color: #4f46e5;\">Verification Code</span>"
-    hero_title = "Đặt lại mật khẩu tài khoản" if is_reset else "Xác minh tài khoản học viên"
-    welcome_sub = (
-        "Bạn vừa yêu cầu đặt lại mật khẩu cho tài khoản Lecture AI của mình. Nhập mã gồm 6 chữ số bên dưới để hoàn tất việc đổi mật khẩu mới."
-        if is_reset
-        else "Chào mừng bạn đến với Lecture AI! Cảm ơn bạn đã đồng hành cùng chúng tôi. Nhập mã gồm 6 chữ số bên dưới để hoàn tất xác minh tài khoản."
-    )
-    subject = "Mã OTP đặt lại mật khẩu Lecture AI" if is_reset else "Mã xác minh (OTP) tài khoản Lecture AI"
+    is_change_email = purpose == "change_email"
+
+    if is_reset:
+        title_en = "Your Lecture AI<br/><span style=\"color: #4f46e5;\">Password Reset Code</span>"
+        hero_title = "Đặt lại mật khẩu tài khoản"
+        welcome_sub = "Bạn vừa yêu cầu đặt lại mật khẩu cho tài khoản Lecture AI của mình. Nhập mã gồm 6 chữ số bên dưới để hoàn tất việc đổi mật khẩu mới."
+        subject = "Mã OTP đặt lại mật khẩu Lecture AI"
+    elif is_change_email:
+        title_en = "Your Lecture AI<br/><span style=\"color: #4f46e5;\">Email Verification Code</span>"
+        hero_title = "Xác nhận thay đổi địa chỉ Email"
+        welcome_sub = "Bạn vừa yêu cầu cập nhật địa chỉ email cho tài khoản Lecture AI sang email này. Nhập mã gồm 6 chữ số bên dưới để xác thực danh tính và kích hoạt email mới."
+        subject = "Mã OTP xác thực thay đổi Email Lecture AI"
+    else:
+        title_en = "Your Lecture AI<br/><span style=\"color: #4f46e5;\">Verification Code</span>"
+        hero_title = "Xác minh tài khoản học viên"
+        welcome_sub = "Chào mừng bạn đến với Lecture AI! Cảm ơn bạn đã đồng hành cùng chúng tôi. Nhập mã gồm 6 chữ số bên dưới để hoàn tất xác minh tài khoản."
+        subject = "Mã xác minh (OTP) tài khoản Lecture AI"
 
     plain_body = f"""Chào {name},
 
