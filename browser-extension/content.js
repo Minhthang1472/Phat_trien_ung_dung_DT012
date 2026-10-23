@@ -18,8 +18,8 @@
   try {
     chrome.storage?.local?.get(["serverUrl"]).then((stored) => {
       if (stored && stored.serverUrl) activeBackendUrl = stored.serverUrl;
-    }).catch(() => {});
-  } catch (_) {}
+    }).catch(() => { });
+  } catch (_) { }
   function detectLanguage(text) {
     if (!text) return targetLanguage || "vi";
     const t = text.trim();
@@ -71,7 +71,7 @@
       try {
         currentAudio.pause();
         currentAudio.currentTime = 0;
-      } catch (_) {}
+      } catch (_) { }
       currentAudio = null;
     }
     if (typeof window.speechSynthesis !== "undefined") {
@@ -95,7 +95,7 @@
         if (stored && stored.extension_token) {
           headers["Authorization"] = `Bearer ${stored.extension_token}`;
         }
-      } catch (_) {}
+      } catch (_) { }
 
       const ttsUrl = `${activeBackendUrl}/api/tts?text=${encodeURIComponent(cleanText.slice(0, 250))}&lang=${lang}`;
       const res = await fetch(ttsUrl, { headers });
@@ -511,7 +511,7 @@
           targetLanguage,
           sourceLanguage
         }));
-      } catch (_) {}
+      } catch (_) { }
       isJustLoaded = true;
       if (overlayBox) {
         overlayBox.innerHTML = `<div style="font-size: 16px; color: #38bdf8; font-weight: 600; padding: 4px 8px;">✨ Đã nạp thành công ${subtitleData.length} câu phụ đề! Bấm Phát video ▶️ để xem</div>`;
@@ -578,7 +578,7 @@
           console.log(`[LectureAI] Tự động khôi phục ${subtitleData.length} câu phụ đề từ bộ nhớ.`);
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   };
 
   // Khôi phục sau khi trang web tải xong thẻ video
