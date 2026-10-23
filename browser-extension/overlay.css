@@ -1,14 +1,15 @@
-/* Khung chứa phụ đề nổi */
+/* Khung chứa phụ đề nổi: ghim trực tiếp vào khung phát video YouTube */
 #lecture-ai-overlay-container {
-  position: fixed;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 2147483647; /* Đảm bảo luôn nằm trên cùng của player và fullscreen */
-  pointer-events: auto;
+  position: absolute !important;
+  bottom: 60px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  z-index: 2147483647 !important; /* Đảm bảo luôn nằm trên cùng của video player */
+  pointer-events: auto !important;
   user-select: none;
   cursor: default;
-  max-width: 85vw;
+  width: max-content !important;
+  max-width: 90% !important;
   transition: opacity 0.2s ease;
 }
 

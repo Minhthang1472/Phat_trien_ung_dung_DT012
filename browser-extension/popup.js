@@ -35,7 +35,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       return await chrome.tabs.sendMessage(tabId, message);
     } catch (err) {
-      if (err && err.message && err.message.includes("Receiving end does not exist")) {
+      const errMsg = err?.message || "";
+      if (
+        errMsg.includes("Receiving end does not exist") ||
+        errMsg.includes("Extension context invalidated") ||
+        errMsg.includes("Could not establish connection") ||
+        errMsg.includes("connection")
+      ) {
         try {
           // Trang web chưa nạp content script (do mở tab trước khi cài tiện ích hoặc vừa reload tiện ích)
           await chrome.scripting.executeScript({
@@ -46,7 +52,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             target: { tabId },
             files: ["overlay.css"],
           });
-          await new Promise((r) => setTimeout(r, 120));
+          await new Promise((r) => setTimeout(r, 200));
           return await chrome.tabs.sendMessage(tabId, message);
         } catch (injectErr) {
           console.warn("Không thể tự động tiêm script vào trang này:", injectErr);
@@ -57,24 +63,120 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   };
 
-  // 1. Kiểm tra trạng thái Backend AI
-  const checkServerHealth = async () => {
+  let activeBackendUrl = "http://127.0.0.1:8000";
+
+  // Hàm fetch có timeout an toàn (tránh treo giao diện popup)
+  const fetchWithTimeout = async (url, options = {}, timeoutMs = 3500) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch("http://127.0.0.1:8000/", { method: "GET" });
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timer);
+      return response;
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
+    }
+  };
+
+  // Tự động lấy URL Server từ Firebase Firestore (Đồng bộ với Colab GPU)
+  const getBackendUrl = async () => {
+    try {
+      const res = await fetchWithTimeout("https://firestore.googleapis.com/v1/projects/ptud-dt012/databases/(default)/documents/system_config/server", {}, 3000);
+      if (res.ok) {
+        const data = await res.json();
+        const remoteUrl = data?.fields?.url?.stringValue;
+        if (remoteUrl && (remoteUrl.startsWith("http://") || remoteUrl.startsWith("https://"))) {
+          let clean = remoteUrl.trim().replace(/\/+$/, "");
+          chrome.storage.local.set({ serverUrl: clean });
+          return clean;
+        }
+      }
+    } catch (_) {}
+
+    try {
+      const stored = await chrome.storage.local.get(["serverUrl"]);
+      if (stored && stored.serverUrl) return stored.serverUrl;
+    } catch (_) {}
+
+    return "http://127.0.0.1:8000";
+  };
+
+  // Tự động xác thực tài khoản ẩn cho Extension (không cần người dùng đăng nhập thủ công)
+  const getAuthToken = async () => {
+    try {
+      const stored = await chrome.storage.local.get(["extension_token"]);
+      if (stored && stored.extension_token) return stored.extension_token;
+    } catch (_) {}
+
+    try {
+      const serverUrl = activeBackendUrl || "http://127.0.0.1:8000";
+      const loginRes = await fetchWithTimeout(`${serverUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: "browser_extension@gmail.com",
+          password: "ExtensionPassword123@"
+        })
+      }, 4000);
+      if (loginRes.ok) {
+        const loginData = await loginRes.json();
+        if (loginData.token) {
+          chrome.storage.local.set({ extension_token: loginData.token });
+          return loginData.token;
+        }
+      }
+    } catch (_) {}
+    return null;
+  };
+
+  const getAuthHeaders = async () => {
+    const token = await getAuthToken();
+    return token ? { "Authorization": `Bearer ${token}` } : {};
+  };
+
+  // 1. Kiểm tra trạng thái Backend AI (Bất đồng bộ)
+  const checkServerHealth = async () => {
+    statusText.innerText = "⏳ Đang kết nối Máy chủ AI...";
+    const serverUrl = await getBackendUrl();
+    activeBackendUrl = serverUrl;
+
+    try {
+      const res = await fetchWithTimeout(`${serverUrl}/`, { method: "GET" }, 3000);
       if (res.ok) {
         statusDot.className = "status-dot online";
-        statusText.innerText = "🟢 Máy chủ Sẵn sàng (Port 8000)";
+        statusText.innerText = serverUrl.includes("trycloudflare")
+          ? "🟢 Máy chủ Sẵn sàng (Colab GPU)"
+          : "🟢 Máy chủ Sẵn sàng (Port 8000)";
         return true;
       }
     } catch (_) {}
+
+    if (serverUrl !== "http://127.0.0.1:8000") {
+      try {
+        const resLocal = await fetchWithTimeout("http://127.0.0.1:8000/", { method: "GET" }, 2000);
+        if (resLocal.ok) {
+          activeBackendUrl = "http://127.0.0.1:8000";
+          statusDot.className = "status-dot online";
+          statusText.innerText = "🟢 Máy chủ Sẵn sàng (Localhost)";
+          return true;
+        }
+      } catch (_) {}
+    }
+
     statusDot.className = "status-dot offline";
-    statusText.innerText = "🔴 Máy chủ chưa bật (Khởi động port 8000)";
+    statusText.innerText = "🔴 Máy chủ chưa bật (Khởi động Colab hoặc port 8000)";
     return false;
   };
 
-  await checkServerHealth();
+  const statusBox = document.getElementById("statusBox");
+  if (statusBox) {
+    statusBox.style.cursor = "pointer";
+    statusBox.title = "Nhấp để làm mới kết nối máy chủ";
+    statusBox.addEventListener("click", () => checkServerHealth());
+  }
 
-  // 2. Lấy thông tin Tab hiện tại & trạng thái khung phụ đề
+  // 2. LẤY THÔNG TIN TAB HIỆN TẠI NGAY LẬP TỨC (Không chờ mạng)
   const updateOverlayButtonState = async () => {
     if (!currentTab || !currentTab.id) return;
     try {
@@ -95,11 +197,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       currentTab = tabs[0];
       tabUrlText.innerText = currentTab.url || "Không xác định";
       tabUrlText.title = currentTab.url || "";
-      await updateOverlayButtonState();
+      updateOverlayButtonState();
     }
   } catch (e) {
     tabUrlText.innerText = "Không thể lấy tab.";
   }
+
+  // Chạy kiểm tra server ngầm (không chặn giao diện) và tự động nạp phụ đề nếu có sẵn
+  checkServerHealth().then(() => {
+    autoCheckExistingSubtitles();
+  }).catch(() => {});
 
   // Đóng/Mở mục nạp file phụ đề
   if (accordionToggle) {
@@ -156,6 +263,55 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   };
 
+  // Tự động kiểm tra và nạp ngay phụ đề nếu bài giảng đã có sẵn trong Firebase Cache
+  const autoCheckExistingSubtitles = async () => {
+    if (!currentTab || !currentTab.url || !currentTab.url.includes("watch?v=")) return;
+    try {
+      const statusRes = await safeSendMessage(currentTab.id, { action: "GET_STATUS" });
+      if (statusRes && statusRes.status === "ok" && statusRes.subtitleCount > 0) {
+        statusText.innerText = `🟢 Tab đang chạy ${statusRes.subtitleCount} câu phụ đề`;
+        return;
+      }
+
+      const authHeaders = await getAuthHeaders();
+      const infoRes = await fetchWithTimeout(`${activeBackendUrl}/api/video/info?video_url=${encodeURIComponent(currentTab.url)}`, {
+        headers: { ...authHeaders }
+      }, 3500);
+
+      if (infoRes.ok) {
+        const infoData = await infoRes.json();
+        if (infoData.is_cached) {
+          statusText.innerText = "⚡ Bài giảng đã có sẵn! Đang tự động nạp phụ đề...";
+          const procRes = await fetchWithTimeout(`${activeBackendUrl}/api/video/process`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders },
+            body: JSON.stringify({
+              video_url: currentTab.url,
+              target_language: targetLang.value,
+              include_quiz: includeQuizCheck.checked
+            })
+          }, 8000);
+
+          if (procRes.ok) {
+            const data = await procRes.json();
+            const segCount = (data.segments || []).length;
+            statusText.innerText = `✅ Đã tự động nạp ${segCount} câu phụ đề & Tóm tắt!`;
+            renderResult(data);
+            await safeSendMessage(currentTab.id, {
+              action: "LOAD_SUBTITLES",
+              subtitles: data.segments,
+              isBilingual: bilingualCheck.checked,
+              targetLanguage: targetLang.value,
+              sourceLanguage: data.detected_language || "en",
+              serverUrl: activeBackendUrl,
+            });
+            updateOverlayButtonState();
+          }
+        }
+      }
+    } catch (_) {}
+  };
+
   // 3. Xử lý tạo phụ đề AI cho toàn bộ video Tab hiện tại
   btnProcessTab.addEventListener("click", async () => {
     if (!currentTab || !currentTab.url) {
@@ -178,7 +334,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       let isLong = false;
       let durationSec = 0;
       try {
-        const infoRes = await fetch(`http://127.0.0.1:8000/api/video/info?video_url=${encodeURIComponent(currentTab.url)}`);
+        const authHeaders = await getAuthHeaders();
+        const infoRes = await fetch(`${activeBackendUrl}/api/video/info?video_url=${encodeURIComponent(currentTab.url)}`, {
+          headers: { ...authHeaders }
+        });
         if (infoRes.ok) {
           const infoData = await infoRes.json();
           durationSec = infoData.duration_seconds || 0;
@@ -198,6 +357,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           targetLanguage: targetLang.value,
           isBilingual: bilingualCheck.checked,
           sourceLanguage: "en",
+          serverUrl: activeBackendUrl,
         });
         statusText.innerText = `⚡ Đã bật xem nhanh cho video ${minutes}p! Phụ đề đang nạp liên tục.`;
         btnProcessTab.disabled = false;
@@ -225,9 +385,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (!isNaN(startVal) && startVal >= 0) payload.start_time = startVal;
       if (!isNaN(endVal) && endVal > 0) payload.end_time = endVal;
 
-      const response = await fetch("http://127.0.0.1:8000/api/video/process", {
+      const authHeaders = await getAuthHeaders();
+      const response = await fetch(`${activeBackendUrl}/api/video/process`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify(payload),
         signal: currentAbortController.signal
       });
@@ -254,6 +415,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         isBilingual: bilingualCheck.checked,
         targetLanguage: targetLang.value,
         sourceLanguage: data.detected_language || "en",
+        serverUrl: activeBackendUrl,
       });
     } catch (err) {
       console.error(err);
@@ -281,7 +443,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
       if (currentJobId) {
         try {
-          await fetch(`http://127.0.0.1:8000/api/video/cancel/${currentJobId}`, { method: "POST" });
+          const authHeaders = await getAuthHeaders();
+          await fetch(`${activeBackendUrl}/api/video/cancel/${currentJobId}`, {
+            method: "POST",
+            headers: { ...authHeaders }
+          });
         } catch (e) {}
       }
       btnCancelProcess.disabled = true;
@@ -301,6 +467,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         targetLanguage: targetLang.value,
         isBilingual: bilingualCheck.checked,
         sourceLanguage: "en",
+        serverUrl: activeBackendUrl,
       });
     });
   }
@@ -344,8 +511,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       formData.append("target_language", targetLang.value);
       formData.append("include_quiz", includeQuizCheck.checked ? "true" : "false");
 
-      const response = await fetch("http://127.0.0.1:8000/api/subtitles/process", {
+      const authHeaders = await getAuthHeaders();
+      const response = await fetch(`${activeBackendUrl}/api/subtitles/process`, {
         method: "POST",
+        headers: { ...authHeaders },
         body: formData,
       });
 
@@ -361,6 +530,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         isBilingual: bilingualCheck.checked,
         targetLanguage: targetLang.value,
         sourceLanguage: data.detected_language || "en",
+        serverUrl: activeBackendUrl,
       });
     } catch (err) {
       statusText.innerText = `❌ Lỗi nạp phụ đề: ${err.message}`;

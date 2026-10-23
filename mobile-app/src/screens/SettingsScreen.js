@@ -2,19 +2,14 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Platform,
   ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as LegacyFileSystem from 'expo-file-system/legacy';
-import { colors, spacing, borderRadius } from '../constants/theme';
+import { colors } from '../constants/theme';
 import { apiService } from '../services/api';
 import Header from '../components/Header';
 import {
@@ -236,7 +231,19 @@ export default function SettingsScreen({ onNavigate }) {
         },
       ]
     );
-              <StorageSection
+  };
+
+  return (
+    <View style={styles.container}>
+      <Header title="CÀI ĐẶT HỆ THỐNG" />
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {loading ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator size="large" color={colors.primaryLight} />
+          </View>
+        ) : (
+          <>
+            <StorageSection
               defaultExportDir={defaultExportDir}
               handlePickDefaultFolder={handlePickDefaultFolder}
               handleClearDefaultFolder={handleClearDefaultFolder}
@@ -295,37 +302,7 @@ export default function SettingsScreen({ onNavigate }) {
         visible={legalInfoVisible}
         onClose={() => setLegalInfoVisible(false)}
         styles={styles}
-      />lại toàn bộ tệp phương tiện phục vụ mục đích thương mại.
-                </Text>
-              </View>
-
-              <View style={styles.legalBox}>
-                <Text style={styles.legalBoxTitle}>3. Chính sách bảo mật & Quyền riêng tư</Text>
-                <Text style={styles.legalBoxBody}>
-                  Toàn bộ thông tin tài khoản, mật khẩu đăng nhập đều được mã hóa bảo mật. Dữ liệu lịch sử bài giảng, tóm tắt và kết quả trắc nghiệm chỉ được lưu trữ cho mục đích hỗ trợ học tập cá nhân và không bị chia sẻ cho bên thứ ba.
-                </Text>
-              </View>
-
-              <View style={styles.legalBox}>
-                <Text style={styles.legalBoxTitle}>4. Giấy phép mã nguồn</Text>
-                <Text style={styles.legalBoxBody}>
-                  Dự án thuộc đề tài môn học Phát triển Ứng dụng - Đại học Lạc Hồng. Tuân thủ giấy phép phần mềm mã nguồn mở MIT License dành cho mục đích giáo dục và nghiên cứu.
-                </Text>
-              </View>
-            </ScrollView>
-
-            <TouchableOpacity
-              style={styles.modalPrimaryBtn}
-              onPress={() => setLegalInfoVisible(false)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.modalPrimaryBtnText}>Tôi đã hiểu & Đóng</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      />
     </View>
   );
 }
-
-

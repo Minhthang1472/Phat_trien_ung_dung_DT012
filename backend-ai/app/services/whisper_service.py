@@ -47,7 +47,9 @@ class WhisperService:
                 language=language if language and language != "auto" else None,
                 task=task,
                 vad_filter=True, # Lọc khoảng lặng không có tiếng nói
-                vad_parameters=dict(min_silence_duration_ms=500)
+                vad_parameters=dict(min_silence_duration_ms=500),
+                condition_on_previous_text=False, # Chống ảo giác và lặp câu
+                initial_prompt="Video bài giảng, thuyết minh và bình luận, bóc tách chính xác từ ngữ tiếng Việt và tên riêng nhân vật."
             )
 
             subtitles = []
@@ -81,7 +83,9 @@ class WhisperService:
                 language=language if language and language != "auto" else None,
                 task=task,
                 vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=500)
+                vad_parameters=dict(min_silence_duration_ms=500),
+                condition_on_previous_text=False,
+                initial_prompt="Video bài giảng, thuyết minh và bình luận, bóc tách chính xác từ ngữ tiếng Việt và tên riêng nhân vật."
             )
             detected_lang = info.language
             for idx, segment in enumerate(segments_generator):

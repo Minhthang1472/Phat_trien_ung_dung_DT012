@@ -307,7 +307,7 @@ class SummaryService:
                     "temperature": 0.2
                 }
             }
-            resp = requests.post(url, json=payload, timeout=90)
+            resp = requests.post(url, json=payload, timeout=180)
             if resp.status_code == 200:
                 raw_text = resp.json().get("response", "")
                 parsed = _clean_and_parse_json(raw_text)

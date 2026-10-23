@@ -11,11 +11,15 @@
   let currentFontSize = 20;
   let currentSelectingLine = null;
   let isOverlayVisible = true;
-  let targetLanguage = "vi";
   let sourceLanguage = "en";
   let currentAudio = null;
+  let activeBackendUrl = "http://127.0.0.1:8000";
 
-  // 1. Nhận diện ngôn ngữ thông minh dựa trên ký tự
+  try {
+    chrome.storage?.local?.get(["serverUrl"]).then((stored) => {
+      if (stored && stored.serverUrl) activeBackendUrl = stored.serverUrl;
+    }).catch(() => {});
+  } catch (_) {}
   function detectLanguage(text) {
     if (!text) return targetLanguage || "vi";
     const t = text.trim();
@@ -82,10 +86,19 @@
       if (overlayBox) overlayBox.classList.remove("lecture-ai-speaking");
     };
 
-    // ƯU TIÊN 1: Phát âm chuẩn Google Translate TTS từ Backend AI (giọng chuẩn bản ngữ 100%, không bị giọng lai Anh)
+    // ƯU TIÊN 1: Phát âm chuẩn Google Translate TTS từ Backend AI
+    let played = false;
     try {
-      const ttsUrl = `http://127.0.0.1:8000/api/tts?text=${encodeURIComponent(cleanText)}&lang=${lang}`;
-      const res = await fetch(ttsUrl);
+      let headers = {};
+      try {
+        const stored = await chrome.storage?.local?.get(["extension_token"]);
+        if (stored && stored.extension_token) {
+          headers["Authorization"] = `Bearer ${stored.extension_token}`;
+        }
+      } catch (_) {}
+
+      const ttsUrl = `${activeBackendUrl}/api/tts?text=${encodeURIComponent(cleanText.slice(0, 250))}&lang=${lang}`;
+      const res = await fetch(ttsUrl, { headers });
       if (res.ok) {
         const blob = await res.blob();
         const blobUrl = URL.createObjectURL(blob);
@@ -101,13 +114,35 @@
           currentAudio = null;
         };
         await currentAudio.play();
+        played = true;
         return;
       }
     } catch (err) {
-      console.warn("[LectureAI] Backend TTS không khả dụng, chuyển sang giọng trình duyệt:", err);
+      console.warn("[LectureAI] Backend TTS không phản hồi, chuyển sang Google TTS trực tiếp:", err);
     }
 
-    // DỰ PHÒNG: Dùng Web Speech API của trình duyệt nếu Backend chưa bật
+    // ƯU TIÊN 2: Phát âm trực tiếp bằng giọng Google Translate chuẩn (Chị Google Tiếng Việt, Anh, v.v.)
+    if (!played) {
+      try {
+        const directGoogleUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${lang}&client=tw-ob&q=${encodeURIComponent(cleanText.slice(0, 200))}`;
+        currentAudio = new Audio(directGoogleUrl);
+        currentAudio.onended = () => {
+          stopSpeakingEffect();
+          currentAudio = null;
+        };
+        currentAudio.onerror = () => {
+          stopSpeakingEffect();
+          currentAudio = null;
+        };
+        await currentAudio.play();
+        played = true;
+        return;
+      } catch (err) {
+        console.warn("[LectureAI] Google Direct TTS gặp lỗi, chuyển sang Web Speech API:", err);
+      }
+    }
+
+    // DỰ PHÒNG CUỐI CÙNG: Dùng Web Speech API của trình duyệt nếu mất mạng
     if (typeof window.speechSynthesis !== "undefined") {
       const fullLangMap = {
         vi: "vi-VN",
@@ -147,7 +182,7 @@
     lookaheadLoading = true;
     const startSeconds = Math.max(currentTime, loadedUntil);
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/video/lookahead", {
+      const response = await fetch(`${activeBackendUrl}/api/video/lookahead`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -313,9 +348,14 @@
       }
     });
 
+    function getPlayerContainer() {
+      return document.getElementById("movie_player") || document.querySelector(".html5-video-player") || document.querySelector(".ytd-player") || document.body;
+    }
+
     overlayContainer.appendChild(controls);
     overlayContainer.appendChild(overlayBox);
-    document.body.appendChild(overlayContainer);
+    const targetParent = getPlayerContainer();
+    targetParent.appendChild(overlayContainer);
 
     // Chỉ cho phép kéo thả khi nhấn vào nút tay cầm `btnDrag`
     makeDraggable(overlayContainer, btnDrag);
@@ -334,10 +374,9 @@
   function setupFullscreenHandling() {
     const handleFsChange = () => {
       const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-      if (fsEl && overlayContainer) {
-        fsEl.appendChild(overlayContainer);
-      } else if (overlayContainer && overlayContainer.parentElement !== document.body) {
-        document.body.appendChild(overlayContainer);
+      const targetParent = fsEl || document.getElementById("movie_player") || document.querySelector(".html5-video-player") || document.body;
+      if (overlayContainer && overlayContainer.parentElement !== targetParent) {
+        targetParent.appendChild(overlayContainer);
       }
     };
 
@@ -374,10 +413,15 @@
     });
   }
 
+  let isJustLoaded = false;
+  let justLoadedTimeout = null;
+
   function findVideo() {
+    const ytMain = document.querySelector(".html5-main-video");
+    if (ytMain) return ytMain;
     const videos = Array.from(document.querySelectorAll("video"));
     if (!videos.length) return null;
-    return videos.find((v) => !v.paused && v.offsetWidth > 200) || videos[0];
+    return videos.find((v) => !v.paused && v.offsetWidth > 200) || videos.find((v) => v.offsetWidth > 200) || videos[0];
   }
 
   function syncTick() {
@@ -410,6 +454,7 @@
     );
 
     if (matchingSeg) {
+      isJustLoaded = false;
       const transText = matchingSeg.translated_text || matchingSeg.text || "";
       const origText = matchingSeg.original_text || "";
 
@@ -420,6 +465,10 @@
       }
 
       overlayBox.innerHTML = htmlContent;
+      if (overlayContainer.style.display !== "block") {
+        overlayContainer.style.display = "block";
+      }
+    } else if (isJustLoaded) {
       if (overlayContainer.style.display !== "block") {
         overlayContainer.style.display = "block";
       }
@@ -444,6 +493,9 @@
 
   // Lắng nghe message từ popup.js
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.serverUrl) {
+      activeBackendUrl = message.serverUrl;
+    }
     if (message.action === "LOAD_SUBTITLES") {
       subtitleData = message.subtitles || [];
       isBilingual = message.isBilingual ?? true;
@@ -452,6 +504,26 @@
       lookaheadConfig = null;
       isOverlayVisible = true;
       createOverlay();
+      try {
+        sessionStorage.setItem("lecture_ai_subtitles_" + location.href, JSON.stringify({
+          subtitles: subtitleData,
+          isBilingual,
+          targetLanguage,
+          sourceLanguage
+        }));
+      } catch (_) {}
+      isJustLoaded = true;
+      if (overlayBox) {
+        overlayBox.innerHTML = `<div style="font-size: 16px; color: #38bdf8; font-weight: 600; padding: 4px 8px;">✨ Đã nạp thành công ${subtitleData.length} câu phụ đề! Bấm Phát video ▶️ để xem</div>`;
+      }
+      if (overlayContainer) {
+        overlayContainer.style.display = "block";
+      }
+      if (justLoadedTimeout) clearTimeout(justLoadedTimeout);
+      justLoadedTimeout = setTimeout(() => {
+        isJustLoaded = false;
+        syncTick();
+      }, 5000);
       startSync();
       sendResponse({ status: "ok", count: subtitleData.length });
     } else if (message.action === "START_LOOKAHEAD") {
@@ -487,5 +559,31 @@
         subtitleCount: subtitleData.length,
       });
     }
+  });
+
+  // Tự động khôi phục phụ đề từ bộ nhớ phiên khi người dùng Reload trang (F5) hoặc chuyển video
+  const restoreSavedSubtitles = () => {
+    try {
+      const saved = sessionStorage.getItem("lecture_ai_subtitles_" + location.href);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.subtitles && parsed.subtitles.length > 0) {
+          subtitleData = parsed.subtitles;
+          isBilingual = parsed.isBilingual ?? true;
+          targetLanguage = parsed.targetLanguage || "vi";
+          sourceLanguage = parsed.sourceLanguage || "en";
+          isOverlayVisible = true;
+          createOverlay();
+          startSync();
+          console.log(`[LectureAI] Tự động khôi phục ${subtitleData.length} câu phụ đề từ bộ nhớ.`);
+        }
+      }
+    } catch (_) {}
+  };
+
+  // Khôi phục sau khi trang web tải xong thẻ video
+  setTimeout(restoreSavedSubtitles, 800);
+  window.addEventListener("yt-navigate-finish", () => {
+    setTimeout(restoreSavedSubtitles, 800);
   });
 })();

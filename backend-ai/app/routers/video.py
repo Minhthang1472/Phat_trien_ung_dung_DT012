@@ -19,6 +19,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -138,8 +139,9 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
     target_lang = (request.target_language or "vi").lower().strip()
     
     if not has_custom_range:
-        cached_fb = firebase_service.get_lecture_cache(url)
-        if cached_fb and cached_fb.get("owner_id") == user["id"]:
+        cached_fb = firebase_service.get_lecture_cache(url, owner_id=user["id"])
+        if cached_fb:
+            cached_fb["owner_id"] = user["id"]
             cached_fb["quiz"] = normalize_quiz(cached_fb.get("quiz", []))
             cached_fb["mindmap"] = normalize_mindmap(
                 cached_fb.get("mindmap"),
@@ -666,8 +668,7 @@ async def export_subtitles(
 async def text_to_speech(
     text: str = Query(..., description="Văn bản cần phát âm"), 
     lang: str = Query("vi", description="Mã ngôn ngữ: vi, en, ja, ko, zh..."),
-    user=Depends(get_current_user),
-    _limit=Depends(heavy_rate_limit)
+    user=Depends(get_optional_user)
 ):
     """
     Phát âm chuẩn giọng bản ngữ Google Translate (Tiếng Việt chuẩn có dấu, Tiếng Anh, Tiếng Nhật, Hàn, Trung...)
@@ -1065,8 +1066,8 @@ async def get_video_info_endpoint(video_url: str = Query(..., description="Đư�
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp URL video hợp lệ.")
     
     # Kiểm tra Firestore cache trước
-    cached = firebase_service.get_lecture_cache(url)
-    if cached and cached.get("owner_id") == user["id"]:
+    cached = firebase_service.get_lecture_cache(url, owner_id=user["id"])
+    if cached:
         duration = float(cached.get("duration_seconds", 0) or 0)
         return {
             "title": cached.get("title", "Bài giảng"),

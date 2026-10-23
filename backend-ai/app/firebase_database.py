@@ -61,7 +61,7 @@ class FirebaseService:
         """Băm URL thành ID cố định an toàn cho Firestore Document ID"""
         return hashlib.md5(video_url.strip().encode("utf-8")).hexdigest()
 
-    def get_lecture_cache(self, video_url: str) -> Optional[Dict[str, Any]]:
+    def get_lecture_cache(self, video_url: str, owner_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Tra cứu bài giảng trong Firebase Firestore Cache (0.01s).
         Nếu đã có -> trả về kết quả ngay, TIẾT KIỆM 100% TOKEN GEMINI!
@@ -72,24 +72,30 @@ class FirebaseService:
             return None
 
         try:
-            doc_id = self.get_document_id(video_url)
-            doc_ref = self.db.collection("lectures").document(doc_id)
-            doc = doc_ref.get()
+            base_doc_id = self.get_document_id(video_url)
+            # 1. Thử tìm với doc_id có gắn owner_id
+            if owner_id:
+                doc = self.db.collection("lectures").document(f"{owner_id}_{base_doc_id}").get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE (Owner: {owner_id}): {video_url}")
+                    return data
 
+            # 2. Thử tìm với doc_id gốc
+            doc = self.db.collection("lectures").document(base_doc_id).get()
             if doc.exists:
                 data = doc.to_dict()
-                logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE: {video_url} (Tiết kiệm 100% Token!)")
-                if "quiz" in data and isinstance(data["quiz"], list):
-                    data["quiz"] = [
-                        item if isinstance(item, dict) else {
-                            "question": str(item).strip(),
-                            "options": ["A. Hoàn toàn đồng ý", "B. Cần thêm cơ sở", "C. Không đồng ý", "D. Ý kiến khác"],
-                            "correct_answer": "A",
-                            "answer": "A",
-                            "explanation": "Câu hỏi ôn tập từ bài giảng."
-                        }
-                        for item in data["quiz"]
-                    ]
+                logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE: {video_url}")
+                return data
+
+            # 3. Query theo video_url nếu doc_id có định dạng khác
+            query = self.db.collection("lectures").where("video_url", "==", video_url)
+            if owner_id:
+                query = query.where("owner_id", "==", owner_id)
+            docs = list(query.limit(1).stream())
+            if docs:
+                data = docs[0].to_dict()
+                logger.info(f"Tìm thấy bài giảng qua Query FIREBASE CACHE: {video_url}")
                 return data
         except Exception as e:
             logger.warning(f"Lỗi tra cứu Firebase Cache: {e}")
@@ -107,7 +113,8 @@ class FirebaseService:
 
         try:
             owner_id = lecture_data.get("owner_id")
-            doc_id = f"{owner_id}_{self.get_document_id(video_url)}" if owner_id else self.get_document_id(video_url)
+            base_doc_id = self.get_document_id(video_url)
+            doc_id = f"{owner_id}_{base_doc_id}" if owner_id else base_doc_id
             doc_ref = self.db.collection("lectures").document(doc_id)
 
             # Sao chép và lưu trữ
@@ -115,6 +122,12 @@ class FirebaseService:
             save_payload["cached_at"] = firestore.SERVER_TIMESTAMP
 
             doc_ref.set(save_payload, merge=True)
+            # Đồng thời lưu bản cache theo base_doc_id để các truy vấn nhanh đều trúng cache 100%
+            if owner_id:
+                try:
+                    self.db.collection("lectures").document(base_doc_id).set(save_payload, merge=True)
+                except Exception:
+                    pass
             logger.info(f"Đã lưu trữ thành công bài giảng vào Firebase Firestore [ID: {doc_id}] (Owner: {owner_id})")
             return True
         except Exception as e:
