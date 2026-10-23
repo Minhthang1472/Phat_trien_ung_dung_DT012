@@ -5,7 +5,8 @@ pydantic==2.14.1
 python-dotenv==1.2.4
 python-multipart==0.0.32
 
-# AI & Speech Recognition (Chạy tăng tốc trên GPU NVIDIA RTX 2050)
+# AI & Speech Recognition (Chạy tăng tốc trên GPU NVIDIA RTX 2050 / Tesla T4)
+av<19
 faster-whisper==1.2.1
 yt-dlp==2026.8.19
 

@@ -203,6 +203,11 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
   const [showCC, setShowCC] = useState(true);
   const [subMode, setSubMode] = useState('bilingual'); // 'bilingual' | 'target' | 'original'
 
+  // Trạng thái kéo tua tiến trình video (Interactive Seek Bar)
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [seekDragTime, setSeekDragTime] = useState(0);
+  const seekBarLayoutRef = useRef({ width: 0, x: 0 });
+
   // Trắc nghiệm theo mốc thời gian (In-Video Checkpoint Quiz)
   const [interactiveQuizEnabled, setInteractiveQuizEnabled] = useState(true);
   const [activeCheckpointQuiz, setActiveCheckpointQuiz] = useState(null);
@@ -642,40 +647,109 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
     setCurrentTime(sec);
   };
 
-  // Khi người dùng bấm vào một câu phụ đề -> Video lập tức nhảy đến đúng giây đó và phát mượt
-  const handleSeek = (seconds) => {
-    lastTimeUpdateRef.current = seconds;
-    setCurrentTime(seconds);
-    // Nếu là video YouTube trên Web
-    if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
-      ytPlayerRef.current.seekTo(seconds, true);
-      if (typeof ytPlayerRef.current.playVideo === 'function') {
-        ytPlayerRef.current.playVideo();
+  // Gửi lệnh điều khiển YouTube (hỗ trợ cả YT.Player API và chuẩn Iframe postMessage)
+  const sendYouTubeCommand = (func, args = []) => {
+    if (Platform.OS === 'web') {
+      // 1. Gọi trực tiếp qua YT.Player instance nếu đã bind
+      if (ytPlayerRef.current && typeof ytPlayerRef.current[func] === 'function') {
+        try { ytPlayerRef.current[func](...args); } catch (_) {}
+      }
+      // 2. Gửi postMessage trực tiếp vào iframe (chuẩn chính thức của YouTube Embed API)
+      if (typeof document !== 'undefined') {
+        const iframe = document.getElementById('yt-sync-iframe');
+        if (iframe && iframe.contentWindow) {
+          try {
+            iframe.contentWindow.postMessage(
+              JSON.stringify({
+                event: 'command',
+                func: func,
+                args: args,
+              }),
+              '*'
+            );
+          } catch (_) {}
+        }
+      }
+    } else {
+      if (ytPlayerRef.current && typeof ytPlayerRef.current[func] === 'function') {
+        try { ytPlayerRef.current[func](...args); } catch (_) {}
       }
     }
-    // Nếu là Video/Audio HTML5 từ thiết bị trên Web
-    if (htmlMediaRef.current) {
-      htmlMediaRef.current.currentTime = seconds;
-      htmlMediaRef.current.play().catch(() => {});
+  };
+
+  // Điều khiển Phát / Tạm dừng thống nhất, hoạt động 100% trên cả Web & Mobile
+  const togglePlayPause = () => {
+    const nextPlay = !isPlaying;
+    setIsPlaying(nextPlay);
+
+    if (Platform.OS === 'web') {
+      sendYouTubeCommand(nextPlay ? 'playVideo' : 'pauseVideo');
+      if (htmlMediaRef.current) {
+        try {
+          if (nextPlay) htmlMediaRef.current.play?.().catch(() => {});
+          else htmlMediaRef.current.pause?.();
+        } catch (_) {}
+      }
+    } else {
+      if (webViewRef.current) {
+        try {
+          webViewRef.current.injectJavaScript(`
+            if (window.player) {
+              ${nextPlay ? 'window.player.playVideo();' : 'window.player.pauseVideo();'}
+            }
+            var m = document.getElementById('media');
+            if (m) {
+              ${nextPlay ? 'm.play();' : 'm.pause();'}
+            }
+            true;
+          `);
+        } catch (_) {}
+      }
     }
-    // Nếu là Native WebView trên Mobile (Android / iOS)
-    if (webViewRef.current) {
-      try {
-        webViewRef.current.injectJavaScript(`
-          if (window.player && typeof window.player.seekTo === 'function') {
-            window.player.seekTo(${seconds}, true);
-            window.player.playVideo();
-          }
-          var m = document.getElementById('media');
-          if (m) {
-            m.currentTime = ${seconds};
-            m.play();
-          }
-          true;
-        `);
-        setIsPlaying(true);
-      } catch (_) {}
+  };
+
+  // Khi người dùng bấm tua hoặc kéo thanh tiến trình -> Video lập tức nhảy đến đúng giây đó và phát mượt
+  const handleSeek = (seconds) => {
+    const targetSec = Math.max(0, Math.min(seconds, duration));
+    lastTimeUpdateRef.current = targetSec;
+    setCurrentTime(targetSec);
+
+    // 1. YouTube trên Web
+    if (Platform.OS === 'web') {
+      sendYouTubeCommand('seekTo', [targetSec, true]);
+      sendYouTubeCommand('playVideo');
+      if (htmlMediaRef.current) {
+        try {
+          htmlMediaRef.current.currentTime = targetSec;
+          htmlMediaRef.current.play?.().catch(() => {});
+        } catch (_) {}
+      }
+    } else {
+      // 2. YouTube trên Mobile
+      if (ytPlayerRef.current && typeof ytPlayerRef.current.seekTo === 'function') {
+        try {
+          ytPlayerRef.current.seekTo(targetSec, true);
+        } catch (_) {}
+      }
+      // 3. Native WebView trên Mobile
+      if (webViewRef.current) {
+        try {
+          webViewRef.current.injectJavaScript(`
+            if (window.player && typeof window.player.seekTo === 'function') {
+              window.player.seekTo(${targetSec}, true);
+              window.player.playVideo();
+            }
+            var m = document.getElementById('media');
+            if (m) {
+              m.currentTime = ${targetSec};
+              m.play();
+            }
+            true;
+          `);
+        } catch (_) {}
+      }
     }
+    setIsPlaying(true);
   };
 
   const handleShare = async () => {
@@ -1017,30 +1091,124 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
               )}
             </View>
 
-            {/* Thanh Trạng thái Đồng bộ Thời gian thực */}
-            <View style={styles.realtimeStatusBar}>
-              <TouchableOpacity
-                style={styles.liveIndicator}
-                onPress={() => {
-                  const nextPlay = !isPlaying;
-                  setIsPlaying(nextPlay);
-                  if (Platform.OS === 'web') {
-                    if (nextPlay) {
-                      try { ytPlayerRef.current?.playVideo?.(); } catch (_) {}
-                      try { htmlMediaRef.current?.play?.(); } catch (_) {}
-                    } else {
-                      try { ytPlayerRef.current?.pauseVideo?.(); } catch (_) {}
-                      try { htmlMediaRef.current?.pause?.(); } catch (_) {}
-                    }
-                  }
+            {/* Thanh Kéo Tua Tiến Trình Bài Giảng (Chỉ hiển thị trên Web, tự động ẩn trên Máy ảo / APK điện thoại) */}
+            {Platform.OS === 'web' && (
+              <View
+                style={styles.seekBarWrap}
+                onLayout={(e) => {
+                  const { width, x } = e.nativeEvent.layout;
+                  seekBarLayoutRef.current = { width, x };
                 }}
-                activeOpacity={0.7}
+                onStartShouldSetResponder={() => true}
+                onMoveShouldSetResponder={() => true}
+                onResponderGrant={(e) => {
+                  const touchX = e.nativeEvent.locationX;
+                  const barWidth = seekBarLayoutRef.current.width || 1;
+                  const ratio = Math.max(0, Math.min(1, touchX / barWidth));
+                  const targetTime = ratio * duration;
+                  setIsSeeking(true);
+                  setSeekDragTime(targetTime);
+                }}
+                onResponderMove={(e) => {
+                  const touchX = e.nativeEvent.locationX;
+                  const barWidth = seekBarLayoutRef.current.width || 1;
+                  const ratio = Math.max(0, Math.min(1, touchX / barWidth));
+                  const targetTime = ratio * duration;
+                  setSeekDragTime(targetTime);
+                }}
+                onResponderRelease={(e) => {
+                  const touchX = e.nativeEvent.locationX;
+                  const barWidth = seekBarLayoutRef.current.width || 1;
+                  const ratio = Math.max(0, Math.min(1, touchX / barWidth));
+                  const targetTime = ratio * duration;
+                  setIsSeeking(false);
+                  handleSeek(targetTime);
+                }}
               >
-                <View style={[styles.liveDot, isPlaying && styles.liveDotActive]} />
-                <Text style={styles.liveText}>
-                  {isPlaying ? '⏸ ĐANG PHÁT' : '▶ PHÁT BÀI GIẢNG'}
-                </Text>
-              </TouchableOpacity>
+                {/* Tooltip mốc thời gian nổi khi đang kéo trượt */}
+                {isSeeking && (
+                  <View
+                    style={[
+                      styles.seekTooltip,
+                      {
+                        left: `${Math.max(4, Math.min(90, (seekDragTime / (duration || 1)) * 100))}%`,
+                      },
+                    ]}
+                    pointerEvents="none"
+                  >
+                    <Text style={styles.seekTooltipText}>{formatTime(seekDragTime)}</Text>
+                  </View>
+                )}
+
+                {/* Thanh ray nền */}
+                <View style={styles.seekBarTrack}>
+                  <View
+                    style={[
+                      styles.seekBarFill,
+                      {
+                        width: `${Math.max(0, Math.min(100, ((isSeeking ? seekDragTime : currentTime) / (duration || 1)) * 100))}%`,
+                      },
+                    ]}
+                  />
+                </View>
+
+                {/* Nút tròn kéo tua (Scrubber Thumb) */}
+                <View
+                  style={[
+                    styles.seekBarThumb,
+                    {
+                      left: `${Math.max(0, Math.min(100, ((isSeeking ? seekDragTime : currentTime) / (duration || 1)) * 100))}%`,
+                    },
+                  ]}
+                  pointerEvents="none"
+                />
+              </View>
+            )}
+
+            {/* Thanh Trạng thái & Điều khiển Phát / Tạm dừng & Tua */}
+            <View style={styles.realtimeStatusBar}>
+              {Platform.OS === 'web' ? (
+                <View style={styles.controlsLeftGroup}>
+                  {/* Nút Play / Pause */}
+                  <TouchableOpacity
+                    style={[styles.playControlBtn, isPlaying && styles.playControlBtnActive]}
+                    onPress={togglePlayPause}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.playControlIcon}>{isPlaying ? '⏸' : '▶'}</Text>
+                    <Text style={styles.playControlText}>
+                      {isPlaying ? 'Tạm dừng' : 'Phát'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Nút tua lùi 5s */}
+                  <TouchableOpacity
+                    style={styles.quickSeekBtn}
+                    onPress={() => handleSeek(currentTime - 5)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.quickSeekBtnText}>↺ 5s</Text>
+                  </TouchableOpacity>
+
+                  {/* Nút tua tới 5s */}
+                  <TouchableOpacity
+                    style={styles.quickSeekBtn}
+                    onPress={() => handleSeek(currentTime + 5)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.quickSeekBtnText}>5s ↻</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                /* Trên Mobile (Máy ảo / APK): Ẩn các nút điều khiển thừa, chỉ hiện chấm trạng thái tinh tế */
+                <View style={styles.liveIndicator}>
+                  <View style={[styles.liveDot, isPlaying && styles.liveDotActive]} />
+                  <Text style={styles.liveText}>
+                    {isPlaying ? 'ĐANG PHÁT' : 'TẠM DỪNG'}
+                  </Text>
+                </View>
+              )}
+
               <View style={styles.statusRightGroup}>
                 <TouchableOpacity
                   style={[styles.ccBtn, showCC && styles.ccBtnActive]}
@@ -1050,7 +1218,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
                   <Text style={[styles.ccBtnText, showCC && styles.ccBtnTextActive]}>CC</Text>
                 </TouchableOpacity>
                 <Text style={styles.liveTimerText}>
-                  {formatTime(currentTime)} / {formatTime(duration)}
+                  {formatTime(isSeeking ? seekDragTime : currentTime)} / {formatTime(duration)}
                 </Text>
               </View>
             </View>
@@ -1317,17 +1485,113 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted,
   },
+  // Thanh kéo tua (Seek Bar / Scrubber)
+  seekBarWrap: {
+    width: '100%',
+    height: 26,
+    justifyContent: 'center',
+    marginTop: 8,
+    position: 'relative',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
+  },
+  seekBarTrack: {
+    width: '100%',
+    height: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  seekBarFill: {
+    height: '100%',
+    backgroundColor: colors.primaryLight,
+    borderRadius: 3,
+  },
+  seekBarThumb: {
+    position: 'absolute',
+    top: 5,
+    marginLeft: -8,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    borderWidth: 2.5,
+    borderColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.6,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  seekTooltip: {
+    position: 'absolute',
+    top: -24,
+    marginLeft: -18,
+    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.4)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  seekTooltipText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '800',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
   realtimeStatusBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: spacing.sm,
+    marginTop: 4,
     paddingVertical: 6,
     paddingHorizontal: 10,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',
     borderRadius: borderRadius.sm,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  controlsLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  playControlBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(99, 102, 241, 0.45)',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: borderRadius.sm,
+  },
+  playControlBtnActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  playControlIcon: {
+    fontSize: 11,
+    color: '#ffffff',
+  },
+  playControlText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  quickSeekBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    borderRadius: borderRadius.sm,
+  },
+  quickSeekBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textSecondary,
   },
   liveIndicator: {
     flexDirection: 'row',
