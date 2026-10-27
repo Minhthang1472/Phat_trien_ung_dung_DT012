@@ -1,0 +1,11 @@
+{
+  "name": "Phat_trien_ung_dung_DT012",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Lecture Subtitle, Translation & Smart Summary Ecosystem",
+  "scripts": {
+    "backend": "python src/backend-ai/run_server.py",
+    "mobile": "npm --prefix src/mobile-app start",
+    "mobile:web": "npm --prefix src/mobile-app run web"
+  }
+}

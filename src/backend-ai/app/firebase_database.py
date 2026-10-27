@@ -1,0 +1,226 @@
+import os
+import hashlib
+import logging
+from typing import Optional, List, Dict, Any
+
+try:
+    import firebase_admin
+    from firebase_admin import credentials, firestore
+except ImportError:
+    firebase_admin = None
+    credentials = None
+    firestore = None
+
+logger = logging.getLogger("uvicorn")
+
+class FirebaseService:
+    def __init__(self):
+        self.db = None
+        self.initialized = False
+
+    def init_firebase(self):
+        """Khởi tạo kết nối Firebase Admin SDK từ file serviceAccountKey.json"""
+        if self.initialized and self.db is not None:
+            return
+
+        # Tìm file serviceAccountKey.json ở thư mục làm việc hoặc trong src/backend-ai
+        possible_paths = [
+            os.path.join(os.getcwd(), "serviceAccountKey.json"),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "serviceAccountKey.json"),
+            os.path.join(os.path.dirname(__file__), "serviceAccountKey.json"),
+        ]
+
+        key_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                key_path = p
+                break
+
+        if not key_path:
+            logger.warning("Không tìm thấy file serviceAccountKey.json. Firebase chưa được kích hoạt.")
+            return
+
+        try:
+            import firebase_admin
+            from firebase_admin import credentials, firestore
+
+            if not firebase_admin._apps:
+                cred = credentials.Certificate(key_path)
+                firebase_admin.initialize_app(cred)
+                logger.info("Khởi tạo Firebase Admin SDK thành công!")
+
+            self.db = firestore.client()
+            self.initialized = True
+            logger.info("Kết nối Google Firebase Cloud Firestore THÀNH CÔNG! Sẵn sàng làm Kho Cache vĩnh cửu.")
+        except Exception as e:
+            logger.error(f"Lỗi khi kết nối tới Firebase: {e}")
+            self.db = None
+
+    @staticmethod
+    def get_document_id(video_url: str) -> str:
+        """Băm URL thành ID cố định an toàn cho Firestore Document ID"""
+        return hashlib.md5(video_url.strip().encode("utf-8")).hexdigest()
+
+    def get_lecture_cache(self, video_url: str, owner_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Tra cứu bài giảng trong Firebase Firestore Cache (0.01s).
+        Nếu đã có -> trả về kết quả ngay, TIẾT KIỆM 100% TOKEN GEMINI!
+        """
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return None
+
+        try:
+            base_doc_id = self.get_document_id(video_url)
+            # 1. Thử tìm với doc_id có gắn owner_id
+            if owner_id:
+                doc = self.db.collection("lectures").document(f"{owner_id}_{base_doc_id}").get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE (Owner: {owner_id}): {video_url}")
+                    return data
+
+            # 2. Thử tìm với doc_id gốc
+            doc = self.db.collection("lectures").document(base_doc_id).get()
+            if doc.exists:
+                data = doc.to_dict()
+                logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE: {video_url}")
+                return data
+
+            # 3. Query theo video_url nếu doc_id có định dạng khác
+            query = self.db.collection("lectures").where("video_url", "==", video_url)
+            if owner_id:
+                query = query.where("owner_id", "==", owner_id)
+            docs = list(query.limit(1).stream())
+            if docs:
+                data = docs[0].to_dict()
+                logger.info(f"Tìm thấy bài giảng qua Query FIREBASE CACHE: {video_url}")
+                return data
+        except Exception as e:
+            logger.warning(f"Lỗi tra cứu Firebase Cache: {e}")
+
+        return None
+
+    def save_lecture_cache(self, video_url: str, lecture_data: Dict[str, Any]) -> bool:
+        """
+        Lưu toàn bộ phụ đề, mốc thời gian, bản tóm tắt và câu hỏi trắc nghiệm lên Firebase Firestore
+        """
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return False
+
+        try:
+            owner_id = lecture_data.get("owner_id")
+            base_doc_id = self.get_document_id(video_url)
+            doc_id = f"{owner_id}_{base_doc_id}" if owner_id else base_doc_id
+            doc_ref = self.db.collection("lectures").document(doc_id)
+
+            # Sao chép và lưu trữ
+            save_payload = dict(lecture_data)
+            save_payload["cached_at"] = firestore.SERVER_TIMESTAMP
+
+            doc_ref.set(save_payload, merge=True)
+            # Đồng thời lưu bản cache theo base_doc_id để các truy vấn nhanh đều trúng cache 100%
+            if owner_id:
+                try:
+                    self.db.collection("lectures").document(base_doc_id).set(save_payload, merge=True)
+                except Exception:
+                    pass
+            logger.info(f"Đã lưu trữ thành công bài giảng vào Firebase Firestore [ID: {doc_id}] (Owner: {owner_id})")
+            return True
+        except Exception as e:
+            logger.warning(f"Lỗi ghi dữ liệu vào Firebase Firestore: {e}")
+            return False
+
+    def get_history(self, limit: int = 25, owner_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Lấy danh sách các bài giảng gần đây từ Firebase Firestore theo riêng từng user"""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return []
+
+        try:
+            query = self.db.collection("lectures")
+            if owner_id:
+                query = query.where("owner_id", "==", owner_id)
+            else:
+                return []
+
+            # Lấy danh sách bài giảng theo owner_id và sắp xếp trong bộ nhớ Python (Tránh lỗi 400 Composite Index)
+            docs = list(query.limit(limit * 2).stream())
+            def _sort_key(d):
+                data = d.to_dict()
+                return str(data.get("cached_at") or data.get("created_at") or "")
+            docs.sort(key=_sort_key, reverse=True)
+            docs = docs[:limit]
+
+            history = []
+            for doc in docs:
+                data = doc.to_dict()
+                raw_q = data.get("quiz", [])
+                clean_q = [
+                    item if isinstance(item, dict) else {
+                        "question": str(item).strip(),
+                        "options": ["A. Hoàn toàn đồng ý", "B. Cần thêm cơ sở", "C. Không đồng ý", "D. Ý kiến khác"],
+                        "correct_answer": "A",
+                        "answer": "A",
+                        "explanation": "Câu hỏi ôn tập từ bài giảng."
+                    }
+                    for item in raw_q
+                ] if isinstance(raw_q, list) else []
+                history.append({
+                    "video_url": data.get("video_url"),
+                    "media_url": data.get("media_url") or data.get("media_stream_url"),
+                    "media_stream_url": data.get("media_stream_url") or data.get("media_url"),
+                    "title": data.get("title"),
+                    "duration_seconds": data.get("duration_seconds"),
+                    "language": data.get("language"),
+                    "summary": data.get("summary"),
+                    "segments": data.get("segments", []),
+                    "key_points": data.get("key_points", []),
+                    "formulas_and_terms": data.get("formulas_and_terms", []),
+                    "quiz": clean_q,
+                    "folder": data.get("folder") or "Bài giảng chung",
+                    "tags": data.get("tags") or ["Bài giảng"],
+                    "owner_id": data.get("owner_id"),
+                })
+            return history
+        except Exception as e:
+            logger.warning(f"Lỗi lấy lịch sử Firebase: {e}")
+            return []
+
+    def delete_lecture(self, video_url: str, owner_id: Optional[str] = None) -> bool:
+        """Xóa bài giảng của user khỏi Firebase Firestore"""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return False
+
+        try:
+            doc_id = f"{owner_id}_{self.get_document_id(video_url)}" if owner_id else self.get_document_id(video_url)
+            doc_ref = self.db.collection("lectures").document(doc_id)
+            doc = doc_ref.get()
+            if not doc.exists:
+                # Thử tìm theo ID gốc nếu chưa có tiền tố
+                legacy_id = self.get_document_id(video_url)
+                legacy_ref = self.db.collection("lectures").document(legacy_id)
+                legacy_doc = legacy_ref.get()
+                if legacy_doc.exists and (not owner_id or legacy_doc.to_dict().get("owner_id") == owner_id):
+                    legacy_ref.delete()
+                    return True
+                return False
+
+            if owner_id and doc.to_dict().get("owner_id") != owner_id:
+                return False
+
+            doc_ref.delete()
+            logger.info(f"Đã xóa thành công bài giảng khỏi Firebase Firestore [ID: {doc_id}]")
+            return True
+        except Exception as e:
+            logger.warning(f"Lỗi khi xóa bài giảng khỏi Firebase Firestore: {e}")
+            return False
+
+firebase_service = FirebaseService()
+

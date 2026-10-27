@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend-ai
+        working-directory: src/backend-ai
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,13 +22,13 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mobile-app
+        working-directory: src/mobile-app
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: mobile-app/package-lock.json
+          cache-dependency-path: src/mobile-app/package-lock.json
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high

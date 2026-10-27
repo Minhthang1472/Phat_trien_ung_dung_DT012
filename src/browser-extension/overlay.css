@@ -1,0 +1,172 @@
+/* ============================================================
+   EdTech AI — Overlay phụ đề nổi trên video
+   Phong cách: white glass · coral / mint / violet accents
+   ============================================================ */
+
+/* Khung chứa phụ đề nổi: ghim trực tiếp vào khung phát video YouTube */
+#lecture-ai-overlay-container {
+  position: absolute !important;
+  bottom: 60px !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  z-index: 2147483647 !important; /* Đảm bảo luôn nằm trên cùng của video player */
+  pointer-events: auto !important;
+  user-select: none;
+  cursor: default;
+  width: max-content !important;
+  max-width: 90% !important;
+  transition: opacity 0.2s ease;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Hộp phụ đề kính trắng (glassmorphism) */
+#lecture-ai-overlay-box {
+  position: relative;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  color: #1e1b4b;
+  padding: 12px 24px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow:
+    0 16px 40px -18px rgba(30, 27, 75, 0.45),
+    0 2px 10px rgba(30, 27, 75, 0.12),
+    0 0 0 1px rgba(255, 111, 97, 0.06);
+  text-align: center;
+  line-height: 1.45;
+  letter-spacing: 0.1px;
+  transition: box-shadow 0.15s ease-out, border-color 0.15s ease-out;
+}
+
+/* Thiết bị/trình duyệt không hỗ trợ blur: tăng độ đục để vẫn đọc rõ */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  #lecture-ai-overlay-box {
+    background: rgba(255, 255, 255, 0.96);
+  }
+}
+
+/* Khối bọc từng dòng để cô lập hoàn toàn vùng chọn văn bản */
+.lecture-ai-line-wrapper {
+  display: block;
+  margin: 3px 0;
+  text-align: center;
+}
+
+/* Thuộc tính chung cho từng dòng phụ đề */
+.lecture-ai-sub-line {
+  display: inline-block;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text !important;
+  position: relative;
+}
+
+/* Dòng phụ đề dịch (chính) */
+.lecture-ai-main-sub {
+  font-size: 20px;
+  font-weight: 800;
+  color: #1e1b4b;
+  padding: 2px 8px;
+  border-radius: 8px;
+  letter-spacing: -0.1px;
+}
+
+/* Dòng phụ đề gốc (song ngữ) được tách biệt */
+.lecture-ai-orig-sub {
+  font-size: 14px;
+  font-weight: 600;
+  color: #475569;
+  font-style: italic;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(30, 27, 75, 0.045);
+  border: 1px solid rgba(30, 27, 75, 0.08);
+  margin-top: 5px;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.lecture-ai-orig-sub:hover {
+  background: #f3e9fb;
+  border-color: rgba(123, 44, 191, 0.25);
+  color: #7b2cbf;
+}
+
+/* Thanh điều khiển nhanh góc trên */
+.lecture-ai-controls {
+  position: absolute;
+  top: -34px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 8px 20px -10px rgba(30, 27, 75, 0.4);
+  opacity: 0.92;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+#lecture-ai-overlay-container:hover .lecture-ai-controls {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.lecture-ai-btn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #475569;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.lecture-ai-btn:hover {
+  background: #fff1ef;
+  border-color: rgba(255, 111, 97, 0.28);
+  color: #ac332a;
+}
+
+/* Nút tay cầm chuyên dụng để kéo di chuyển */
+.lecture-ai-drag-handle {
+  cursor: grab !important;
+  background: #fff1ef !important;
+  border-color: rgba(255, 111, 97, 0.24) !important;
+  color: #ac332a !important;
+  font-weight: 700;
+}
+
+.lecture-ai-drag-handle:active {
+  cursor: grabbing !important;
+  background: #ff6f61 !important;
+  border-color: #ff6f61 !important;
+  color: #ffffff !important;
+}
+
+/* Trạng thái đang đọc / đang phát âm */
+.lecture-ai-speaking {
+  border-color: rgba(6, 214, 160, 0.65) !important;
+  box-shadow:
+    0 16px 40px -18px rgba(30, 27, 75, 0.45),
+    0 0 0 3px rgba(6, 214, 160, 0.18),
+    0 0 24px rgba(6, 214, 160, 0.35) !important;
+}
+
+#lecture-ai-overlay-box:empty {
+  display: none !important;
+}

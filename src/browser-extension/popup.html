@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EdTech AI — Phụ đề bài giảng</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="aura" aria-hidden="true"></div>
+
+  <div class="app">
+    <!-- Header thương hiệu -->
+    <header class="header">
+      <div class="logo-badge" aria-hidden="true">
+        <span class="logo-glyph">✦</span>
+      </div>
+      <div class="brand-text">
+        <div class="brand-row">
+          <h1>EdTech AI</h1>
+          <span class="pro-pill">PRO</span>
+        </div>
+        <p class="subtitle">Phụ đề bài giảng tự động</p>
+      </div>
+      <span class="header-chip">
+        <span class="header-chip-dot"></span>
+        Extension
+      </span>
+    </header>
+
+    <!-- Trạng thái Backend Server -->
+    <div class="status-box" id="statusBox" role="status" title="Nhấp để làm mới kết nối máy chủ">
+      <span class="status-dot" id="statusDot"></span>
+      <div class="status-copy">
+        <span class="status-label">Máy chủ AI</span>
+        <span class="status-text" id="statusText">Đang kiểm tra máy chủ...</span>
+      </div>
+      <span class="status-refresh" aria-hidden="true">↻</span>
+    </div>
+
+    <!-- Thông tin Tab hiện tại -->
+    <div class="tab-info" id="tabInfoBox">
+      <span class="tab-icon" aria-hidden="true">▶</span>
+      <div class="tab-copy">
+        <span class="tab-label">Tab hiện tại</span>
+        <span class="tab-url" id="tabUrlText">Đang tải...</span>
+      </div>
+    </div>
+
+    <!-- Cấu hình phụ đề -->
+    <section class="panel">
+      <div class="field">
+        <label for="targetLang">Ngôn ngữ phụ đề dịch</label>
+        <div class="select-wrap">
+          <select id="targetLang">
+            <option value="vi" selected>Tiếng Việt</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="zh">中文</option>
+          </select>
+          <span class="select-caret" aria-hidden="true">▾</span>
+        </div>
+      </div>
+
+      <div class="checkbox-row">
+        <label class="toggle">
+          <input id="bilingualCheck" type="checkbox" checked>
+          <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+          <span class="toggle-copy">
+            <span class="toggle-title">Hiện song ngữ</span>
+            <span class="toggle-hint">Bilingual subtitles</span>
+          </span>
+        </label>
+
+        <label class="toggle">
+          <input id="includeQuizCheck" type="checkbox" checked>
+          <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+          <span class="toggle-copy">
+            <span class="toggle-title">Tạo câu hỏi trắc nghiệm</span>
+            <span class="toggle-hint">AI quiz generator</span>
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Cắt đoạn thời gian (Tuỳ chọn) -->
+    <section class="panel panel-tight">
+      <div class="panel-head">
+        <span class="panel-title">Khoảng thời gian</span>
+        <span class="panel-tag">Tuỳ chọn</span>
+      </div>
+      <div class="field-row">
+        <div class="field-half">
+          <label for="startTime">Từ giây</label>
+          <input type="number" id="startTime" min="0" placeholder="0">
+        </div>
+        <div class="field-half">
+          <label for="endTime">Đến giây</label>
+          <input type="number" id="endTime" min="0" placeholder="Hết">
+        </div>
+      </div>
+    </section>
+
+    <!-- Nút hành động chính -->
+    <div class="button-group">
+      <button id="btnProcessTab" class="btn-primary">Bắt đầu tạo phụ đề</button>
+      <button id="btnCancelProcess" class="btn-cancel">Hủy tiến trình</button>
+
+      <div class="button-row">
+        <button id="btnToggleOverlay" class="btn-secondary" title="Ẩn hoặc hiện khung phụ đề nổi trên trang">
+          Ẩn / Hiện phụ đề nổi
+        </button>
+      </div>
+    </div>
+
+    <!-- Nạp file phụ đề có sẵn -->
+    <div class="accordion-header" id="accordionToggle" role="button" tabindex="0">
+      Nạp file phụ đề có sẵn
+    </div>
+    <div class="accordion-body" id="accordionBody" style="display: none;">
+      <span class="accordion-hint">Hỗ trợ .srt và .vtt, tối đa 10MB</span>
+      <input id="subtitleFile" type="file" accept=".srt,.vtt,text/vtt,application/x-subrip">
+      <button id="btnProcessSubtitle" class="btn-action-small">Dịch &amp; Nạp vào Video</button>
+    </div>
+
+    <!-- Kết quả tóm tắt & Quiz -->
+    <div class="summary-section" id="summarySection" style="display: none;">
+      <div class="tabs-header">
+        <button class="tab-btn active" id="tabBtnSummary">Tóm tắt</button>
+        <button class="tab-btn" id="tabBtnQuiz">Trắc nghiệm</button>
+      </div>
+      <div class="tab-content" id="tabContentSummary">
+        <div class="summary-text" id="summaryContent"></div>
+      </div>
+      <div class="tab-content" id="tabContentQuiz" style="display: none;">
+        <div class="quiz-container" id="quizContent"></div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <span class="footer-dot"></span>
+      Đồng bộ an toàn với máy chủ AI
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

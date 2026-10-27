@@ -118,7 +118,7 @@ flowchart TD
 
 ```text
 Phát triển ứng dụng/
-├── backend-ai/                      # MÃ NGUỒN MÁY CHỦ BACKEND AI (FASTAPI)
+├── src/backend-ai/                  # MÃ NGUỒN MÁY CHỦ BACKEND AI (FASTAPI)
 │   ├── app/
 │   │   ├── api/
 │   │   │   └── websocket_router.py  # WebSocket bóc tách trực tiếp (Live Caption)
@@ -146,14 +146,14 @@ Phát triển ứng dụng/
 │   ├── run_server.py                # File khởi chạy máy chủ cục bộ (Localhost)
 │   └── serviceAccountKey.json       # Khóa cấu hình dịch vụ Firebase Admin SDK
 │
-├── browser-extension/               # TIỆN ÍCH MỞ RỘNG TRÌNH DUYỆT (MANIFEST V3)
+├── src/browser-extension/           # TIỆN ÍCH MỞ RỘNG TRÌNH DUYỆT (MANIFEST V3)
 │   ├── manifest.json                # Khai báo quyền, host permissions & scripts
 │   ├── popup.html / popup.css       # Giao diện điều khiển nhanh khi click icon
 │   ├── popup.js                     # Điều hướng, gọi API, auto-load bài giảng cũ
 │   ├── content.js                   # Tiêm khung phụ đề nổi, TTS & auto-sync YouTube
 │   └── overlay.css                  # Hiệu ứng Glassmorphism, ghim khung lên video
 │
-├── mobile-app/                      # ỨNG DỤNG DI ĐỘNG & WEB (REACT NATIVE / EXPO)
+├── src/mobile-app/                  # ỨNG DỤNG DI ĐỘNG & WEB (REACT NATIVE / EXPO)
 │   ├── src/
 │   │   ├── screens/
 │   │   │   ├── HomeScreen.js        # Màn hình chính phát video, phụ đề, Quiz
@@ -186,6 +186,16 @@ Trước khi cài đặt, hãy đảm bảo máy tính đã cài đặt các cô
 
 ## 🚀 HƯỚNG DẪN KHỞI CHẠY CHI TIẾT
 
+### Chạy nhanh từ thư mục gốc dự án
+
+Các script tiện dụng đã được khai báo trong `package.json` ở thư mục gốc:
+
+```powershell
+npm run backend     # Khởi chạy Backend AI (FastAPI)
+npm run mobile      # Khởi chạy Expo (điện thoại/Web)
+npm run mobile:web  # Chạy trực tiếp trên trình duyệt
+```
+
 ### CÁCH 1: CHẠY MÁY CHỦ AI TRÊN GOOGLE COLAB GPU TESLA T4 (KHUYẾN NGHỊ 100%)
 *Tận dụng card đồ họa Tesla T4 16GB VRAM của Google để bóc tách video siêu tốc, không tốn tài nguyên máy tính cá nhân.*
 
@@ -210,7 +220,7 @@ Trước khi cài đặt, hãy đảm bảo máy tính đã cài đặt các cô
 
 1. **Mở terminal chuyển vào thư mục backend:**
    ```powershell
-   cd "backend-ai"
+   cd "src/backend-ai"
    ```
 2. **Khởi tạo và kích hoạt môi trường ảo Python:**
    ```powershell
@@ -245,16 +255,16 @@ Trước khi cài đặt, hãy đảm bảo máy tính đã cài đặt các cô
 2. Bật công tắc **Chế độ dành cho nhà phát triển (Developer mode)** ở góc trên bên phải.
 3. Bấm nút **Tải tiện ích đã giải nén (Load unpacked)** ở góc trên bên trái.
 4. Chọn đường dẫn đến thư mục:  
-   `c:\...\Phát triển ứng dụng\browser-extension`
+   `c:\...\Phát triển ứng dụng\src\browser-extension`
 5. Tiện ích **"PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG"** sẽ xuất hiện trên thanh công cụ trình duyệt. Bấm biểu tượng 📌 để ghim tiện ích.
 
 ---
 
 ### KHỞI CHẠY MOBILE APP & WEB APP (REACT NATIVE - EXPO)
 
-1. **Mở terminal chuyển vào thư mục `mobile-app`:**
+1. **Mở terminal chuyển vào thư mục `src/mobile-app`:**
    ```powershell
-   cd "mobile-app"
+   cd "src/mobile-app"
    ```
 2. **Cài đặt thư viện dependencies:**
    ```powershell

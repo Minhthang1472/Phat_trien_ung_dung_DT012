@@ -1,0 +1,253 @@
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { colors, fonts, gradients, radius } from '../constants/theme';
+import GlassBar from './ui/GlassBar';
+import Icon from './ui/Icon';
+
+export default function Header({
+  title = 'EdTech AI',
+  serverStatus = { online: false },
+  onOpenSettings,
+  onBack,
+  showBack = false,
+  rightElement,
+  streakLabel = '1 Ngày',
+}) {
+  const online = !!serverStatus?.online;
+
+  return (
+    <GlassBar style={styles.container} intensity={50} tint="light">
+      <View style={styles.inner}>
+        <View style={styles.leftSection}>
+          {showBack ? (
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={onBack}
+              activeOpacity={0.7}
+              accessibilityLabel="Quay lại"
+            >
+              <Icon name="back" size={24} color={colors.ink} />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.logoBadge}>
+              <Icon name="school" size={22} color={colors.coral} />
+            </View>
+          )}
+
+          <View style={styles.titleWrap}>
+            <View style={styles.titleRow}>
+              <Text style={styles.title} numberOfLines={1}>
+                {title}
+              </Text>
+              {!showBack ? (
+                <Icon name="sparkle" size={15} color={colors.coral} style={styles.sparkle} />
+              ) : null}
+            </View>
+
+            <View
+              style={[
+                styles.statusPill,
+                { backgroundColor: online ? colors.mintSoft : colors.lemonSoft },
+              ]}
+            >
+              <View
+                style={[
+                  styles.statusDot,
+                  { backgroundColor: online ? colors.mint : colors.lemon },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.statusText,
+                  { color: online ? colors.mintDeep : '#8A6100' },
+                ]}
+              >
+                {online ? 'TRỰC TUYẾN' : 'NGOẠI TUYẾN'}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.rightSection}>
+          {rightElement}
+
+          {!showBack ? (
+            <>
+              <View style={styles.streakPill}>
+                <Icon name="fire" size={15} color={colors.coral} />
+                <Text style={styles.streakText}>{streakLabel}</Text>
+              </View>
+
+              <View style={styles.bellButton} accessibilityLabel="Thông báo">
+                <Icon name="bell" size={21} color={colors.slate} />
+                <View style={styles.bellDot} />
+              </View>
+
+              <LinearGradient
+                colors={gradients.primary}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.avatar}
+              >
+                <Icon name="profile" size={19} color="#FFFFFF" />
+              </LinearGradient>
+            </>
+          ) : null}
+
+          {onOpenSettings ? (
+            <TouchableOpacity
+              style={styles.iconButton}
+              onPress={onOpenSettings}
+              activeOpacity={0.7}
+              accessibilityLabel="Cài đặt"
+            >
+              <Icon name="settings" size={20} color={colors.slate} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    </GlassBar>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(30, 27, 75, 0.05)',
+  },
+  inner: {
+    minHeight: 64,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  leftSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceLow,
+  },
+  logoBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.coralTint,
+    flexShrink: 0,
+  },
+  titleWrap: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  title: {
+    fontFamily: fonts.bold,
+    fontSize: 19,
+    lineHeight: 24,
+    color: colors.ink,
+    letterSpacing: -0.3,
+    flexShrink: 1,
+  },
+  sparkle: {
+    marginTop: -1,
+  },
+  statusPill: {
+    marginTop: 3,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusText: {
+    fontFamily: fonts.extraBold,
+    fontSize: 9,
+    lineHeight: 12,
+    letterSpacing: 0.6,
+  },
+  rightSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
+  },
+  streakPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceLowest,
+    shadowColor: colors.coral,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 3,
+  },
+  streakText: {
+    fontFamily: fonts.extraBold,
+    fontSize: 10,
+    lineHeight: 14,
+    color: colors.ink,
+  },
+  bellButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  bellDot: {
+    position: 'absolute',
+    top: 9,
+    right: 10,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: colors.coral,
+    borderWidth: 1.5,
+    borderColor: colors.surfaceBright,
+  },
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceLow,
+  },
+});

@@ -48,20 +48,20 @@ print("📥 [2/5] Đang tải mã nguồn dự án...")
 
 # 3. Cài đặt thư viện Python & GPU CUDA runtime cho Whisper
 print("🐍 [3/5] Đang cài đặt thư viện Python & GPU CUDA runtime...")
-%cd /content/Phat_trien_ung_dung_DT012/backend-ai
+%cd /content/Phat_trien_ung_dung_DT012/src/backend-ai
 !pip install -q -r requirements.txt
 !pip install -q "av<19" nvidia-cublas-cu12 nvidia-cudnn-cu12
 
 # 4. Nạp file cấu hình Firebase (serviceAccountKey.json)
 import shutil, os
 if os.path.exists('/content/serviceAccountKey.json'):
-    shutil.copy('/content/serviceAccountKey.json', '/content/Phat_trien_ung_dung_DT012/backend-ai/serviceAccountKey.json')
+    shutil.copy('/content/serviceAccountKey.json', '/content/Phat_trien_ung_dung_DT012/src/backend-ai/serviceAccountKey.json')
     print("🔑 [4/5] Đã nạp khóa Firebase thành công!")
 else:
     print("⚠️ [4/5] Lưu ý: Nếu bạn chưa kéo file serviceAccountKey.json vào /content, hãy kéo vào để backend kết nối Firebase!")
 
 # 5. Tạo cấu hình .env tối ưu GPU Tesla T4
-with open('/content/Phat_trien_ung_dung_DT012/backend-ai/.env', 'w') as f:
+with open('/content/Phat_trien_ung_dung_DT012/src/backend-ai/.env', 'w') as f:
     f.write("""WHISPER_DEVICE=cuda
 WHISPER_COMPUTE_TYPE=float16
 WHISPER_MODEL_SIZE=base
@@ -153,7 +153,7 @@ if server_url:
     try:
         import firebase_admin
         from firebase_admin import credentials, firestore
-        key_path = '/content/Phat_trien_ung_dung_DT012/backend-ai/serviceAccountKey.json'
+        key_path = '/content/Phat_trien_ung_dung_DT012/src/backend-ai/serviceAccountKey.json'
         if os.path.exists(key_path):
             if not firebase_admin._apps:
                 cred = credentials.Certificate(key_path)
@@ -173,7 +173,7 @@ else:
             print(f.read())
 
 # 6. Khởi chạy Server FastAPI
-%cd /content/Phat_trien_ung_dung_DT012/backend-ai
+%cd /content/Phat_trien_ung_dung_DT012/src/backend-ai
 !uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
