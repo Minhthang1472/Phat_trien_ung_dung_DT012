@@ -45,6 +45,58 @@ class AudioService:
         return True, "verified_clean"
 
     @staticmethod
+    def _find_cookies_file() -> str | None:
+        candidates = [
+            os.path.join(os.getcwd(), 'cookies.txt'),
+            '/content/cookies.txt',
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'cookies.txt'),
+            '/content/Phat_trien_ung_dung_DT012/src/backend-ai/cookies.txt',
+            os.path.expanduser('~/cookies.txt')
+        ]
+        for p in candidates:
+            if os.path.exists(p) and os.path.isfile(p) and os.path.getsize(p) > 0:
+                return p
+        return None
+
+    @staticmethod
+    def _build_ydl_options(extra_opts: dict = None) -> dict:
+        opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'source_address': '0.0.0.0',
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web', 'mweb'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+            }
+        }
+        cookie_path = AudioService._find_cookies_file()
+        if cookie_path:
+            logger.info(f"🍪 Đang sử dụng cookie xác thực YouTube: {cookie_path}")
+            opts['cookiefile'] = cookie_path
+
+        if extra_opts:
+            opts.update(extra_opts)
+        return opts
+
+    @staticmethod
+    def extract_video_id(video_url: str) -> str:
+        import re
+        patterns = [
+            r'(?:v=|\/)([0-9A-Za-z_-]{11})(?:\?|&|\/|$)',
+            r'youtu\.be\/([0-9A-Za-z_-]{11})',
+            r'shorts\/([0-9A-Za-z_-]{11})',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, video_url)
+            if match:
+                return match.group(1)
+        return ""
+
+    @staticmethod
     def extract_audio_from_url(
         video_url: str,
         duration_limit_sec: int = None,
@@ -62,33 +114,30 @@ class AudioService:
         out_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
 
         # 1. Trích xuất metadata nhanh để kiểm tra bản quyền & DRM
-        check_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'skip_download': True,
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        }
-        with yt_dlp.YoutubeDL(check_opts) as ydl_check:
-            logger.info(f"Đang xác minh bản quyền & DRM URL: {video_url}")
-            meta_info = ydl_check.extract_info(video_url, download=False)
-            is_allowed, reason = AudioService.verify_copyright_and_drm(meta_info)
-            if not is_allowed:
-                logger.warning(f"Từ chối xử lý do bản quyền/DRM: {reason}")
-                raise ValueError(reason)
+        check_opts = AudioService._build_ydl_options({'skip_download': True})
+        try:
+            with yt_dlp.YoutubeDL(check_opts) as ydl_check:
+                logger.info(f"Đang xác minh bản quyền & DRM URL: {video_url}")
+                meta_info = ydl_check.extract_info(video_url, download=False)
+                is_allowed, reason = AudioService.verify_copyright_and_drm(meta_info)
+                if not is_allowed:
+                    logger.warning(f"Từ chối xử lý do bản quyền/DRM: {reason}")
+                    raise ValueError(reason)
+        except ValueError:
+            raise
+        except Exception as e:
+            logger.warning(f"Bỏ qua bước xác minh bản quyền ban đầu (sẽ xử lý khi tải): {e}")
 
         # 2. Cấu hình tải và cắt mốc thời gian
-        ydl_opts = {
+        ydl_opts = AudioService._build_ydl_options({
             'format': 'bestaudio/best',
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'wav',
                 'preferredquality': '192',
             }],
             'outtmpl': out_template,
-            'quiet': True,
-            'no_warnings': True,
-        }
+        })
 
         # Cắt đoạn theo start_time và end_time (Yêu cầu 4)
         has_time_range = (start_time_sec and start_time_sec > 0) or (end_time_sec and end_time_sec > 0)
@@ -107,32 +156,56 @@ class AudioService:
             )
             ydl_opts['force_keyframes_at_cuts'] = True
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logger.info(f"Đang bóc tách âm thanh từ URL: {video_url} (Khoảng: {start_time_sec or 0}s -> {end_time_sec or 'hết'})")
-            info = ydl.extract_info(video_url, download=True)
-            video_id = info.get('id', 'temp_audio')
-            title = info.get('title', 'Bài giảng không tên')
-            full_duration = info.get('duration', 0)
-            
-            # File wav được FFmpeg xuất ra
-            wav_candidates = glob.glob(os.path.join(temp_dir, f"{video_id}*.wav"))
-            audio_path = max(wav_candidates, key=os.path.getmtime) if wav_candidates else os.path.join(temp_dir, f"{video_id}.wav")
-            
-            # Tính thời lượng thực tế của đoạn cần xử lý
-            effective_duration = full_duration
-            if end_time_sec and end_time_sec > (start_time_sec or 0):
-                effective_duration = end_time_sec - (start_time_sec or 0)
-            elif duration_limit_sec and duration_limit_sec > 0:
-                effective_duration = min(full_duration, duration_limit_sec)
+        info = None
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info(f"Đang bóc tách âm thanh từ URL: {video_url} (Khoảng: {start_time_sec or 0}s -> {end_time_sec or 'hết'})")
+                info = ydl.extract_info(video_url, download=True)
+        except Exception as e:
+            err_msg = str(e)
+            if "confirm you're not a bot" in err_msg or "Sign in to confirm" in err_msg:
+                logger.warning("YouTube yêu cầu xác thực bot, đang thử lại với chế độ mweb...")
+                retry_opts = dict(ydl_opts)
+                retry_opts['extractor_args'] = {'youtube': {'player_client': ['mweb', 'android']}}
+                try:
+                    with yt_dlp.YoutubeDL(retry_opts) as ydl_retry:
+                        info = ydl_retry.extract_info(video_url, download=True)
+                except Exception as e2:
+                    logger.error(f"Lỗi YouTube Bot Check: {e2}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "YouTube từ chối kết nối từ Google Colab (yêu cầu xác thực bot). "
+                            "Gợi ý: Bạn có thể kéo file cookies.txt vào Colab để mở khóa vĩnh viễn, "
+                            "hoặc dùng nút 'Tải file MP4/MP3' trên app để xử lý trực tiếp không cần qua YouTube!"
+                        )
+                    ) from e2
+            else:
+                raise HTTPException(status_code=500, detail=f"Lỗi khi tải/bóc tách video: {err_msg}") from e
 
-            return {
-                "audio_path": audio_path,
-                "title": title,
-                "duration": effective_duration,
-                "video_id": video_id,
-                "copyright_status": "verified_clean",
-                "start_time_offset": start_time_sec or 0,
-            }
+        video_id = info.get('id', 'temp_audio') if info else 'temp_audio'
+        title = info.get('title', 'Bài giảng không tên') if info else 'Bài giảng không tên'
+        full_duration = info.get('duration', 0) if info else 0
+
+        # File wav được FFmpeg xuất ra
+        wav_candidates = glob.glob(os.path.join(temp_dir, f"{video_id}*.wav"))
+        audio_path = max(wav_candidates, key=os.path.getmtime) if wav_candidates else os.path.join(temp_dir, f"{video_id}.wav")
+
+        # Tính thời lượng thực tế của đoạn cần xử lý
+        effective_duration = full_duration
+        if end_time_sec and end_time_sec > (start_time_sec or 0):
+            effective_duration = end_time_sec - (start_time_sec or 0)
+        elif duration_limit_sec and duration_limit_sec > 0:
+            effective_duration = min(full_duration, duration_limit_sec)
+
+        return {
+            "audio_path": audio_path,
+            "title": title,
+            "duration": effective_duration,
+            "video_id": video_id,
+            "copyright_status": "verified_clean",
+            "start_time_offset": start_time_sec or 0,
+        }
 
     @staticmethod
     def get_video_info(video_url: str) -> dict:
@@ -141,12 +214,7 @@ class AudioService:
         Tích hợp kiểm tra bản quyền DRM nhanh (Yêu cầu 6).
         """
         video_url = AudioService.validate_source_url(video_url)
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'skip_download': True,
-            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
-        }
+        ydl_opts = AudioService._build_ydl_options({'skip_download': True})
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 logger.info(f"Đang đọc thông tin metadata nhanh từ URL: {video_url}")
@@ -161,7 +229,8 @@ class AudioService:
                 }
         except Exception as e:
             logger.warning(f"Lỗi khi đọc metadata nhanh: {e}")
-            return {"title": "Bài giảng", "duration": 0, "video_id": "", "is_allowed": True, "copyright_status": "unverified"}
+            vid_id = AudioService.extract_video_id(video_url)
+            return {"title": "Bài giảng YouTube", "duration": 0, "video_id": vid_id, "is_allowed": True, "copyright_status": "unverified"}
 
     @staticmethod
     def extract_audio_from_file(

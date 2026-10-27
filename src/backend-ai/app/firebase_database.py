@@ -89,9 +89,15 @@ class FirebaseService:
                 return data
 
             # 3. Query theo video_url nếu doc_id có định dạng khác
-            query = self.db.collection("lectures").where("video_url", "==", video_url)
-            if owner_id:
-                query = query.where("owner_id", "==", owner_id)
+            try:
+                from google.cloud.firestore_v1.base_query import FieldFilter
+                query = self.db.collection("lectures").where(filter=FieldFilter("video_url", "==", video_url))
+                if owner_id:
+                    query = query.where(filter=FieldFilter("owner_id", "==", owner_id))
+            except Exception:
+                query = self.db.collection("lectures").where("video_url", "==", video_url)
+                if owner_id:
+                    query = query.where("owner_id", "==", owner_id)
             docs = list(query.limit(1).stream())
             if docs:
                 data = docs[0].to_dict()
