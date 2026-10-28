@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, StatusBar, View, Platform, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, Platform, ActivityIndicator } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
   useFonts,
@@ -23,7 +24,7 @@ export default function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
 
   // Plus Jakarta Sans là font nền tảng của design system mới.
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     PlusJakartaSans_400Regular,
     PlusJakartaSans_500Medium,
     PlusJakartaSans_600SemiBold,
@@ -81,11 +82,11 @@ export default function App() {
     setRouteParams({});
   };
 
-  if (checkingAuth || !fontsLoaded) {
+  if (checkingAuth || (!fontsLoaded && !fontError)) {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.safeArea}>
-          <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+          <StatusBar style="dark" backgroundColor={colors.surface} />
           <View style={[styles.container, styles.loadingCenter]}>
             <ActivityIndicator size="large" color={colors.coral} />
           </View>
@@ -97,7 +98,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safeArea}>
-        <StatusBar barStyle="dark-content" backgroundColor={colors.surface} />
+        <StatusBar style="dark" backgroundColor={colors.surface} />
         <View style={styles.container}>
           <View style={styles.contentArea}>
             {currentRoute === 'Home' && <HomeScreen onNavigate={handleNavigate} />}
