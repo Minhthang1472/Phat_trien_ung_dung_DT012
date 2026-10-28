@@ -1,113 +1,158 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { colors, fonts, gradients, radius } from '../constants/theme';
 import GlassBar from './ui/GlassBar';
 import Icon from './ui/Icon';
+import NotificationModal from './NotificationModal';
+import { notificationService } from '../services/notificationService';
+import { apiService } from '../services/api';
 
 export default function Header({
   title = 'EdTech AI',
-  serverStatus = { online: false },
+  serverStatus,
   onOpenSettings,
   onBack,
   showBack = false,
   rightElement,
   streakLabel = '1 Ngày',
 }) {
-  const online = !!serverStatus?.online;
+  const [internalOnline, setInternalOnline] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifModal, setShowNotifModal] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    if (serverStatus !== null && serverStatus !== undefined) {
+      setInternalOnline(!!serverStatus?.online);
+    } else {
+      apiService
+        .checkServerHealth()
+        .then((res) => {
+          if (active) setInternalOnline(!!res?.online);
+        })
+        .catch(() => {
+          if (active) setInternalOnline(false);
+        });
+    }
+    return () => {
+      active = false;
+    };
+  }, [serverStatus]);
+
+  const online = serverStatus !== null && serverStatus !== undefined ? !!serverStatus?.online : internalOnline;
+
+  useEffect(() => {
+    const unsubscribe = notificationService.subscribe((list) => {
+      setNotifications(list || []);
+    });
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
 
   return (
-    <GlassBar style={styles.container} intensity={50} tint="light">
-      <View style={styles.inner}>
-        <View style={styles.leftSection}>
-          {showBack ? (
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={onBack}
-              activeOpacity={0.7}
-              accessibilityLabel="Quay lại"
-            >
-              <Icon name="back" size={24} color={colors.ink} />
-            </TouchableOpacity>
-          ) : (
-            <View style={styles.logoBadge}>
-              <Icon name="school" size={22} color={colors.coral} />
-            </View>
-          )}
+    <>
+      <GlassBar style={styles.container} intensity={50} tint="light">
+        <View style={styles.inner}>
+          <View style={styles.leftSection}>
+            {showBack ? (
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={onBack}
+                activeOpacity={0.7}
+                accessibilityLabel="Quay lại"
+              >
+                <Icon name="back" size={24} color={colors.ink} />
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.logoBadge}>
+                <Icon name="school" size={22} color={colors.coral} />
+              </View>
+            )}
 
-          <View style={styles.titleWrap}>
-            <View style={styles.titleRow}>
-              <Text style={styles.title} numberOfLines={1}>
-                {title}
-              </Text>
-              {!showBack ? (
-                <Icon name="sparkle" size={15} color={colors.coral} style={styles.sparkle} />
-              ) : null}
-            </View>
+            <View style={styles.titleWrap}>
+              <View style={styles.titleRow}>
+                <Text style={styles.title} numberOfLines={1}>
+                  {title}
+                </Text>
+                {!showBack ? (
+                  <Icon name="sparkle" size={15} color={colors.coral} style={styles.sparkle} />
+                ) : null}
+              </View>
 
-            <View
-              style={[
-                styles.statusPill,
-                { backgroundColor: online ? colors.mintSoft : colors.lemonSoft },
-              ]}
-            >
               <View
                 style={[
-                  styles.statusDot,
-                  { backgroundColor: online ? colors.mint : colors.lemon },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.statusText,
-                  { color: online ? colors.mintDeep : '#8A6100' },
+                  styles.statusPill,
+                  { backgroundColor: online ? colors.mintSoft : colors.lemonSoft },
                 ]}
               >
-                {online ? 'TRỰC TUYẾN' : 'NGOẠI TUYẾN'}
-              </Text>
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: online ? colors.mint : colors.lemon },
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.statusText,
+                    { color: online ? colors.mintDeep : '#8A6100' },
+                  ]}
+                >
+                  {online ? 'TRỰC TUYẾN' : 'NGOẠI TUYẾN'}
+                </Text>
+              </View>
             </View>
           </View>
-        </View>
 
-        <View style={styles.rightSection}>
-          {rightElement}
+          <View style={styles.rightSection}>
+            {rightElement}
 
-          {!showBack ? (
-            <>
-              <View style={styles.streakPill}>
-                <Icon name="fire" size={15} color={colors.coral} />
-                <Text style={styles.streakText}>{streakLabel}</Text>
-              </View>
+            {!showBack ? (
+              <>
+                <View style={styles.streakPill}>
+                  <Icon name="fire" size={15} color={colors.coral} />
+                  <Text style={styles.streakText}>{streakLabel}</Text>
+                </View>
 
-              <View style={styles.bellButton} accessibilityLabel="Thông báo">
-                <Icon name="bell" size={21} color={colors.slate} />
-                <View style={styles.bellDot} />
-              </View>
+                {/* Nút chuông thông báo trực quan */}
+                <TouchableOpacity
+                  style={styles.bellButton}
+                  onPress={() => setShowNotifModal(true)}
+                  activeOpacity={0.75}
+                  accessibilityLabel="Thông báo hệ thống"
+                >
+                  <Icon name="bell" size={21} color={unreadCount > 0 ? colors.coral : colors.slate} />
+                  {unreadCount > 0 ? <View style={styles.bellDot} /> : null}
+                </TouchableOpacity>
+              </>
+            ) : null}
 
-              <LinearGradient
-                colors={gradients.primary}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.avatar}
+            {onOpenSettings ? (
+              <TouchableOpacity
+                style={styles.iconButton}
+                onPress={onOpenSettings}
+                activeOpacity={0.7}
+                accessibilityLabel="Cài đặt"
               >
-                <Icon name="profile" size={19} color="#FFFFFF" />
-              </LinearGradient>
-            </>
-          ) : null}
-
-          {onOpenSettings ? (
-            <TouchableOpacity
-              style={styles.iconButton}
-              onPress={onOpenSettings}
-              activeOpacity={0.7}
-              accessibilityLabel="Cài đặt"
-            >
-              <Icon name="settings" size={20} color={colors.slate} />
-            </TouchableOpacity>
-          ) : null}
+                <Icon name="settings" size={20} color={colors.slate} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
         </View>
-      </View>
-    </GlassBar>
+      </GlassBar>
+
+      {/* Modal Thông báo hệ thống */}
+      <NotificationModal
+        visible={showNotifModal}
+        notifications={notifications}
+        onClose={() => setShowNotifModal(false)}
+        onMarkAllAsRead={() => notificationService.markAllAsRead()}
+        onClearAll={() => notificationService.clearAll()}
+        onDeleteSingle={(id) => notificationService.deleteNotification(id)}
+      />
+    </>
   );
 }
 

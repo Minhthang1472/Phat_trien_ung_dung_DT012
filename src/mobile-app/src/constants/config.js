@@ -25,10 +25,10 @@ export const STORAGE_KEYS = {
 
 export const SUPPORTED_LANGUAGES = [
   { code: 'vi', label: 'Tiếng Việt' },
-  { code: 'en', label: 'English' },
-  { code: 'ja', label: '日本語' },
-  { code: 'ko', label: '한국어' },
-  { code: 'zh', label: '中文' },
+  { code: 'en', label: 'Tiếng Anh' },
+  { code: 'ja', label: 'Tiếng Nhật' },
+  { code: 'zh', label: 'Tiếng Trung' },
+  { code: 'ko', label: 'Tiếng Hàn' },
 ];
 
 const DEFAULT_GOOGLE_CLIENT_ID = '408015025205-j5bkhm4in0pckg9dmss73h3a8f1mdg8r.apps.googleusercontent.com';

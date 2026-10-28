@@ -19,6 +19,7 @@ import * as Sharing from 'expo-sharing';
 import { colors, spacing, borderRadius } from '../constants/theme';
 import { SUPPORTED_LANGUAGES } from '../constants/config';
 import { apiService } from '../services/api';
+import { notificationService } from '../services/notificationService';
 import Header from '../components/Header';
 import LectureCard from '../components/LectureCard';
 import AuraBackground from '../components/ui/AuraBackground';
@@ -127,7 +128,17 @@ export default function HomeScreen({ onNavigate }) {
       ]);
 
       if (history && history.length > 0) {
-        setRecentLectures(history.map(ensureAiClassification));
+        // Lọc khử trùng lặp theo video_url để giao diện luôn chỉ hiển thị 1 thẻ bài giảng duy nhất
+        const seenUrls = new Set();
+        const uniqueHistory = [];
+        history.forEach((lec) => {
+          const url = lec?.video_url;
+          if (url && !seenUrls.has(url)) {
+            seenUrls.add(url);
+            uniqueHistory.push(lec);
+          }
+        });
+        setRecentLectures(uniqueHistory.map(ensureAiClassification));
       } else if (!currentUser) {
         // Chỉ hiển thị bài mẫu khi ở chế độ khách chưa đăng nhập
         setRecentLectures(SAMPLE_LECTURES.map(ensureAiClassification));
@@ -473,6 +484,14 @@ export default function HomeScreen({ onNavigate }) {
       setProgressPercent(100);
       setProgressStage('done');
 
+      // Phát thông báo hoàn tất phiên dịch video
+      notificationService.addNotification({
+        title: 'Dịch thuật hoàn tất 🎉',
+        message: `Bài giảng "${result?.title || 'Mới'}" đã được tạo phụ đề và tóm tắt thành công!`,
+        type: 'success',
+        icon: 'sparkle',
+      });
+
       await new Promise((resolve) => setTimeout(resolve, 600));
 
       setProgressModalVisible(false);
@@ -535,6 +554,14 @@ export default function HomeScreen({ onNavigate }) {
     const confirmDelete = async () => {
       // Cập nhật UI ngay lập tức (Optimistic UI)
       setRecentLectures((prev) => prev.filter((item) => item.video_url !== lecture.video_url));
+
+      // Phát thông báo đã xóa bài giảng
+      notificationService.addNotification({
+        title: 'Đã xóa bài giảng 🗑️',
+        message: `Đã xóa bài giảng "${lecture?.title || 'này'}" khỏi danh sách.`,
+        type: 'info',
+        icon: 'trash',
+      });
 
       // Gọi xóa trên Server Cloud Firestore & Local Storage
       try {
@@ -747,6 +774,14 @@ export default function HomeScreen({ onNavigate }) {
       setAiStageProgress(100);
       setUploadProgress(100);
       setActiveJobId(null);
+
+      // Phát thông báo hoàn tất xử lý file upload
+      notificationService.addNotification({
+        title: 'Xử lý file hoàn tất 🎉',
+        message: `File bài giảng "${fileToUpload?.name || 'Mới'}" đã được phiên dịch và tóm tắt thành công!`,
+        type: 'success',
+        icon: 'sparkle',
+      });
 
       if (fileToUpload.localMediaUrl) {
         data.media_stream_url = fileToUpload.localMediaUrl;

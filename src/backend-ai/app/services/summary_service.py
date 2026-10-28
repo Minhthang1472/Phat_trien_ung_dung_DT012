@@ -125,7 +125,7 @@ class SummaryService:
             try:
                 self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
                 self.model = "gemini-2.5-flash"
-                self.fallback_model = "gemini-2.5-flash-lite"
+                self.fallback_model = "gemini-3.5-flash-lite"
             except Exception as e:
                 logger.warning(f"Không thể khởi tạo Gemini AI: {e}")
                 self.model = None
@@ -138,7 +138,7 @@ class SummaryService:
         """Kiểm tra xem Ollama Server nội bộ có đang chạy ở localhost:11434 không"""
         try:
             url = f"{settings.OLLAMA_BASE_URL.rstrip('/')}/api/tags"
-            resp = requests.get(url, timeout=1.5)
+            resp = requests.get(url, timeout=3.5)
             return resp.status_code == 200
         except Exception:
             return False
@@ -255,18 +255,33 @@ class SummaryService:
                 pass
 
             match = re.search(r"(\{.*\})", text, re.DOTALL)
-            if match:
-                candidate = match.group(1)
+            candidates = [match.group(1)] if match else []
+            candidates.append(text)
+
+            for cand in candidates:
                 try:
-                    return json.loads(candidate)
+                    return json.loads(cand)
                 except Exception:
                     pass
 
-                fixed = re.sub(r",\s*([\]\}])", r"\1", candidate)
+                # Loại bỏ trailing commas
+                fixed = re.sub(r",\s*([\]\}])", r"\1", cand)
                 try:
                     return json.loads(fixed)
                 except Exception:
                     pass
+
+                # Tự động vá ngoặc nếu JSON bị ngắt giữa chừng do quá dài
+                open_b = fixed.count('{') - fixed.count('}')
+                open_sq = fixed.count('[') - fixed.count(']')
+                if open_b > 0 or open_sq > 0:
+                    patched = re.sub(r',\s*$', '', fixed.strip())
+                    patched += (']' * max(0, open_sq)) + ('}' * max(0, open_b))
+                    patched = re.sub(r",\s*([\]\}])", r"\1", patched)
+                    try:
+                        return json.loads(patched)
+                    except Exception:
+                        pass
 
             raise ValueError(f"Không thể parse JSON từ phản hồi LLM: {text[:200]}...")
 

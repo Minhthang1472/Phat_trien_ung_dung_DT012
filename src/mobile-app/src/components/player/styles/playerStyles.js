@@ -143,6 +143,46 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
+
+  // ---------- Lớp phủ phụ đề (Overlay CC - Gọn gàng kiểu YouTube/Netflix) ----------
+  ccOverlayContainer: {
+    position: 'absolute',
+    bottom: 8,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    zIndex: 20,
+    pointerEvents: 'none',
+  },
+  ccOverlayBox: {
+    backgroundColor: 'rgba(11, 16, 32, 0.85)',
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    borderRadius: radius.sm + 2,
+    maxWidth: '94%',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  ccOverlayText: {
+    color: '#FFFFFF',
+    fontFamily: fonts.bold,
+    fontSize: 12.5,
+    lineHeight: 17,
+    textAlign: 'center',
+  },
+  ccOverlaySubText: {
+    color: '#FDE047',
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    lineHeight: 15,
+    textAlign: 'center',
+    marginTop: 2,
+    opacity: 0.92,
+  },
+
   mediaPlaceholder: {
     alignItems: 'center',
     justifyContent: 'center',

@@ -1,12 +1,9 @@
-// Danh sách ngôn ngữ dịch thuật cho Popup Upload File
 export const UPLOAD_LANG_OPTIONS = [
   { code: 'vi', label: 'Tiếng Việt' },
-  { code: 'en', label: 'English' },
-  { code: 'ja', label: '日本語 (Nhật)' },
-  { code: 'ko', label: '한국어 (Hàn)' },
-  { code: 'zh', label: '中文 (Trung)' },
-  { code: 'fr', label: 'Français (Pháp)' },
-  { code: 'de', label: 'Deutsch (Đức)' },
+  { code: 'en', label: 'Tiếng Anh' },
+  { code: 'ja', label: 'Tiếng Nhật' },
+  { code: 'zh', label: 'Tiếng Trung' },
+  { code: 'ko', label: 'Tiếng Hàn' },
 ];
 
 export const getLangDisplayName = (code) => {

@@ -1,38 +1,132 @@
-// Bộ sưu tập Avatar dùng icon Material (thay emoji để đồng bộ design system)
+// Bộ sưu tập Avatar 3D & Minh họa sinh động cao cấp phong cách EdTech AI
 export const PRESET_AVATARS = [
-  { id: 'grad_cap', icon: 'school', label: 'Cử nhân' },
-  { id: 'student_m', icon: 'person', label: 'Sinh viên' },
-  { id: 'student_f', icon: 'face', label: 'Nữ sinh' },
-  { id: 'ai_bot', icon: 'smartToy', label: 'AI Bot' },
-  { id: 'owl', icon: 'menuBook', label: 'Uyên bác' },
-  { id: 'rocket', icon: 'rocket', label: 'Bứt phá' },
-  { id: 'lightbulb', icon: 'bulb', label: 'Sáng tạo' },
-  { id: 'fire', icon: 'fire', label: 'Nhiệt huyết' },
-  { id: 'lion', icon: 'pets', label: 'Dũng mãnh' },
-  { id: 'fox', icon: 'psychologyAlt', label: 'Thông thái' },
-  { id: 'gem', icon: 'diamond', label: 'Tinh anh' },
-  { id: 'star', icon: 'star', label: 'Ngôi sao' },
+  {
+    id: 'ai_bot',
+    url: 'https://api.dicebear.com/9.x/bottts-neutral/png?seed=EdTechBot&backgroundColor=d1d4f9',
+    label: 'AI Trợ Lý',
+    tag: 'AI',
+  },
+  {
+    id: 'student_m',
+    url: 'https://api.dicebear.com/9.x/adventurer/png?seed=Felix&backgroundColor=ffd5dc',
+    label: 'Nam Sinh',
+    tag: 'Học viên',
+  },
+  {
+    id: 'student_f',
+    url: 'https://api.dicebear.com/9.x/adventurer/png?seed=Aneka&backgroundColor=d1d4f9',
+    label: 'Nữ Sinh',
+    tag: 'Học viên',
+  },
+  {
+    id: 'scholar_leo',
+    url: 'https://api.dicebear.com/9.x/adventurer/png?seed=Leo&backgroundColor=b6e3f4',
+    label: 'Thủ Khoa',
+    tag: 'Xuất sắc',
+  },
+  {
+    id: 'cosmo_bot',
+    url: 'https://api.dicebear.com/9.x/bottts-neutral/png?seed=Cosmo&backgroundColor=ffd5dc',
+    label: 'AI Robot',
+    tag: 'AI',
+  },
+  {
+    id: 'creative_lilly',
+    url: 'https://api.dicebear.com/9.x/adventurer/png?seed=Lilly&backgroundColor=ffdfbf',
+    label: 'Sáng Tạo',
+    tag: 'Năng động',
+  },
+  {
+    id: 'scientist_sophia',
+    url: 'https://api.dicebear.com/9.x/notionists/png?seed=Sophia&backgroundColor=d8b4e2',
+    label: 'Bác Học',
+    tag: 'Nghiên cứu',
+  },
+  {
+    id: 'polyglot_milo',
+    url: 'https://api.dicebear.com/9.x/adventurer/png?seed=Milo&backgroundColor=c0aede',
+    label: 'Ngoại Ngữ',
+    tag: 'Đa ngữ',
+  },
+  {
+    id: 'tutor_spark',
+    url: 'https://api.dicebear.com/9.x/bottts-neutral/png?seed=Spark&backgroundColor=ffeaa7',
+    label: 'Gia Sư AI',
+    tag: 'AI',
+  },
+  {
+    id: 'prof_alex',
+    url: 'https://api.dicebear.com/9.x/notionists/png?seed=Alexander&backgroundColor=e1d3c1',
+    label: 'Giáo Sư',
+    tag: 'Uyên bác',
+  },
+  {
+    id: 'polyglot_zoe',
+    url: 'https://api.dicebear.com/9.x/adventurer/png?seed=Zoe&backgroundColor=c1f0c1',
+    label: 'Siêu Cấp',
+    tag: 'Đột phá',
+  },
+  {
+    id: 'achiever_lucas',
+    url: 'https://api.dicebear.com/9.x/notionists/png?seed=Lucas&backgroundColor=fab1a0',
+    label: 'Bứt Phá',
+    tag: 'Tiến bộ',
+  },
 ];
 
-// Tương thích ngược: avatar đã lưu trước đây là emoji → ánh xạ sang icon Material
-const LEGACY_AVATAR_ICONS = {
-  '🎓': 'school',
-  '👨‍🎓': 'person',
-  '👩‍🎓': 'face',
-  '🤖': 'smartToy',
-  '🦉': 'menuBook',
-  '🚀': 'rocket',
-  '💡': 'bulb',
-  '🔥': 'fire',
-  '🦁': 'pets',
-  '🦊': 'psychologyAlt',
-  '💎': 'diamond',
-  '⭐': 'star',
+const LEGACY_AVATAR_MAP = {
+  'grad_cap': 'https://api.dicebear.com/9.x/adventurer/png?seed=Felix&backgroundColor=ffd5dc',
+  'school': 'https://api.dicebear.com/9.x/adventurer/png?seed=Felix&backgroundColor=ffd5dc',
+  'student_m': 'https://api.dicebear.com/9.x/adventurer/png?seed=Felix&backgroundColor=ffd5dc',
+  'person': 'https://api.dicebear.com/9.x/adventurer/png?seed=Felix&backgroundColor=ffd5dc',
+  'student_f': 'https://api.dicebear.com/9.x/adventurer/png?seed=Aneka&backgroundColor=d1d4f9',
+  'face': 'https://api.dicebear.com/9.x/adventurer/png?seed=Aneka&backgroundColor=d1d4f9',
+  'ai_bot': 'https://api.dicebear.com/9.x/bottts-neutral/png?seed=EdTechBot&backgroundColor=d1d4f9',
+  'smartToy': 'https://api.dicebear.com/9.x/bottts-neutral/png?seed=EdTechBot&backgroundColor=d1d4f9',
+  'owl': 'https://api.dicebear.com/9.x/notionists/png?seed=Alexander&backgroundColor=e1d3c1',
+  'menuBook': 'https://api.dicebear.com/9.x/notionists/png?seed=Alexander&backgroundColor=e1d3c1',
+  'rocket': 'https://api.dicebear.com/9.x/adventurer/png?seed=Leo&backgroundColor=b6e3f4',
+  'lightbulb': 'https://api.dicebear.com/9.x/adventurer/png?seed=Lilly&backgroundColor=ffdfbf',
+  'bulb': 'https://api.dicebear.com/9.x/adventurer/png?seed=Lilly&backgroundColor=ffdfbf',
+  'fire': 'https://api.dicebear.com/9.x/notionists/png?seed=Lucas&backgroundColor=fab1a0',
+  'lion': 'https://api.dicebear.com/9.x/adventurer/png?seed=Milo&backgroundColor=c0aede',
+  'pets': 'https://api.dicebear.com/9.x/adventurer/png?seed=Milo&backgroundColor=c0aede',
+  'fox': 'https://api.dicebear.com/9.x/notionists/png?seed=Sophia&backgroundColor=d8b4e2',
+  'psychologyAlt': 'https://api.dicebear.com/9.x/notionists/png?seed=Sophia&backgroundColor=d8b4e2',
+  'gem': 'https://api.dicebear.com/9.x/adventurer/png?seed=Zoe&backgroundColor=c1f0c1',
+  'diamond': 'https://api.dicebear.com/9.x/adventurer/png?seed=Zoe&backgroundColor=c1f0c1',
+  'star': 'https://api.dicebear.com/9.x/bottts-neutral/png?seed=Spark&backgroundColor=ffeaa7',
+  '🎓': 'https://api.dicebear.com/9.x/adventurer/png?seed=Felix&backgroundColor=ffd5dc',
+  '👨‍🎓': 'https://api.dicebear.com/9.x/adventurer/png?seed=Felix&backgroundColor=ffd5dc',
+  '👩‍🎓': 'https://api.dicebear.com/9.x/adventurer/png?seed=Aneka&backgroundColor=d1d4f9',
+  '🤖': 'https://api.dicebear.com/9.x/bottts-neutral/png?seed=EdTechBot&backgroundColor=d1d4f9',
+  '🦉': 'https://api.dicebear.com/9.x/notionists/png?seed=Alexander&backgroundColor=e1d3c1',
+  '🚀': 'https://api.dicebear.com/9.x/adventurer/png?seed=Leo&backgroundColor=b6e3f4',
+  '💡': 'https://api.dicebear.com/9.x/adventurer/png?seed=Lilly&backgroundColor=ffdfbf',
+  '🔥': 'https://api.dicebear.com/9.x/notionists/png?seed=Lucas&backgroundColor=fab1a0',
+  '🦁': 'https://api.dicebear.com/9.x/adventurer/png?seed=Milo&backgroundColor=c0aede',
+  '🦊': 'https://api.dicebear.com/9.x/notionists/png?seed=Sophia&backgroundColor=d8b4e2',
+  '💎': 'https://api.dicebear.com/9.x/adventurer/png?seed=Zoe&backgroundColor=c1f0c1',
+  '⭐': 'https://api.dicebear.com/9.x/bottts-neutral/png?seed=Spark&backgroundColor=ffeaa7',
+};
+
+export const resolveAvatarUrl = (value) => {
+  if (!value) return null;
+  if (
+    value.startsWith('http') ||
+    value.startsWith('data:') ||
+    value.startsWith('blob:') ||
+    value.startsWith('file:') ||
+    value.startsWith('content:')
+  ) {
+    return value;
+  }
+  return LEGACY_AVATAR_MAP[value] || null;
 };
 
 export const resolveAvatarIcon = (value) => {
   if (!value) return null;
-  return LEGACY_AVATAR_ICONS[value] || value;
+  return resolveAvatarUrl(value) || value;
 };
 
 // Cấu hình Hệ thống Phân bố Cấp bậc & Thăng hạng học viên

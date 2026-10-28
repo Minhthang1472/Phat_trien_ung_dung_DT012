@@ -20,6 +20,7 @@ import * as Google from 'expo-auth-session/providers/google';
 import { colors, spacing, borderRadius } from '../constants/theme';
 import { GOOGLE_CLIENT_IDS } from '../constants/config';
 import { apiService } from '../services/api';
+import { notificationService } from '../services/notificationService';
 import Header from '../components/Header';
 import AuraBackground from '../components/ui/AuraBackground';
 import {
@@ -474,6 +475,12 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
     try {
       const res = await apiService.changePassword(oldPassword, changeNewPass);
       setChangeMsg(res.message || 'Đổi mật khẩu thành công!');
+      notificationService.addNotification({
+        title: 'Đổi mật khẩu thành công 🔑',
+        message: 'Mật khẩu tài khoản của bạn đã được thay đổi an toàn.',
+        type: 'success',
+        icon: 'key',
+      });
       setOldPassword('');
       setChangeNewPass('');
       setChangeConfirmPass('');
@@ -555,6 +562,12 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
         setEditMsg(res.message || `Mã OTP đã được gửi tới ${newEmail}. Vui lòng nhập mã để hoàn tất.`);
       } else {
         setEditMsg('Cập nhật hồ sơ thành công!');
+        notificationService.addNotification({
+          title: 'Cập nhật hồ sơ 👤',
+          message: `Thông tin tài khoản "${trimmedName}" đã được cập nhật thành công.`,
+          type: 'success',
+          icon: 'profile',
+        });
         setTimeout(() => {
           setEditModalVisible(false);
           setEditMsg('');

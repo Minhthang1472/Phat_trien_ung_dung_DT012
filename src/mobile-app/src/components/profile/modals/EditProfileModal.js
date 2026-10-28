@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { colors } from '../../../constants/theme';
-import { PRESET_AVATARS, resolveAvatarIcon } from '../constants/profileData';
+import { PRESET_AVATARS, resolveAvatarUrl, resolveAvatarIcon } from '../constants/profileData';
 import Icon from '../../ui/Icon';
 import styles from '../styles/profileStyles';
 
@@ -86,19 +86,17 @@ export default function EditProfileModal({
                 <Text style={styles.editSectionLabel}>ẢNH ĐẠI DIỆN HỌC VIÊN</Text>
                 <View style={styles.avatarPreviewRow}>
                   <View style={styles.avatarPreviewBig}>
-                    {selectedAvatar && (selectedAvatar.startsWith('http') || selectedAvatar.startsWith('data:') || selectedAvatar.startsWith('file:') || selectedAvatar.startsWith('content:')) ? (
-                      <Image source={{ uri: selectedAvatar }} style={styles.avatarBigImage} />
-                    ) : selectedAvatar ? (
-                      <Icon
-                        name={resolveAvatarIcon(selectedAvatar)}
-                        size={28}
-                        color="#FFFFFF"
-                      />
-                    ) : (
-                      <Text style={styles.avatarBigText}>
-                        {(editDisplayName || user?.email || 'U')[0].toUpperCase()}
-                      </Text>
-                    )}
+                    {(() => {
+                      const avatarUri = resolveAvatarUrl(selectedAvatar) || (selectedAvatar && (selectedAvatar.startsWith('http') || selectedAvatar.startsWith('data:') || selectedAvatar.startsWith('blob:') || selectedAvatar.startsWith('file:') || selectedAvatar.startsWith('content:')) ? selectedAvatar : null);
+                      if (avatarUri) {
+                        return <Image source={{ uri: avatarUri }} style={styles.avatarBigImage} />;
+                      }
+                      return (
+                        <Text style={styles.avatarBigText}>
+                          {(editDisplayName || user?.email || 'U')[0].toUpperCase()}
+                        </Text>
+                      );
+                    })()}
                   </View>
 
                   <View style={styles.avatarActionCol}>
@@ -129,20 +127,29 @@ export default function EditProfileModal({
                 <Text style={styles.editSectionSubLabel}>Hoặc chọn nhanh Avatar phong cách AI:</Text>
                 <View style={styles.presetAvatarGrid}>
                   {PRESET_AVATARS.map((item) => {
-                    const isSelected = selectedAvatar === item.icon;
+                    const isSelected = selectedAvatar === item.url || selectedAvatar === item.id;
                     return (
                       <TouchableOpacity
                         key={item.id}
                         style={[styles.presetAvatarItem, isSelected && styles.presetAvatarItemActive]}
-                        onPress={() => onSelectAvatar(item.icon)}
-                        activeOpacity={0.7}
+                        onPress={() => onSelectAvatar(item.url)}
+                        activeOpacity={0.75}
                       >
-                        <Icon
-                          name={item.icon}
-                          size={24}
-                          color={isSelected ? colors.coral : colors.slate}
-                        />
-                        <Text style={[styles.presetAvatarLabel, isSelected && styles.presetAvatarLabelActive]}>
+                        <View style={styles.presetAvatarImgWrap}>
+                          <Image
+                            source={{ uri: item.url }}
+                            style={styles.presetAvatarImg}
+                          />
+                          {isSelected ? (
+                            <View style={styles.presetAvatarSelectedBadge}>
+                              <Icon name="check" size={9} color="#FFFFFF" />
+                            </View>
+                          ) : null}
+                        </View>
+                        <Text
+                          style={[styles.presetAvatarLabel, isSelected && styles.presetAvatarLabelActive]}
+                          numberOfLines={1}
+                        >
                           {item.label}
                         </Text>
                       </TouchableOpacity>

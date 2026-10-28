@@ -248,7 +248,7 @@ export default function SettingsScreen({ onNavigate }) {
   return (
     <View style={styles.container}>
       <AuraBackground />
-      <Header title="CÀI ĐẶT" />
+      <Header title="CÀI ĐẶT" serverStatus={{ online: serverOnline }} />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* Tiêu đề trang + trạng thái máy chủ */}
         <View style={styles.pageHeader}>

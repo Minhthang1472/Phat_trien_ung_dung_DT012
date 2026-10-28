@@ -4,7 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { colors, gradients } from '../../../constants/theme';
 import Icon from '../../ui/Icon';
 import IconBadge from '../../ui/IconBadge';
-import { resolveAvatarIcon } from '../constants/profileData';
+import { resolveAvatarIcon, resolveAvatarUrl } from '../constants/profileData';
 import styles from '../styles/profileStyles';
 
 /**
@@ -42,19 +42,17 @@ export default function ProfileHeroSection({
           style={styles.avatarRing}
         >
           <View style={styles.avatar}>
-            {user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('file:') || user.avatar.startsWith('content:')) ? (
-              <Image source={{ uri: user.avatar }} style={styles.avatarImage} />
-            ) : user.avatar ? (
-              <Icon
-                name={resolveAvatarIcon(user.avatar)}
-                size={40}
-                color={colors.violet}
-              />
-            ) : (
-              <Text style={styles.avatarText}>
-                {(user.display_name || user.email || 'U')[0].toUpperCase()}
-              </Text>
-            )}
+            {(() => {
+              const avatarUri = resolveAvatarUrl(user.avatar) || (user.avatar && (user.avatar.startsWith('http') || user.avatar.startsWith('data:') || user.avatar.startsWith('blob:') || user.avatar.startsWith('file:') || user.avatar.startsWith('content:')) ? user.avatar : null);
+              if (avatarUri) {
+                return <Image source={{ uri: avatarUri }} style={styles.avatarImage} />;
+              }
+              return (
+                <Text style={styles.avatarText}>
+                  {(user.display_name || user.email || 'U')[0].toUpperCase()}
+                </Text>
+              );
+            })()}
           </View>
         </LinearGradient>
         <View style={styles.avatarEditBadge}>

@@ -265,7 +265,7 @@ export default function VideoPlayerSection({
       {showCC && activeSegment && !activeCheckpointQuiz && (
         <View style={styles.ccOverlayContainer} pointerEvents="none">
           <View style={styles.ccOverlayBox}>
-            <Text style={styles.ccOverlayText}>
+            <Text style={styles.ccOverlayText} numberOfLines={2} ellipsizeMode="tail">
               {subMode === 'original'
                 ? activeSegment.original_text || activeSegment.text
                 : activeSegment.translated_text ||
@@ -280,7 +280,7 @@ export default function VideoPlayerSection({
                   activeSegment.text ||
                   ''
                 ).trim() && (
-                <Text style={styles.ccOverlaySubText}>
+                <Text style={styles.ccOverlaySubText} numberOfLines={1} ellipsizeMode="tail">
                   {activeSegment.original_text}
                 </Text>
               )}

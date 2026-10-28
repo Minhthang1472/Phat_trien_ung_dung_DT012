@@ -131,7 +131,9 @@ class FirebaseService:
             # Đồng thời lưu bản cache theo base_doc_id để các truy vấn nhanh đều trúng cache 100%
             if owner_id:
                 try:
-                    self.db.collection("lectures").document(base_doc_id).set(save_payload, merge=True)
+                    global_cache_payload = dict(save_payload)
+                    global_cache_payload.pop("owner_id", None)  # Không gán owner_id cho bản cache toàn cục
+                    self.db.collection("lectures").document(base_doc_id).set(global_cache_payload, merge=True)
                 except Exception:
                     pass
             logger.info(f"Đã lưu trữ thành công bài giảng vào Firebase Firestore [ID: {doc_id}] (Owner: {owner_id})")
@@ -160,11 +162,17 @@ class FirebaseService:
                 data = d.to_dict()
                 return str(data.get("cached_at") or data.get("created_at") or "")
             docs.sort(key=_sort_key, reverse=True)
-            docs = docs[:limit]
 
             history = []
+            seen_urls = set()
             for doc in docs:
                 data = doc.to_dict()
+                v_url = data.get("video_url")
+                # Lọc khử trùng lặp theo URL
+                if not v_url or v_url in seen_urls:
+                    continue
+                seen_urls.add(v_url)
+
                 raw_q = data.get("quiz", [])
                 clean_q = [
                     item if isinstance(item, dict) else {
@@ -192,6 +200,8 @@ class FirebaseService:
                     "tags": data.get("tags") or ["Bài giảng"],
                     "owner_id": data.get("owner_id"),
                 })
+                if len(history) >= limit:
+                    break
             return history
         except Exception as e:
             logger.warning(f"Lỗi lấy lịch sử Firebase: {e}")
@@ -205,25 +215,30 @@ class FirebaseService:
             return False
 
         try:
-            doc_id = f"{owner_id}_{self.get_document_id(video_url)}" if owner_id else self.get_document_id(video_url)
+            base_id = self.get_document_id(video_url)
+            doc_id = f"{owner_id}_{base_id}" if owner_id else base_id
             doc_ref = self.db.collection("lectures").document(doc_id)
             doc = doc_ref.get()
-            if not doc.exists:
-                # Thử tìm theo ID gốc nếu chưa có tiền tố
-                legacy_id = self.get_document_id(video_url)
-                legacy_ref = self.db.collection("lectures").document(legacy_id)
-                legacy_doc = legacy_ref.get()
-                if legacy_doc.exists and (not owner_id or legacy_doc.to_dict().get("owner_id") == owner_id):
-                    legacy_ref.delete()
-                    return True
-                return False
 
-            if owner_id and doc.to_dict().get("owner_id") != owner_id:
-                return False
+            deleted = False
+            if doc.exists and (not owner_id or doc.to_dict().get("owner_id") == owner_id):
+                doc_ref.delete()
+                logger.info(f"Đã xóa thành công bài giảng khỏi Firebase Firestore [ID: {doc_id}]")
+                deleted = True
 
-            doc_ref.delete()
-            logger.info(f"Đã xóa thành công bài giảng khỏi Firebase Firestore [ID: {doc_id}]")
-            return True
+            # Đồng thời kiểm tra nếu base_id cũng đang mang owner_id của user này thì gỡ bỏ
+            if base_id != doc_id:
+                base_ref = self.db.collection("lectures").document(base_id)
+                base_doc = base_ref.get()
+                if base_doc.exists and base_doc.to_dict().get("owner_id") == owner_id:
+                    try:
+                        base_ref.update({"owner_id": firestore.DELETE_FIELD})
+                        logger.info(f"Đã gỡ owner_id khỏi bản cache chung [ID: {base_id}]")
+                        deleted = True
+                    except Exception:
+                        pass
+
+            return deleted or doc.exists
         except Exception as e:
             logger.warning(f"Lỗi khi xóa bài giảng khỏi Firebase Firestore: {e}")
             return False

@@ -36,6 +36,72 @@ class WhisperService:
                 self.model = WhisperModel(model_size, device="cpu", compute_type="int8")
                 logger.info("Đã tải mô hình Whisper trên CPU.")
 
+    @staticmethod
+    def _split_long_segment(segment_dict: dict, max_duration: float = 4.5) -> list:
+        """Tự động chia nhỏ các đoạn phụ đề dài thành từng câu ngắn khớp thời gian thực"""
+        start = segment_dict["start"]
+        end = segment_dict["end"]
+        text = segment_dict.get("text", "").strip()
+        duration = end - start
+
+        if duration <= max_duration or len(text) < 20:
+            return [segment_dict]
+
+        import re
+        # Bước 1: Thử chia theo dấu kết câu (. ! ? 。 ！？ \n)
+        parts = [s.strip() for s in re.split(r'([.!?。！？\n]+)', text) if s.strip()]
+        combined = []
+        i = 0
+        while i < len(parts):
+            if i + 1 < len(parts) and re.match(r'^[.!?。！？\n]+$', parts[i + 1]):
+                combined.append(parts[i] + parts[i + 1])
+                i += 2
+            else:
+                combined.append(parts[i])
+                i += 1
+
+        # Bước 2: Nếu chưa đủ nhỏ, tiếp tục chia theo dấu phẩy, chấm phẩy, gạch ngang (, ; : 、 ， ： -)
+        if len(combined) <= 1:
+            sub_parts = [s.strip() for s in re.split(r'([,;:、，：—\-]+)', text) if s.strip()]
+            combined = []
+            i = 0
+            while i < len(sub_parts):
+                if i + 1 < len(sub_parts) and re.match(r'^[,;:、，：—\-]+$', sub_parts[i + 1]):
+                    combined.append(sub_parts[i] + sub_parts[i + 1])
+                    i += 2
+                else:
+                    combined.append(sub_parts[i])
+                    i += 1
+
+        # Bước 3: Nếu nói liên tục không ngắt nghỉ (> 4.5s): chia đều theo cụm từ (6-8 từ)
+        if len(combined) <= 1 and duration > max_duration:
+            words = text.split()
+            if len(words) >= 6:
+                num_chunks = max(2, round(duration / 3.5))
+                chunk_size = max(4, round(len(words) / num_chunks))
+                combined = [" ".join(words[k:k+chunk_size]) for k in range(0, len(words), chunk_size) if words[k:k+chunk_size]]
+
+        if len(combined) <= 1:
+            return [segment_dict]
+
+        total_chars = sum(len(c) for c in combined)
+        if total_chars == 0:
+            return [segment_dict]
+
+        result = []
+        cur_start = start
+        for c in combined:
+            c_dur = duration * (len(c) / total_chars)
+            c_end = min(end, cur_start + c_dur)
+            result.append({
+                "start": round(cur_start, 2),
+                "end": round(c_end, 2),
+                "text": c.strip()
+            })
+            cur_start = c_end
+
+        return result
+
     def transcribe_audio(self, audio_path: str, language: str = None, task: str = "transcribe") -> tuple:
         self.load_model()
         
@@ -52,14 +118,21 @@ class WhisperService:
                 initial_prompt="Video bài giảng, thuyết minh và bình luận, bóc tách chính xác từ ngữ tiếng Việt và tên riêng nhân vật."
             )
 
-            subtitles = []
-            for idx, segment in enumerate(segments_generator):
-                subtitles.append({
-                    "id": idx,
+            raw_subtitles = []
+            for segment in segments_generator:
+                raw_subtitles.append({
                     "start": round(segment.start, 2),
                     "end": round(segment.end, 2),
                     "text": segment.text.strip()
                 })
+
+            subtitles = []
+            cur_id = 0
+            for raw_seg in raw_subtitles:
+                for chunk in WhisperService._split_long_segment(raw_seg):
+                    chunk["id"] = cur_id
+                    subtitles.append(chunk)
+                    cur_id += 1
                 
             return subtitles, info.language
         except RuntimeError as e:
