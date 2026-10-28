@@ -19,7 +19,7 @@ export const STORAGE_KEYS = {
   DEFAULT_TAGS: '@lecture_ai_default_tags',
   DEFAULT_EXPORT_DIR: '@lecture_ai_default_export_dir',
   DEFAULT_EXPORT_DIR_NAME: '@lecture_ai_default_export_dir_name',
-  AUTH_TOKEN: '@lecture_ai_auth_token',
+  AUTH_TOKEN: 'lecture_ai_auth_token',
   AUTH_USER: '@lecture_ai_auth_user',
 };
 

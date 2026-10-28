@@ -94,7 +94,12 @@ class ApiService {
   }
 
   async getAuthToken() {
-    if (Platform.OS !== 'web') return SecureStore.getItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+    try {
+      if (Platform.OS !== 'web') {
+        const token = await SecureStore.getItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+        if (token) return token;
+      }
+    } catch (_) {}
     return AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
   }
 
@@ -104,8 +109,10 @@ class ApiService {
   }
 
   async saveAuthSession(data) {
-    if (Platform.OS !== 'web') await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_TOKEN, data.token);
-    else await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, data.token);
+    try {
+      if (Platform.OS !== 'web') await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_TOKEN, data.token);
+    } catch (_) {}
+    await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, data.token);
     await AsyncStorage.setItem(STORAGE_KEYS.AUTH_USER, JSON.stringify(data.user));
     return data.user;
   }
@@ -254,8 +261,10 @@ class ApiService {
   }
 
   async logout() {
-    if (Platform.OS !== 'web') await SecureStore.deleteItemAsync(STORAGE_KEYS.AUTH_TOKEN);
-    else await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+    try {
+      if (Platform.OS !== 'web') await SecureStore.deleteItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+    } catch (_) {}
+    await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
     await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_USER);
   }
 
