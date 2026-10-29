@@ -20,6 +20,7 @@ import * as Google from 'expo-auth-session/providers/google';
 import { colors, spacing, borderRadius } from '../constants/theme';
 import { GOOGLE_CLIENT_IDS } from '../constants/config';
 import { apiService } from '../services/api';
+import { streakService } from '../services/streakService';
 import { notificationService } from '../services/notificationService';
 import Header from '../components/Header';
 import Icon from '../components/ui/Icon';
@@ -130,7 +131,7 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
             .map((item) => (item.cached_at || item.created_at || '').substring(0, 10))
             .filter(Boolean)
         );
-        setStreakDays(Math.max(1, uniqueDays.size));
+        streakService.getOrUpdateStreak(uniqueDays.size).then((d) => setStreakDays(d || 1));
 
         // Tính tỉ lệ ngôn ngữ thực tế
         let viCount = 0;

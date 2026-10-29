@@ -62,7 +62,7 @@ export default function ProfileAnalyticsSection({
             <View style={[styles.featureIconWrap, { backgroundColor: colors.coralTint }]}>
               <Icon name="summary" size={17} color={colors.coral} />
             </View>
-            <Text style={styles.featureTitle}>Tóm tắt AI</Text>
+            <Text style={styles.featureTitle}>Tóm tắt nội dung</Text>
             <Text style={[styles.featureTag, { color: colors.coral }]}>{featureStats.summary}%</Text>
           </View>
           <View style={styles.featureItem}>

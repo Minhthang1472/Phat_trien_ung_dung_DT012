@@ -211,7 +211,7 @@ export default function LectureCard({
         </View>
       </View>
 
-      {/* Trích đoạn tóm tắt AI */}
+      {/* Trích đoạn tóm tắt */}
       {lecture?.summary ? (
         <View style={styles.summaryBox}>
           <Icon name="bulb" size={17} color="#E0A100" style={styles.summaryIcon} />

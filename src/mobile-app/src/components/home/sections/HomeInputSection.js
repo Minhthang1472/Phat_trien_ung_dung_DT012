@@ -42,7 +42,7 @@ export default function HomeInputSection({
         </View>
         <View style={styles.aiReadyPill}>
           <View style={styles.aiReadyDot} />
-          <Text style={styles.aiReadyText}>AI Sẵn sàng</Text>
+          <Text style={styles.aiReadyText}>Sẵn sàng</Text>
         </View>
       </View>
 
@@ -84,7 +84,7 @@ export default function HomeInputSection({
         <Text style={styles.subLabel}>Dịch phụ đề sang ngôn ngữ:</Text>
         <View style={styles.aiLangTag}>
           <Icon name="translate" size={13} color={colors.violet} />
-          <Text style={styles.aiLangTagText}>Song ngữ AI</Text>
+          <Text style={styles.aiLangTagText}>Chuẩn song ngữ</Text>
         </View>
       </View>
 

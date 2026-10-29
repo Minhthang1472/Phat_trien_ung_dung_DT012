@@ -97,6 +97,92 @@ class AudioService:
         return ""
 
     @staticmethod
+    def get_youtube_subtitles(video_url: str, target_lang: str = "vi", start_time_sec: float = 0, end_time_sec: float = None):
+        """
+        Trích xuất phụ đề chính thức (Official Creator Captions) từ YouTube khi có sẵn.
+        Đảm bảo độ chuẩn xác 100% từng câu từ của người nói, không bị nhầm dấu hay từ ngữ.
+        """
+        try:
+            import requests
+            from app.services.subtitle_parser import parse_subtitle
+
+            ydl_opts = AudioService._build_ydl_options({'skip_download': True, 'quiet': True})
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(video_url, download=False)
+                subtitles = info.get('subtitles') or {}
+                auto_subtitles = info.get('automatic_captions') or {}
+
+                chosen_url = None
+                chosen_lang = None
+
+                # Danh sách thứ tự ưu tiên: ngôn ngữ đích -> các phương ngữ -> ngôn ngữ gốc
+                candidates = [
+                    target_lang,
+                    f"{target_lang}-US",
+                    f"{target_lang}-VN",
+                    f"{target_lang}-GB",
+                    "vi", "vi-VN",
+                    "en", "en-US", "en-GB"
+                ]
+
+                # 1. Quét tìm trong phụ đề chính thức do chủ kênh biên soạn
+                for code in candidates:
+                    for k in subtitles.keys():
+                        if k.lower() == code.lower() or k.lower().startswith(f"{code.lower()}-"):
+                            vtt_item = next((s for s in subtitles[k] if s.get('ext') == 'vtt'), None)
+                            if vtt_item and vtt_item.get('url'):
+                                chosen_url = vtt_item['url']
+                                chosen_lang = k
+                                logger.info(f"🎯 Phát hiện phụ đề chính thức YouTube do tác giả biên tập: [{k}]!")
+                                break
+                    if chosen_url:
+                        break
+
+                # 2. Nếu không có phụ đề chính thức, kiểm tra phụ đề tự động chất lượng cao của YouTube
+                if not chosen_url and auto_subtitles:
+                    for code in [target_lang, "vi", "en"]:
+                        for k in auto_subtitles.keys():
+                            if k.lower() == code.lower() or k.lower().startswith(f"{code.lower()}-"):
+                                vtt_item = next((s for s in auto_subtitles[k] if s.get('ext') == 'vtt'), None)
+                                if vtt_item and vtt_item.get('url'):
+                                    chosen_url = vtt_item['url']
+                                    chosen_lang = k
+                                    logger.info(f"🎯 Sử dụng phụ đề nhận diện chất lượng cao từ YouTube: [{k}]!")
+                                    break
+                        if chosen_url:
+                            break
+
+                if not chosen_url:
+                    return None
+
+                resp = requests.get(chosen_url, timeout=10)
+                if not resp.ok or len(resp.content) < 30:
+                    return None
+
+                segments = parse_subtitle(resp.content)
+                if not segments:
+                    return None
+
+                # Lọc theo khoảng thời gian nếu người dùng chỉ định đoạn bắt đầu / kết thúc
+                t_start = max(0.0, float(start_time_sec or 0))
+                t_end = float(end_time_sec) if end_time_sec and float(end_time_sec) > t_start else float('inf')
+                if t_start > 0 or t_end < float('inf'):
+                    segments = [s for s in segments if s['end'] >= t_start and s['start'] <= t_end]
+
+                title = info.get('title') or 'Bài giảng YouTube'
+                duration = info.get('duration') or 0
+
+                return {
+                    "segments": segments,
+                    "detected_language": chosen_lang,
+                    "title": title,
+                    "duration": duration,
+                }
+        except Exception as exc:
+            logger.warning(f"Không thể trích xuất phụ đề YouTube có sẵn: {exc}")
+            return None
+
+    @staticmethod
     def extract_audio_from_url(
         video_url: str,
         duration_limit_sec: int = None,

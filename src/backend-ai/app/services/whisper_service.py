@@ -115,7 +115,7 @@ class WhisperService:
                 vad_filter=True, # Lọc khoảng lặng không có tiếng nói
                 vad_parameters=dict(min_silence_duration_ms=500),
                 condition_on_previous_text=False, # Chống ảo giác và lặp câu
-                initial_prompt="Video bài giảng, thuyết minh và bình luận, bóc tách chính xác từ ngữ tiếng Việt và tên riêng nhân vật."
+                initial_prompt="Video bài giảng, ký sự, du lịch, ẩm thực, phát âm tiếng Việt rõ ràng, bóc tách chính xác từ ngữ, ánh sáng, văn hóa và địa danh."
             )
 
             raw_subtitles = []
@@ -158,7 +158,7 @@ class WhisperService:
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500),
                 condition_on_previous_text=False,
-                initial_prompt="Video bài giảng, thuyết minh và bình luận, bóc tách chính xác từ ngữ tiếng Việt và tên riêng nhân vật."
+                initial_prompt="Video bài giảng, ký sự, du lịch, ẩm thực, phát âm tiếng Việt rõ ràng, bóc tách chính xác từ ngữ, ánh sáng, văn hóa và địa danh."
             )
             detected_lang = info.language
             for idx, segment in enumerate(segments_generator):

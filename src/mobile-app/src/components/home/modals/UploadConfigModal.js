@@ -80,7 +80,7 @@ export default function UploadConfigModal({
             })}
           </View>
 
-          {/* Tùy chọn trắc nghiệm ôn tập AI */}
+          {/* Tùy chọn trắc nghiệm ôn tập */}
           <View style={styles.quizOptionRow}>
             <View style={styles.quizTextWrap}>
               <View style={styles.quizTitleRow}>

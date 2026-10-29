@@ -7,7 +7,7 @@ import styles from '../styles/profileStyles';
 
 const BADGES = [
   { key: 'pioneer', icon: 'school', title: 'Tân Binh Tiên Phong', subtitle: 'Hoàn thành bài đầu', tone: 'coral' },
-  { key: 'speed', icon: 'bolt', title: 'Tốc Độ Ánh Sáng', subtitle: 'Tóm tắt AI tức thì', tone: 'mint' },
+  { key: 'speed', icon: 'bolt', title: 'Tốc Độ Ánh Sáng', subtitle: 'Tóm tắt tức thì', tone: 'mint' },
   { key: 'quiz', icon: 'quiz', title: 'Bậc Thầy Trắc Nghiệm', subtitle: 'Ôn tập 5+ câu hỏi', tone: 'violet' },
   { key: 'persist', icon: 'crown', title: 'Học Viên Bền Bỉ', subtitle: '30+ phút tiếp thu', tone: 'coral' },
 ];

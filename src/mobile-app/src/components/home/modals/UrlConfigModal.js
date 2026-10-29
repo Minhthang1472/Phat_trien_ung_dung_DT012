@@ -174,7 +174,7 @@ export default function UrlConfigModal({
                   </Text>
                   <Text style={styles.quizToggleDesc}>
                     {includeQuiz
-                      ? 'AI tự động biên soạn câu hỏi 4 lựa chọn củng cố kiến thức'
+                      ? 'Tự động biên soạn câu hỏi 4 lựa chọn củng cố kiến thức'
                       : 'Chỉ bóc tách phụ đề & tóm tắt, tiết kiệm thời gian'}
                   </Text>
                 </View>

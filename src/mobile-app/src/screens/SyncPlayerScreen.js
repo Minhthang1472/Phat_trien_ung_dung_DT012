@@ -34,8 +34,12 @@ import {
   SubtitleListSection,
 } from '../components/player';
 
-export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
-  const effectiveSeekTime = initialSeekTime || lecture?.initial_time || 0;
+export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, endTime }) {
+  const effectiveStartTime = initialSeekTime || lecture?.start_time || lecture?.initial_time || 0;
+  const effectiveEndTime = endTime || lecture?.end_time || null;
+  const effectiveSeekTime = effectiveStartTime;
+  const hasStoppedAtEndRef = useRef(false);
+  const [reachedRangeEnd, setReachedRangeEnd] = useState(false);
   const [currentTab, setCurrentTab] = useState('subtitles'); // 'subtitles' | 'summary'
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -92,6 +96,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
         if (!isNaN(sec) && Math.abs(sec - lastTimeUpdateRef.current) >= 0.25) {
           lastTimeUpdateRef.current = sec;
           setCurrentTime(sec);
+          checkRangeStop(sec);
           checkInVideoQuiz(sec);
           saveProgressThrottled(sec);
         }
@@ -371,6 +376,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
                         if (Math.abs(sec - lastTimeUpdateRef.current) >= 0.25) {
                           lastTimeUpdateRef.current = sec;
                           setCurrentTime(sec);
+                          checkRangeStop(sec);
                           checkInVideoQuiz(sec);
                           saveProgressThrottled(sec);
                         }
@@ -551,6 +557,40 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
     }
   };
 
+  // Tự động dừng video khi phát đến mốc kết thúc của đoạn thời gian đã chọn
+  const checkRangeStop = useCallback((sec) => {
+    if (!effectiveEndTime || effectiveEndTime <= 0) return;
+    if (sec >= effectiveEndTime) {
+      if (!hasStoppedAtEndRef.current) {
+        hasStoppedAtEndRef.current = true;
+        setReachedRangeEnd(true);
+        setIsPlaying(false);
+        if (Platform.OS === 'web') {
+          sendYouTubeCommand('pauseVideo');
+          if (htmlMediaRef.current) {
+            try { htmlMediaRef.current.pause?.(); } catch (_) {}
+          }
+        } else {
+          if (ytPlayerRef.current && typeof ytPlayerRef.current.pauseVideo === 'function') {
+            try { ytPlayerRef.current.pauseVideo(); } catch (_) {}
+          }
+          if (webViewRef.current) {
+            try {
+              webViewRef.current.injectJavaScript(`
+                if (window.player && typeof window.player.pauseVideo === 'function') { window.player.pauseVideo(); }
+                var m = document.getElementById('media'); if (m) { m.pause(); }
+                true;
+              `);
+            } catch (_) {}
+          }
+        }
+      }
+    } else if (sec < effectiveEndTime - 1 && hasStoppedAtEndRef.current) {
+      hasStoppedAtEndRef.current = false;
+      setReachedRangeEnd(false);
+    }
+  }, [effectiveEndTime]);
+
   // Khi người dùng bấm tua hoặc kéo thanh tiến trình -> Video lập tức nhảy đến đúng giây đó và phát mượt
   const handleSeek = (seconds) => {
     const targetSec = Math.max(0, Math.min(seconds, duration));
@@ -703,6 +743,53 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime }) {
               styles={styles}
             />
 
+            {effectiveEndTime > 0 && (
+              <View style={{
+                backgroundColor: reachedRangeEnd ? colors.coralTint : colors.surfaceHigh,
+                paddingVertical: 8,
+                paddingHorizontal: spacing.md,
+                borderRadius: borderRadius.md,
+                marginBottom: spacing.xs,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderWidth: 1,
+                borderColor: reachedRangeEnd ? colors.coral : colors.border,
+              }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                  <Icon name={reachedRangeEnd ? "check_circle" : "timer"} size={16} color={reachedRangeEnd ? colors.coral : colors.primaryLight} />
+                  <Text style={{
+                    fontSize: 12,
+                    fontFamily: 'PlusJakartaSans_600SemiBold',
+                    color: reachedRangeEnd ? colors.coralDeep || colors.coral : colors.textMuted,
+                  }}>
+                    {reachedRangeEnd
+                      ? `Đã xem hết đoạn (${formatTime(effectiveEndTime)}). Video đã tự động dừng!`
+                      : `Đoạn đã chọn: ${formatTime(effectiveStartTime)} ➔ ${formatTime(effectiveEndTime)}`}
+                  </Text>
+                </View>
+                {reachedRangeEnd && (
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: colors.coral,
+                      paddingHorizontal: 10,
+                      paddingVertical: 5,
+                      borderRadius: borderRadius.sm,
+                      marginLeft: 8,
+                    }}
+                    onPress={() => {
+                      hasStoppedAtEndRef.current = false;
+                      setReachedRangeEnd(false);
+                      handleSeek(effectiveStartTime);
+                    }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 11, fontFamily: 'PlusJakartaSans_700Bold' }}>
+                      Xem lại đoạn
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
             <PlayerControlsSection
               isSeeking={isSeeking}
               seekDragTime={seekDragTime}

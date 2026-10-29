@@ -116,6 +116,7 @@ export default function App() {
               <SyncPlayerScreen
                 lecture={routeParams.lecture}
                 initialSeekTime={routeParams.initialSeekTime}
+                endTime={routeParams.endTime}
                 onBack={handleBack}
               />
             )}

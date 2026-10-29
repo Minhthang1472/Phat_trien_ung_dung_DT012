@@ -19,6 +19,7 @@ import * as Sharing from 'expo-sharing';
 import { colors, spacing, borderRadius } from '../constants/theme';
 import { SUPPORTED_LANGUAGES } from '../constants/config';
 import { apiService } from '../services/api';
+import { streakService } from '../services/streakService';
 import { notificationService } from '../services/notificationService';
 import Header from '../components/Header';
 import LectureCard from '../components/LectureCard';
@@ -106,6 +107,7 @@ export default function HomeScreen({ onNavigate }) {
   const [activeCategory, setActiveCategory] = useState('all'); // 'all', 'fav', 'en', 'ja', 'upload', 'youtube'
   const [favorites, setFavorites] = useState([]);
   const [playbackMap, setPlaybackMap] = useState({});
+  const [streakDays, setStreakDays] = useState(1);
 
   useEffect(() => {
     // 1. Tải tức thì từ Local Storage (0ms) để giao diện hiển thị ngay lập tức
@@ -510,6 +512,8 @@ export default function HomeScreen({ onNavigate }) {
       });
 
       // Lưu ngay vào bộ nhớ cục bộ để bài giảng xuất hiện tức thì trong danh sách
+      if (parsedStart > 0) result.start_time = parsedStart;
+      if (parsedEnd > 0) result.end_time = parsedEnd;
       await apiService.saveLectureToLocal(result);
       setRecentLectures((prev) => {
         const filtered = (prev || []).filter((l) => l.video_url !== result.video_url);
@@ -521,7 +525,7 @@ export default function HomeScreen({ onNavigate }) {
       setProgressModalVisible(false);
       setLoading(false);
       setActiveJobId(null);
-      onNavigate('SyncPlayer', { lecture: result });
+      onNavigate('SyncPlayer', { lecture: result, initialSeekTime: parsedStart || 0, endTime: parsedEnd || null });
     } catch (err) {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
       if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
@@ -553,9 +557,9 @@ export default function HomeScreen({ onNavigate }) {
 
     // Nếu là item từ server chỉ có metadata, hoặc item đầy đủ
     if (lecture.full_data) {
-      onNavigate('SyncPlayer', { lecture: lecture.full_data, initialSeekTime });
+      onNavigate('SyncPlayer', { lecture: lecture.full_data, initialSeekTime, endTime: lecture.full_data?.end_time || lecture.end_time || null });
     } else if (lecture.segments && lecture.segments.length > 0) {
-      onNavigate('SyncPlayer', { lecture, initialSeekTime });
+      onNavigate('SyncPlayer', { lecture, initialSeekTime, endTime: lecture.end_time || null });
     } else {
       // Gọi API tải dữ liệu chi tiết
       setLoading(true);
@@ -1084,6 +1088,12 @@ export default function HomeScreen({ onNavigate }) {
     return { todayMinutes: Math.round(todaySeconds / 60), streak };
   }, [playbackMap]);
 
+  useEffect(() => {
+    streakService.getOrUpdateStreak(studyStats.streak).then((days) => {
+      if (days) setStreakDays(days);
+    });
+  }, [studyStats.streak]);
+
   return (
     <View style={styles.container}>
       <AuraBackground />
@@ -1091,7 +1101,7 @@ export default function HomeScreen({ onNavigate }) {
       <Header
         title="EdTech AI"
         serverStatus={serverStatus}
-        streakLabel={`${Math.max(1, studyStats.streak)} Ngày`}
+        streakLabel={`${streakDays} Ngày`}
       />
 
       <ScrollView
@@ -1110,7 +1120,7 @@ export default function HomeScreen({ onNavigate }) {
         {/* 0. Banner chào mừng + mục tiêu ngày */}
         <HomeWelcomeSection
           totalMinutes={studyStats.todayMinutes}
-          streakDays={Math.max(1, studyStats.streak)}
+          streakDays={streakDays}
         />
 
         {/* 1. Khung Nhập Liên Kết & Nút Tác Vụ */}

@@ -87,7 +87,7 @@ export default function TagFilterModal({
                 </View>
                 <Text style={styles.emptyTagTitle}>Chưa có thẻ bài giảng nào</Text>
                 <Text style={styles.emptyTagSub}>
-                  Sau khi dịch hoặc xử lý bài giảng, AI sẽ tự động phân tích và gắn các thẻ tương ứng tại đây.
+                  Sau khi dịch hoặc xử lý bài giảng, hệ thống sẽ tự động phân tích và gắn các thẻ tương ứng tại đây.
                 </Text>
               </View>
             ) : (
