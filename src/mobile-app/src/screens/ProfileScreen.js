@@ -22,6 +22,7 @@ import { GOOGLE_CLIENT_IDS } from '../constants/config';
 import { apiService } from '../services/api';
 import { notificationService } from '../services/notificationService';
 import Header from '../components/Header';
+import Icon from '../components/ui/Icon';
 import AuraBackground from '../components/ui/AuraBackground';
 import {
   PRESET_AVATARS,
@@ -39,7 +40,7 @@ import {
 
 WebBrowser.maybeCompleteAuthSession();
 
-export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip = true, onNavigate }) {
+export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip = true, onNavigate, onLogout }) {
   const [user, setUser] = useState(null);
   const [stats, setStats] = useState({ processed_lectures: 0, total_minutes: 0, saved_quizzes: 0 });
   const [streakDays, setStreakDays] = useState(0);
@@ -660,6 +661,11 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
             setConfirmPassword('');
             setErrorMessage('');
             setSuccessMessage('');
+            if (onLogout) {
+              onLogout();
+            } else if (onNavigate) {
+              onNavigate('Auth');
+            }
           },
         },
       ]
@@ -728,45 +734,80 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
             <ProfileAchievementsSection stats={stats} />
           </>
         ) : (
-          /* Form Đăng nhập, Đăng ký, OTP, Quên mật khẩu & Google Login */
-          <AuthSection
-            authMode={authMode}
-            setAuthMode={setAuthMode}
-            email={email}
-            setEmail={setEmail}
-            password={password}
-            setPassword={setPassword}
-            displayName={displayName}
-            setDisplayName={setDisplayName}
-            confirmPassword={confirmPassword}
-            setConfirmPassword={setConfirmPassword}
-            showPassword={showPassword}
-            setShowPassword={setShowPassword}
-            loading={loading}
-            errorMessage={errorMessage}
-            successMessage={successMessage}
-            busyGoogle={busyGoogle}
-            otp={otp}
-            setOtp={setOtp}
-            forgotStep={forgotStep}
-            setForgotStep={setForgotStep}
-            newPassword={newPassword}
-            setNewPassword={setNewPassword}
-            confirmNewPassword={confirmNewPassword}
-            setConfirmNewPassword={setConfirmNewPassword}
-            showNewPassword={showNewPassword}
-            setShowNewPassword={setShowNewPassword}
-            onLogin={handleLogin}
-            onRegister={handleRegister}
-            onVerifyOtp={handleVerifyOtp}
-            onResendOtp={handleResendOtp}
-            onSendForgotOtp={handleSendForgotOtp}
-            onVerifyResetOtp={handleVerifyResetOtp}
-            onResetPasswordOtp={handleResetPasswordOtp}
-            onGoogleAuth={handleGoogleAuth}
-            allowSkip={allowSkip}
-            onSkip={onSkip}
-          />
+          /* Thẻ Chế độ khách khi ở trong App chính */
+          <View style={{
+            backgroundColor: colors.card,
+            borderRadius: borderRadius.xl,
+            padding: spacing.xl,
+            alignItems: 'center',
+            marginTop: spacing.md,
+            borderWidth: 1,
+            borderColor: colors.border,
+            shadowColor: colors.shadow,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.08,
+            shadowRadius: 10,
+            elevation: 3,
+          }}>
+            <View style={{
+              width: 68,
+              height: 68,
+              borderRadius: 34,
+              backgroundColor: colors.coralTint,
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginBottom: spacing.md,
+            }}>
+              <Icon name="person" size={34} color={colors.coral} />
+            </View>
+            <Text style={{
+              fontSize: 18,
+              fontFamily: 'PlusJakartaSans_700Bold',
+              color: colors.text,
+              marginBottom: 6,
+            }}>
+              Chế độ Khách (Chưa đăng nhập)
+            </Text>
+            <Text style={{
+              fontSize: 13,
+              fontFamily: 'PlusJakartaSans_400Regular',
+              color: colors.textMuted,
+              textAlign: 'center',
+              lineHeight: 20,
+              marginBottom: spacing.lg,
+              paddingHorizontal: spacing.sm,
+            }}>
+              Đăng nhập tài khoản để đồng bộ toàn bộ lịch sử bài giảng, tóm tắt AI và câu hỏi ôn tập trên tất cả thiết bị của bạn.
+            </Text>
+            <TouchableOpacity
+              style={{
+                backgroundColor: colors.coral,
+                borderRadius: borderRadius.full,
+                paddingVertical: 14,
+                paddingHorizontal: 28,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                shadowColor: colors.coral,
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.25,
+                shadowRadius: 8,
+                elevation: 4,
+              }}
+              onPress={() => onNavigate && onNavigate('Auth')}
+              activeOpacity={0.85}
+            >
+              <Icon name="login" size={18} color="#fff" />
+              <Text style={{
+                color: '#fff',
+                fontFamily: 'PlusJakartaSans_700Bold',
+                fontSize: 14,
+                letterSpacing: 0.3,
+              }}>
+                ĐĂNG NHẬP / ĐĂNG KÝ NGAY
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
       </ScrollView>
 

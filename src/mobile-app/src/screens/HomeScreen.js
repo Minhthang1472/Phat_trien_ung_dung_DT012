@@ -108,7 +108,26 @@ export default function HomeScreen({ onNavigate }) {
   const [playbackMap, setPlaybackMap] = useState({});
 
   useEffect(() => {
+    // 1. Tải tức thì từ Local Storage (0ms) để giao diện hiển thị ngay lập tức
+    const loadCachedData = async () => {
+      try {
+        const [localHistory, favs, pMap] = await Promise.all([
+          apiService.getLocalHistory(),
+          apiService.getFavorites(),
+          apiService.getPlaybackProgressMap(),
+        ]);
+        if (localHistory && localHistory.length > 0) {
+          setRecentLectures(localHistory.map(ensureAiClassification));
+        }
+        if (favs && Array.isArray(favs)) setFavorites(favs);
+        if (pMap) setPlaybackMap(pMap);
+      } catch (_) {}
+    };
+    loadCachedData();
+
+    // 2. Chạy đồng bộ song song kiểm tra server và làm mới dữ liệu đám mây
     checkHealthAndFetchHistory();
+
     return () => {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
       if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
@@ -116,19 +135,21 @@ export default function HomeScreen({ onNavigate }) {
   }, []);
 
   const checkHealthAndFetchHistory = async () => {
-    const status = await apiService.checkServerHealth();
-    setServerStatus(status);
-
     try {
-      const [history, favs, pMap, currentUser] = await Promise.all([
-        apiService.getLectureHistory(25),
-        apiService.getFavorites(),
-        apiService.getPlaybackProgressMap(),
-        apiService.getSavedUser(),
+      // Gọi song song cả Health Check và Lịch sử bài giảng để giảm 50% thời gian chờ mạng
+      const [status, history, favs, pMap, currentUser] = await Promise.all([
+        apiService.checkServerHealth().catch((e) => ({ online: false, error: e.message })),
+        apiService.getLectureHistory(25).catch(() => null),
+        apiService.getFavorites().catch(() => []),
+        apiService.getPlaybackProgressMap().catch(() => ({})),
+        apiService.getSavedUser().catch(() => null),
       ]);
 
+      if (status) setServerStatus(status);
+      if (favs && Array.isArray(favs)) setFavorites(favs);
+      if (pMap) setPlaybackMap(pMap);
+
       if (history && history.length > 0) {
-        // Lọc khử trùng lặp theo video_url để giao diện luôn chỉ hiển thị 1 thẻ bài giảng duy nhất
         const seenUrls = new Set();
         const uniqueHistory = [];
         history.forEach((lec) => {
@@ -139,23 +160,19 @@ export default function HomeScreen({ onNavigate }) {
           }
         });
         setRecentLectures(uniqueHistory.map(ensureAiClassification));
-      } else if (!currentUser) {
-        // Chỉ hiển thị bài mẫu khi ở chế độ khách chưa đăng nhập
-        setRecentLectures(SAMPLE_LECTURES.map(ensureAiClassification));
       } else {
-        // Người dùng đã đăng nhập: Hiển thị đúng danh sách bài riêng của họ (trống nếu tài khoản mới)
-        setRecentLectures([]);
+        // Nếu server chưa có, dùng lại local cache hoặc dữ liệu mẫu cho khách
+        const local = await apiService.getLocalHistory();
+        if (local && local.length > 0) {
+          setRecentLectures(local.map(ensureAiClassification));
+        } else if (!currentUser) {
+          setRecentLectures(SAMPLE_LECTURES.map(ensureAiClassification));
+        } else {
+          setRecentLectures([]);
+        }
       }
-      setFavorites(favs || []);
-      setPlaybackMap(pMap || {});
     } catch (err) {
       console.warn('Lỗi tải dữ liệu lịch sử/favorites:', err);
-      const currentUser = await apiService.getSavedUser();
-      if (!currentUser) {
-        setRecentLectures(SAMPLE_LECTURES.map(ensureAiClassification));
-      } else {
-        setRecentLectures([]);
-      }
     }
   };
 
@@ -490,6 +507,13 @@ export default function HomeScreen({ onNavigate }) {
         message: `Bài giảng "${result?.title || 'Mới'}" đã được tạo phụ đề và tóm tắt thành công!`,
         type: 'success',
         icon: 'sparkle',
+      });
+
+      // Lưu ngay vào bộ nhớ cục bộ để bài giảng xuất hiện tức thì trong danh sách
+      await apiService.saveLectureToLocal(result);
+      setRecentLectures((prev) => {
+        const filtered = (prev || []).filter((l) => l.video_url !== result.video_url);
+        return [ensureAiClassification(result), ...filtered];
       });
 
       await new Promise((resolve) => setTimeout(resolve, 600));

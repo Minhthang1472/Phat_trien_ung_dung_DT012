@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Platform, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, Platform, ActivityIndicator, LogBox } from 'react-native';
+
+LogBox.ignoreLogs(['Possible EventEmitter memory leak detected']);
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -11,6 +13,7 @@ import {
   PlusJakartaSans_800ExtraBold,
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { colors } from './src/constants/theme';
+import AuthScreen from './src/screens/AuthScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import SyncPlayerScreen from './src/screens/SyncPlayerScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
@@ -19,7 +22,7 @@ import BottomNavBar from './src/components/BottomNavBar';
 import { apiService } from './src/services/api';
 
 export default function App() {
-  const [currentRoute, setCurrentRoute] = useState('Profile');
+  const [currentRoute, setCurrentRoute] = useState('Auth');
   const [routeParams, setRouteParams] = useState({});
   const [checkingAuth, setCheckingAuth] = useState(true);
 
@@ -61,10 +64,10 @@ export default function App() {
         if (user && token) {
           setCurrentRoute('Home');
         } else {
-          setCurrentRoute('Profile');
+          setCurrentRoute('Auth');
         }
       } catch (_) {
-        setCurrentRoute('Profile');
+        setCurrentRoute('Auth');
       } finally {
         setCheckingAuth(false);
       }
@@ -101,6 +104,12 @@ export default function App() {
         <StatusBar style="dark" backgroundColor={colors.surface} />
         <View style={styles.container}>
           <View style={styles.contentArea}>
+            {currentRoute === 'Auth' && (
+              <AuthScreen
+                onAuthSuccess={() => setCurrentRoute('Home')}
+                onSkip={() => setCurrentRoute('Home')}
+              />
+            )}
             {currentRoute === 'Home' && <HomeScreen onNavigate={handleNavigate} />}
 
             {currentRoute === 'SyncPlayer' && (
@@ -113,9 +122,8 @@ export default function App() {
             {currentRoute === 'Profile' && (
               <ProfileScreen
                 onBack={handleBack}
-                onAuthSuccess={() => setCurrentRoute('Home')}
-                onSkip={() => setCurrentRoute('Home')}
                 onNavigate={handleNavigate}
+                onLogout={() => setCurrentRoute('Auth')}
               />
             )}
             {currentRoute === 'Settings' && (

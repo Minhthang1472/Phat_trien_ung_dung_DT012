@@ -614,7 +614,7 @@ class ApiService {
     try {
       const baseUrl = await this.getBaseUrl();
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
 
       const response = await fetch(`${baseUrl}/api/history?limit=${limit}`, {
         method: 'GET',

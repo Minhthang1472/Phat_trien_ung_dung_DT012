@@ -172,16 +172,16 @@ class SummaryService:
             ],
         """ if include_quiz else '"quiz": [],'
 
-        # Tối ưu hóa tốc độ: Với video dài (> 7.000 ký tự), trích chọn thông minh các phần cốt lõi
+        # Tối ưu hóa tốc độ: Với video dài (> 4.000 ký tự), trích chọn thông minh cốt lõi để LLM sinh trong vài giây
         condensed_text = full_text.strip()
-        if len(condensed_text) > 7000:
+        if len(condensed_text) > 4000:
             mid = len(condensed_text) // 2
             condensed_text = (
-                condensed_text[:3000]
-                + "\n...[lược bớt đoạn diễn giải kéo dài]...\n"
-                + condensed_text[mid - 1000 : mid + 1000]
+                condensed_text[:1800]
+                + "\n...[lược bớt đoạn phân tích chi tiết]...\n"
+                + condensed_text[mid - 500 : mid + 500]
                 + "\n...[tiếp tục phần trọng tâm cuối bài]...\n"
-                + condensed_text[-2500:]
+                + condensed_text[-1400:]
             )
 
         prompt = f"""
@@ -319,10 +319,12 @@ class SummaryService:
                 "stream": False,
                 "format": "json",
                 "options": {
-                    "temperature": 0.2
+                    "temperature": 0.2,
+                    "num_predict": 1200
                 }
             }
-            resp = requests.post(url, json=payload, timeout=180)
+            # Giới hạn timeout 28s để không bao giờ bị Cloudflare cắt kết nối (HTTP 524)
+            resp = requests.post(url, json=payload, timeout=28)
             if resp.status_code == 200:
                 raw_text = resp.json().get("response", "")
                 parsed = _clean_and_parse_json(raw_text)
@@ -342,29 +344,45 @@ class SummaryService:
             return _format_parsed_result(parsed)
 
         # =============================================================
-        # TIẾN HÀNH THỰC THI THEO THỨ TỰ ƯU TIÊN
+        # TIẾN HÀNH THỰC THI THEO THỨ TỰ ƯU TIÊN (SIÊU TỐC & CHỐNG TIMEOUT 524)
         # =============================================================
-
-        # [ƯU TIÊN 1]: Chạy Ollama Local trên GPU nếu Ollama đang bật
-        if self.is_ollama_available():
+        def _has_cuda():
             try:
-                logger.info(f"🚀 [LOCAL AI] Đang chạy Ollama ({settings.OLLAMA_MODEL}) trực tiếp trên GPU Tesla T4...")
+                import torch
+                return torch.cuda.is_available()
+            except Exception:
+                return False
+
+        has_gpu = _has_cuda()
+
+        # TH1: Nếu có GPU VÀ Ollama đang bật -> Chạy Ollama siêu tốc trên GPU
+        if has_gpu and self.is_ollama_available():
+            try:
+                logger.info(f"🚀 [LOCAL AI] Đang chạy Ollama ({settings.OLLAMA_MODEL}) trên GPU...")
                 return _call_ollama()
             except Exception as e_ollama:
-                logger.warning(f"Ollama Local gặp lỗi: {e_ollama}. Đang chuyển sang Gemini dự phòng...")
+                logger.warning(f"Ollama Local GPU gặp lỗi/quá 28s ({e_ollama}). Chuyển sang Gemini dự phòng...")
 
-        # [ƯU TIÊN 2]: Chạy Gemini nếu có cấu hình API Key
+        # TH2: Nếu KHÔNG CÓ GPU (Colab chạy CPU) hoặc Ollama lỗi: Ưu tiên Gemini Cloud AI (chỉ mất 2-3s!)
         if self.model and settings.GEMINI_API_KEY:
             try:
-                logger.info(f"🌐 [CLOUD AI] Đang gọi Gemini ({self.model}) để tóm tắt...")
+                logger.info(f"🌐 [CLOUD AI] Đang gọi Gemini ({self.model}) siêu tốc (chống timeout 524)...")
                 return _call_gemini(self.model)
             except Exception as e1:
-                logger.warning(f"Lỗi khi gọi model chính gemini-2.5-flash: {e1}. Đang chuyển sang gemini-2.5-flash-lite...")
+                logger.warning(f"Lỗi model chính {self.model}: {e1}. Chuyển sang {self.fallback_model}...")
                 if self.fallback_model:
                     try:
                         return _call_gemini(self.fallback_model)
                     except Exception as e2:
-                        logger.error(f"Fallback gemini-2.5-flash-lite cũng thất bại: {e2}")
+                        logger.error(f"Fallback {self.fallback_model} thất bại: {e2}")
+
+        # TH3: Nếu không có Gemini nhưng có Ollama trên CPU (chấp nhận thử với timeout ngắn)
+        if not has_gpu and self.is_ollama_available():
+            try:
+                logger.info(f"⚠️ [CPU AI] Thử chạy Ollama trên CPU với timeout ngắn...")
+                return _call_ollama()
+            except Exception as e_cpu:
+                logger.warning(f"Ollama CPU không kịp phản hồi: {e_cpu}")
 
         # [DỰ PHÒNG CUỐI CÙNG]: Bản tóm tắt cơ bản nếu không có AI nào
         logger.info("Chưa có Ollama hoặc Gemini, sinh bản tóm tắt cơ bản.")
