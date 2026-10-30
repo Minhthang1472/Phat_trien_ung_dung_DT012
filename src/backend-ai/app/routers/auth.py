@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Security
 from fastapi.concurrency import run_in_threadpool
 
 from app.firebase_database import firebase_service
@@ -227,6 +227,19 @@ async def verify_email(token: str = Query(..., min_length=20)):
     user_ref.update({"email_verified": True, "verification_token_hash": None, "verification_expires_at": None})
     return {"verified": True, "email": user.get("email")}
 
+
+@router.post("/ws-token")
+async def create_ws_token(
+    _: None = Depends(auth_rate_limit),
+    user: dict = Depends(get_current_user)
+):
+    """Tạo token WebSocket ngắn hạn (1 giờ) cho luồng live stream.
+    Sử dụng token hiện có của người dùng để tạo WS token mới (1 giờ)."""
+    try:
+        token = auth_service.create_ws_token(user)
+        return {"token": token, "message": "Token WebSocket đã được tạo thành công"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi tạo token WebSocket: {e}")
 
 @router.post("/google")
 async def google_login(request: GoogleLoginRequest, _limit=Depends(auth_rate_limit)):

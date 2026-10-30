@@ -38,6 +38,8 @@ from app.services.summary_service import (
     normalize_quiz,
     normalize_mindmap,
     normalize_exercises,
+    normalize_sections,
+    quiz_count_for_duration,
 )
 from app.services.translation_service import translation_service
 from app.services.subtitle_exporter import subtitle_exporter
@@ -142,7 +144,18 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
         cached_fb = firebase_service.get_lecture_cache(url, owner_id=user["id"])
         if cached_fb:
             cached_fb["owner_id"] = user["id"]
-            cached_fb["quiz"] = normalize_quiz(cached_fb.get("quiz", []))
+            cached_fb["sections"] = normalize_sections(
+                cached_fb.get("sections"),
+                key_points=cached_fb.get("key_points"),
+                duration_seconds=cached_fb.get("duration_seconds"),
+            )
+            cached_fb["quiz"] = normalize_quiz(
+                cached_fb.get("quiz", []),
+                sections=cached_fb["sections"],
+            )
+            cached_fb["quiz_target"] = cached_fb.get("quiz_target") or quiz_count_for_duration(
+                cached_fb.get("duration_seconds")
+            )
             cached_fb["mindmap"] = normalize_mindmap(
                 cached_fb.get("mindmap"),
                 default_title=cached_fb.get("title", ""),
@@ -175,7 +188,9 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
                 cached_fb["segments"] = translation_service.translate_segments(
                     segs,
                     source_lang=src_lang,
-                    target_lang=target_lang
+                    target_lang=target_lang,
+                    video_title=cached_fb.get("title", ""),
+                    context=cached_fb.get("summary"),
                 )
                 cached_fb["language"] = target_lang
                 firebase_service.save_lecture_cache(url, cached_fb)
@@ -268,7 +283,8 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
         segments = translation_service.translate_segments(
             segments, 
             source_lang=detected_lang, 
-            target_lang=target_lang
+            target_lang=target_lang,
+            video_title=(audio_info or {}).get("title", ""),
         )
     else:
         for seg in segments:
@@ -277,7 +293,13 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
     # 5. Tóm tắt nội dung bài giảng (Tổng quan, Điểm chính, Thuật ngữ, Trắc nghiệm nếu bật)
     full_transcript = " ".join([seg.get("text", "") for seg in segments])
     include_quiz = True if request.include_quiz is None else request.include_quiz
-    summary_data = summary_service.summarize_transcript(full_transcript, include_quiz=include_quiz)
+    duration_seconds = (audio_info or {}).get("duration") or 0
+    summary_data = summary_service.summarize_transcript(
+        full_transcript,
+        include_quiz=include_quiz,
+        duration_seconds=duration_seconds,
+        video_title=(audio_info or {}).get("title", ""),
+    )
 
     is_drive = audio_service.is_google_drive(url)
     drive_id = audio_service.extract_drive_id(url) if is_drive else ""
@@ -298,7 +320,9 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
-        "quiz": normalize_quiz(summary_data.get("quiz", [])),
+        "sections": summary_data.get("sections") or [],
+        "quiz_target": summary_data.get("quiz_target"),
+        "quiz": normalize_quiz(summary_data.get("quiz", []), sections=summary_data.get("sections") or []),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=audio_info["title"], key_points=summary_data.get("key_points")),
         "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
         "folder": request.folder or summary_data.get("folder") or "Bài giảng chung",
@@ -355,6 +379,7 @@ async def process_lookahead_window(request: LookaheadSubtitleRequest):
             segments,
             source_lang=detected_language,
             target_lang=target_lang,
+            video_title=request.video_url,
         )
     else:
         for seg in segments:
@@ -486,13 +511,19 @@ async def upload_video(
         segments = translation_service.translate_segments(
             segments, 
             source_lang=detected_lang, 
-            target_lang=target_lang
+            target_lang=target_lang,
+            video_title=audio_info.get("title", ""),
         )
 
     # Tóm tắt
     full_transcript = " ".join([seg.get("text", "") for seg in segments])
     include_q = True if include_quiz is None else include_quiz
-    summary_data = summary_service.summarize_transcript(full_transcript, include_quiz=include_q)
+    summary_data = summary_service.summarize_transcript(
+        full_transcript,
+        include_quiz=include_q,
+        duration_seconds=audio_info.get("duration"),
+        video_title=audio_info.get("title", ""),
+    )
 
     tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
 
@@ -507,7 +538,9 @@ async def upload_video(
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
-        "quiz": normalize_quiz(summary_data.get("quiz", [])),
+        "sections": summary_data.get("sections") or [],
+        "quiz_target": summary_data.get("quiz_target"),
+        "quiz": normalize_quiz(summary_data.get("quiz", []), sections=summary_data.get("sections") or []),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=audio_info["title"], key_points=summary_data.get("key_points")),
         "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
         "folder": folder or summary_data.get("folder") or "Bài giảng chung",
@@ -637,11 +670,15 @@ async def process_subtitle_file(
             segments,
             source_lang=detected_language,
             target_lang=target_lang,
+            video_title=title or filename,
         )
 
+    subtitle_duration = max((float(segment.get("end", 0)) for segment in segments), default=0.0)
     summary_data = summary_service.summarize_transcript(
         " ".join(segment["text"] for segment in segments),
         include_quiz=True if include_quiz is None else include_quiz,
+        duration_seconds=subtitle_duration,
+        video_title=title or filename,
     )
     lecture_url = (video_url or f"subtitle_file://{filename}").strip()
     result = {
@@ -654,7 +691,9 @@ async def process_subtitle_file(
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
-        "quiz": normalize_quiz(summary_data.get("quiz", [])),
+        "sections": summary_data.get("sections") or [],
+        "quiz_target": summary_data.get("quiz_target"),
+        "quiz": normalize_quiz(summary_data.get("quiz", []), sections=summary_data.get("sections") or []),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=title or os.path.splitext(filename)[0], key_points=summary_data.get("key_points")),
         "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
         "folder": summary_data.get("folder") or "Bài giảng chung",
@@ -793,12 +832,15 @@ async def pair_video_and_subtitles(
     transcript = " ".join(s.get("text", "") for s in segments)
     detected_language = translation_service.detect_language(transcript)
     target_lang = (target_language or "vi").lower().strip()
+    max_duration = max((float(s.get("end", 0)) for s in segments), default=300.0)
+    final_title = title or (video_file.filename if video_file else os.path.splitext(sub_fname)[0])
 
     if target_lang != detected_language:
         segments = translation_service.translate_segments(
             segments,
             source_lang=detected_language,
-            target_lang=target_lang
+            target_lang=target_lang,
+            video_title=final_title,
         )
     else:
         for s in segments:
@@ -806,11 +848,10 @@ async def pair_video_and_subtitles(
 
     summary_data = summary_service.summarize_transcript(
         transcript,
-        include_quiz=True if include_quiz is None else include_quiz
+        include_quiz=True if include_quiz is None else include_quiz,
+        duration_seconds=max_duration,
+        video_title=final_title,
     )
-
-    max_duration = max((float(s.get("end", 0)) for s in segments), default=300.0)
-    final_title = title or (video_file.filename if video_file else os.path.splitext(sub_fname)[0])
 
     result = {
         "video_url": lecture_url,
@@ -823,7 +864,9 @@ async def pair_video_and_subtitles(
         "summary": summary_data.get("summary", ""),
         "key_points": summary_data.get("key_points", []),
         "formulas_and_terms": summary_data.get("formulas_and_terms", []),
-        "quiz": normalize_quiz(summary_data.get("quiz", [])),
+        "sections": summary_data.get("sections") or [],
+        "quiz_target": summary_data.get("quiz_target"),
+        "quiz": normalize_quiz(summary_data.get("quiz", []), sections=summary_data.get("sections") or []),
         "mindmap": summary_data.get("mindmap") or normalize_mindmap(None, default_title=final_title, key_points=summary_data.get("key_points")),
         "exercises": summary_data.get("exercises") or normalize_exercises(None, key_points=summary_data.get("key_points")),
         "folder": summary_data.get("folder") or "Bài giảng chung",
@@ -861,6 +904,15 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
         all_segments = list(existing_segments)
         max_existing_end = max((float(s.get("end", 0)) for s in existing_segments), default=0.0)
 
+        # Chuẩn bị ngữ cảnh + glossary một lần cho cả video để mọi batch nhỏ
+        # đều được dịch nhất quán (không gọi lại Gemini brief mỗi 3 câu).
+        translation_brief = translation_service.build_video_brief(
+            existing_segments,
+            video_title=job.get("title", ""),
+            source_lang=src_lang,
+            target_lang=target_lang,
+        )
+
         buffer_batch = []
         detected = "en"
 
@@ -885,7 +937,10 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
                         translated_batch = translation_service.translate_segments(
                             translated_batch,
                             source_lang=detected,
-                            target_lang=target_lang
+                            target_lang=target_lang,
+                            video_title=job.get("title", ""),
+                            context=translation_brief.get("context"),
+                            glossary=translation_brief.get("glossary"),
                         )
                     except Exception as te:
                         logger.warning(f"Lỗi dịch batch nhỏ: {te}")
@@ -915,7 +970,10 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
                     translated_batch = translation_service.translate_segments(
                         translated_batch,
                         source_lang=detected,
-                        target_lang=target_lang
+                        target_lang=target_lang,
+                        video_title=job.get("title", ""),
+                        context=translation_brief.get("context"),
+                        glossary=translation_brief.get("glossary"),
                     )
                 except Exception:
                     for s in translated_batch:
@@ -932,14 +990,21 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
 
         # Toàn bộ video dài đã xong: Tạo Tóm tắt, Mindmap, Quiz siêu tốc
         transcript = " ".join(s.get("text", "") for s in all_segments)
-        summary_data = summary_service.summarize_transcript(transcript, include_quiz=True)
+        summary_data = summary_service.summarize_transcript(
+            transcript,
+            include_quiz=True,
+            duration_seconds=job.get("duration_seconds"),
+            video_title=job.get("title", ""),
+        )
 
         job["segments"] = all_segments
         job["detected_language"] = detected
         job["summary"] = summary_data.get("summary", "")
         job["key_points"] = summary_data.get("key_points", [])
         job["formulas_and_terms"] = summary_data.get("formulas_and_terms", [])
-        job["quiz"] = normalize_quiz(summary_data.get("quiz", []))
+        job["sections"] = summary_data.get("sections") or []
+        job["quiz"] = normalize_quiz(summary_data.get("quiz", []), sections=job["sections"])
+        job["quiz_target"] = summary_data.get("quiz_target")
         job["mindmap"] = summary_data.get("mindmap") or normalize_mindmap(None, default_title=job.get("title", ""), key_points=job.get("key_points"))
         job["exercises"] = summary_data.get("exercises") or normalize_exercises(None, key_points=job.get("key_points"))
         job["folder"] = summary_data.get("folder") or "Bài giảng chung"
@@ -957,7 +1022,9 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
             "summary": job["summary"],
             "key_points": job["key_points"],
             "formulas_and_terms": job["formulas_and_terms"],
+            "sections": job["sections"],
             "quiz": job["quiz"],
+            "quiz_target": job.get("quiz_target"),
             "mindmap": job["mindmap"],
             "exercises": job["exercises"],
             "folder": job["folder"],
@@ -989,6 +1056,15 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
     cached = firebase_service.get_lecture_cache(url)
     if cached and cached.get("owner_id") == user["id"]:
         cached["is_streaming"] = False
+        cached["sections"] = normalize_sections(
+            cached.get("sections"),
+            key_points=cached.get("key_points"),
+            duration_seconds=cached.get("duration_seconds"),
+        )
+        cached["quiz"] = normalize_quiz(cached.get("quiz", []), sections=cached["sections"])
+        cached["quiz_target"] = cached.get("quiz_target") or quiz_count_for_duration(
+            cached.get("duration_seconds")
+        )
         cached["mindmap"] = normalize_mindmap(cached.get("mindmap"), default_title=cached.get("title", ""), key_points=cached.get("key_points"))
         cached["exercises"] = normalize_exercises(cached.get("exercises"), key_points=cached.get("key_points"))
         return cached
@@ -1008,7 +1084,12 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
         if os.path.exists(fast_wav):
             fast_segments, det = whisper_service.transcribe_audio(audio_path=fast_wav, task="transcribe")
             if target_lang != det:
-                fast_segments = translation_service.translate_segments(fast_segments, source_lang=det, target_lang=target_lang)
+                fast_segments = translation_service.translate_segments(
+                    fast_segments,
+                    source_lang=det,
+                    target_lang=target_lang,
+                    video_title=audio_info.get("title", ""),
+                )
     except Exception as e:
         logger.warning(f"Lỗi lookahead khởi đầu: {e}")
     finally:
@@ -1089,7 +1170,9 @@ async def get_stream_status(job_id: str = Query(..., description="ID của phiê
         "summary": job.get("summary"),
         "key_points": job.get("key_points", []),
         "formulas_and_terms": job.get("formulas_and_terms", []),
+        "sections": job.get("sections", []),
         "quiz": job.get("quiz", []),
+        "quiz_target": job.get("quiz_target"),
         "mindmap": job.get("mindmap"),
         "exercises": job.get("exercises", []),
         "is_completed": job.get("status") == "completed"

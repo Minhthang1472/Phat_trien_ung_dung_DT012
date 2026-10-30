@@ -132,6 +132,10 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
           lecture.segments = statusData.segments;
           lecture.mindmap = statusData.mindmap;
           lecture.quiz = statusData.quiz;
+          lecture.sections = statusData.sections || [];
+          lecture.key_points = statusData.key_points || lecture.key_points;
+          lecture.formulas_and_terms =
+            statusData.formulas_and_terms || lecture.formulas_and_terms;
           lecture.exercises = statusData.exercises;
           lecture.summary = statusData.summary;
           lecture.is_streaming = false;

@@ -1,4 +1,46 @@
 document.addEventListener("DOMContentLoaded", async () => {
+  // Encryption utility for extension_token
+  const cryptoUtil = {
+    async encrypt(text, key) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(text);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const hash = await crypto.subtle.digest('SHA-256', encoder.encode(key));
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const ivWithSalt = new Uint8Array(iv.length + salt.length);
+      ivWithSalt.set(iv, 0);
+      ivWithSalt.set(salt, iv.length);
+      
+      const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: ivWithSalt },
+        hash,
+        data
+      );
+      
+      return btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
+    },
+    
+    async decrypt(text, key) {
+      const decoder = new TextDecoder();
+      const data = Uint8Array.from(atob(text), c => c.charCodeAt(0));
+      const iv = data.slice(0, 12);
+      const salt = data.slice(12, 12 + 16);
+      
+      const hash = await crypto.subtle.digest('SHA-256', encoder.encode(key));
+      
+      const ivWithSalt = new Uint8Array(iv.length + salt.length);
+      ivWithSalt.set(iv, 0);
+      ivWithSalt.set(salt, iv.length);
+      
+      const plaintext = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: ivWithSalt },
+        hash,
+        data
+      );
+      
+      return decoder.decode(plaintext);
+    }
+  };
   const btnProcessTab = document.getElementById("btnProcessTab");
   const btnLookahead = document.getElementById("btnLookahead");
   const btnProcessSubtitle = document.getElementById("btnProcessSubtitle");
@@ -104,9 +146,17 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Tự động xác thực tài khoản ẩn cho Extension (không cần người dùng đăng nhập thủ công)
   const getAuthToken = async () => {
+    const ENCRYPTION_KEY = "LectureAI_Extension_Secret_Key_2026";
     try {
       const stored = await chrome.storage.local.get(["extension_token"]);
-      if (stored && stored.extension_token) return stored.extension_token;
+      if (stored && stored.extension_token) {
+        try {
+          const decrypted = await cryptoUtil.decrypt(stored.extension_token, ENCRYPTION_KEY);
+          return decrypted;
+        } catch (_) {
+          return stored.extension_token;
+        }
+      }
     } catch (_) {}
 
     try {
@@ -122,7 +172,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (loginRes.ok) {
         const loginData = await loginRes.json();
         if (loginData.token) {
-          chrome.storage.local.set({ extension_token: loginData.token });
+          const ENCRYPTION_KEY = "LectureAI_Extension_Secret_Key_2026";
+          try {
+            const encrypted = await cryptoUtil.encrypt(loginData.token, ENCRYPTION_KEY);
+            chrome.storage.local.set({ extension_token: encrypted });
+          } catch (_) {
+            chrome.storage.local.set({ extension_token: loginData.token });
+          }
           return loginData.token;
         }
       }
@@ -234,30 +290,55 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const renderResult = (data) => {
     summarySection.style.display = "flex";
-
-    // Hiển thị tóm tắt
     summaryContent.innerText = data.summary || "Đã phân tích phụ đề thành công.";
 
-    // Hiển thị câu hỏi trắc nghiệm (nếu có)
     const quizList = data.quiz || [];
+    const sections = Array.isArray(data.sections) ? data.sections : [];
+
+    const formatTime = (s) => {
+      const t = Number(s); if (!isFinite(t) || t < 0) return "";
+      return `${String(Math.floor(t/60)).padStart(2,"0")}:${String(Math.floor(t%60)).padStart(2,"0")}`;
+    };
+
+    const buildGroups = () => {
+      if (sections.length === 0) {
+        return quizList.length > 0 ? [{ section: null, entries: quizList.map((q, i) => ({ q, i })) }] : [];
+      }
+      const groups = sections.map((s) => ({ section: s, entries: [] }));
+      const unassigned = [];
+      quizList.forEach((q, i) => {
+        let target = null;
+        if (q.section_id != null) target = groups.find(g => String(g.section.id) === String(q.section_id));
+        if (!target && q.section_title) target = groups.find(g => String((g.section.title||"").trim()).toLowerCase() === String(q.section_title||"").trim().toLowerCase());
+        if (!target && q.timestamp_sec != null) {
+          const ts = Number(q.timestamp_sec);
+          target = groups.find(g => { const a = Number(g.section.start_sec||0), b = Number(g.section.end_sec||0); return ts >= a && (b <= 0 || ts <= b); });
+        }
+        if (target) target.entries.push({ q, i }); else unassigned.push({ q, i });
+      });
+      unassigned.forEach((e, p) => groups[p % groups.length].entries.push(e));
+      return groups.filter(g => g.entries.length > 0);
+    };
+
     if (quizList.length > 0) {
-      quizContent.innerHTML = quizList
-        .map((q, idx) => {
-          const optionsHtml = (q.options || [])
-            .map((opt) => `<div class="quiz-opt">${opt}</div>`)
-            .join("");
-          const answerText = q.correct_answer || q.answer || "A";
+      const groups = buildGroups();
+      quizContent.innerHTML = groups.map((g) => {
+        const cards = g.entries.map(({ q, i }) => {
+          const opts = (q.options || []).map(o => `<div class="quiz-opt">${o}</div>`).join("");
           return `
             <div class="quiz-card">
-              <div class="quiz-q">${idx + 1}. ${q.question}</div>
-              ${optionsHtml}
-              <div class="quiz-ans">✓ Đáp án: ${answerText}</div>
-            </div>
-          `;
-        })
-        .join("");
+              <div class="quiz-q">${i + 1}. ${q.question}</div>
+              ${opts}
+              <div class="quiz-ans">✓ Đáp án: ${q.correct_answer || q.answer || "A"}</div>
+            </div>`;
+        }).join("");
+        if (!g.section) return cards;
+        const s = g.section;
+        const meta = [`${formatTime(s.start_sec)} - ${formatTime(s.end_sec)}`, `${g.entries.length} câu`].filter(Boolean).join(" • ");
+        return `<div class="quiz-section"><div class="quiz-section-head"><div class="quiz-section-title">${s.title || "Phần nội dung"}</div><div class="quiz-section-meta">${meta}</div></div>${cards}</div>`;
+      }).join("");
     } else {
-      quizContent.innerHTML = "<p style='color: #8a90a6; font-weight: 500;'>Không có câu hỏi ôn tập cho video này.</p>";
+      quizContent.innerHTML = "<p style='color:#8a90a6;font-weight:500;'>Không có câu hỏi ôn tập cho video này.</p>";
     }
   };
 
@@ -536,4 +617,34 @@ document.addEventListener("DOMContentLoaded", async () => {
       btnProcessSubtitle.disabled = false;
     }
   });
+
+  // Download export (PDF / DOCX / MD)
+  const btnExport = document.getElementById("btnExport");
+  const exportFormat = document.getElementById("exportFormat");
+  if (btnExport && exportFormat) {
+    btnExport.addEventListener("click", async () => {
+      if (!currentTab || !currentTab.url || !currentTab.url.includes("watch?v=")) {
+        alert("Vui lòng mở video YouTube trước!");
+        return;
+      }
+      try {
+        statusText.innerText = "Đang tạo tài liệu...";
+        const token = await getAuthToken();
+        const res = await fetch(`${activeBackendUrl}/api/export/${encodeURIComponent(currentTab.url)}?format=${exportFormat.value}&token=${encodeURIComponent(token || "")}`);
+        if (!res.ok) throw new Error(`Lỗi HTTP ${res.status}`);
+        const blob = await res.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        const ext = exportFormat.value === "pdf" ? "pdf" : exportFormat.value === "docx" ? "docx" : "md";
+        a.download = `lecture_ai_${Date.now()}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        statusText.innerText = "Đã tải xuống tài liệu.";
+      } catch (err) {
+        alert(`Không thể tải tài liệu: ${err.message}`);
+      }
+    });
+  }
 });

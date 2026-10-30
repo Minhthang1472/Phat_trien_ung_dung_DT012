@@ -8,17 +8,174 @@ from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
 
-def normalize_quiz(raw_quiz) -> list:
-    """Đảm bảo mọi phần tử trong quiz đều là dictionary hợp lệ theo schema Pydantic, có timestamp_sec."""
+DEFAULT_QUIZ_COUNT = 5
+MAX_QUIZ_COUNT = 24
+DEFAULT_QUIZ_OPTIONS = [
+    "A. Đúng",
+    "B. Sai",
+    "C. Cần xem xét thêm",
+    "D. Ý kiến khác",
+]
+
+
+def quiz_count_for_duration(duration_seconds, default: int = DEFAULT_QUIZ_COUNT) -> int:
+    """Tính số câu hỏi trắc nghiệm phù hợp với thời lượng video.
+
+    Ví dụ: < 5 phút -> 4 câu; 10-20 phút -> 10 câu; 45-60 phút -> 20 câu.
+    Video mẫu hoặc dữ liệu chưa có thời lượng sẽ dùng mặc định 5 câu.
+    """
+    try:
+        duration = float(duration_seconds or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+
+    if duration <= 0:
+        return default
+    if duration < 300:
+        return 4
+    if duration < 600:
+        return 6
+    if duration < 1200:
+        return 10
+    if duration < 1800:
+        return 12
+    if duration < 2700:
+        return 16
+    if duration < 3600:
+        return 20
+    return MAX_QUIZ_COUNT
+
+
+def _to_seconds(value):
+    try:
+        return round(max(0.0, float(value)), 1)
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_sections(raw_sections, key_points=None, duration_seconds=None) -> list:
+    """Chuẩn hóa danh sách section của bản tóm tắt.
+
+    Mỗi section gồm id, title, summary, start_sec, end_sec, key_points.
+    Nếu LLM không trả về sections, tự động chia key_points thành các phần nhỏ.
+    """
+    duration = _to_seconds(duration_seconds) or 0.0
+    sections = []
+
+    if isinstance(raw_sections, list):
+        for idx, item in enumerate(raw_sections):
+            if isinstance(item, str) and item.strip():
+                item = {"title": item.strip()}
+            if not isinstance(item, dict):
+                continue
+
+            title = str(item.get("title") or item.get("name") or f"Phần {idx + 1}").strip()
+            summary = str(item.get("summary") or item.get("description") or "").strip()
+            start_sec = _to_seconds(item.get("start_sec") or item.get("start_time") or item.get("start"))
+            end_sec = _to_seconds(item.get("end_sec") or item.get("end_time") or item.get("end"))
+            raw_points = item.get("key_points") or item.get("bullets") or []
+            if isinstance(raw_points, str):
+                raw_points = [raw_points]
+            points = [str(p).strip() for p in raw_points if str(p).strip()]
+
+            sections.append({
+                "title": title or f"Phần {idx + 1}",
+                "summary": summary,
+                "start_sec": start_sec,
+                "end_sec": end_sec,
+                "key_points": points,
+            })
+
+    # Nếu AI chưa trả về sections: chia các điểm kiến thức cốt lõi thành phần nhỏ
+    if not sections and isinstance(key_points, list) and key_points:
+        points = [str(p).strip() for p in key_points if str(p).strip()][:4]
+        if points:
+            per_section = 1 if len(points) <= 3 else 2
+            for idx in range(0, len(points), per_section):
+                chunk = points[idx:idx + per_section]
+                title = chunk[0].split(":", 1)[0].strip()[:70] or f"Phần {idx // per_section + 1}"
+                sections.append({
+                    "title": title,
+                    "summary": " ".join(chunk),
+                    "start_sec": None,
+                    "end_sec": None,
+                    "key_points": chunk,
+                })
+
+    if not sections:
+        sections = [{
+            "title": "Toàn bộ bài giảng",
+            "summary": "",
+            "start_sec": 0.0,
+            "end_sec": duration,
+            "key_points": [],
+        }]
+
+    # Sắp xếp theo mốc thời gian và bù các mốc còn thiếu
+    def _sort_key(sec):
+        return sec["start_sec"] if sec["start_sec"] is not None else float("inf")
+
+    sections.sort(key=_sort_key)
+    total = duration or max((s.get("end_sec") or 0 for s in sections), default=0.0)
+    count = len(sections)
+    for idx, sec in enumerate(sections):
+        if sec["start_sec"] is None:
+            sec["start_sec"] = round(total * idx / count, 1) if total else 0.0
+        if sec["end_sec"] is None:
+            sec["end_sec"] = round(total * (idx + 1) / count, 1) if total else 0.0
+        if sec["end_sec"] < sec["start_sec"]:
+            sec["end_sec"] = sec["start_sec"]
+        sec["id"] = idx + 1
+
+    return sections
+
+
+def _assign_section(section_ref, timestamp_sec, fallback_index, sections):
+    """Tìm section phù hợp cho một câu hỏi dựa trên id, tiêu đề hoặc timestamp."""
+    if not sections:
+        return None, None
+
+    if isinstance(section_ref, str) and section_ref.strip():
+        needle = section_ref.strip().lower()
+        for sec in sections:
+            if str(sec.get("id")) == needle or str(sec.get("title", "")).strip().lower() == needle:
+                return sec.get("id"), sec.get("title")
+
+    try:
+        if section_ref is not None:
+            wanted = int(float(section_ref))
+            for sec in sections:
+                if int(sec.get("id", -1)) == wanted:
+                    return sec.get("id"), sec.get("title")
+    except (TypeError, ValueError):
+        pass
+
+    if timestamp_sec is not None:
+        for sec in sections:
+            start = sec.get("start_sec") or 0
+            end = sec.get("end_sec")
+            if end is None or end <= start:
+                continue
+            if start <= timestamp_sec <= end:
+                return sec.get("id"), sec.get("title")
+
+    sec = sections[fallback_index % len(sections)]
+    return sec.get("id"), sec.get("title")
+
+
+def normalize_quiz(raw_quiz, sections=None) -> list:
+    """Đảm bảo mọi phần tử trong quiz đều là dictionary hợp lệ, có timestamp_sec và section."""
     if not isinstance(raw_quiz, list):
         return []
+
     clean_quiz = []
-    for item in raw_quiz:
+    sections = sections or []
+    for index, item in enumerate(raw_quiz):
         if isinstance(item, dict):
             q_text = item.get("question") or item.get("title") or "Câu hỏi ôn tập"
             opts = item.get("options")
             if not isinstance(opts, list) or len(opts) < 2:
-                opts = ["A. Đúng", "B. Sai", "C. Cần xem xét thêm", "D. Ý kiến khác"]
+                opts = DEFAULT_QUIZ_OPTIONS
             ans = item.get("correct_answer") or item.get("answer") or "A"
             exp = item.get("explanation") or "Dựa trên nội dung bài giảng."
             raw_ts = item.get("timestamp_sec") or item.get("time_sec") or item.get("timestamp")
@@ -27,15 +184,28 @@ def normalize_quiz(raw_quiz) -> list:
             except (ValueError, TypeError):
                 ts_val = None
 
+            section_ref = (
+                item.get("section_id")
+                or item.get("section_index")
+                or item.get("section")
+                or item.get("section_title")
+            )
+            section_id, section_title = _assign_section(
+                section_ref, ts_val, index, sections
+            )
+
             clean_quiz.append({
                 "question": str(q_text).strip(),
                 "options": [str(o) for o in opts],
                 "correct_answer": str(ans).strip(),
                 "answer": str(ans).strip(),
                 "explanation": str(exp).strip(),
-                "timestamp_sec": ts_val
+                "timestamp_sec": ts_val,
+                "section_id": section_id,
+                "section_title": section_title,
             })
         elif isinstance(item, str) and item.strip():
+            section_id, section_title = _assign_section(None, None, index, sections)
             # Nếu LLM trả về dạng chuỗi câu hỏi tự luận, tự động chuyển thành format trắc nghiệm chuẩn
             clean_quiz.append({
                 "question": item.strip(),
@@ -48,7 +218,9 @@ def normalize_quiz(raw_quiz) -> list:
                 "correct_answer": "A",
                 "answer": "A",
                 "explanation": "Câu hỏi gợi mở củng cố kiến thức từ bài giảng.",
-                "timestamp_sec": None
+                "timestamp_sec": None,
+                "section_id": section_id,
+                "section_title": section_title,
             })
     return clean_quiz
 
@@ -143,30 +315,58 @@ class SummaryService:
         except Exception:
             return False
 
-    def summarize_transcript(self, full_text: str, include_quiz: bool = True) -> dict:
+    def summarize_transcript(
+        self,
+        full_text: str,
+        include_quiz: bool = True,
+        duration_seconds=None,
+        quiz_target=None,
+        video_title: str = "",
+    ) -> dict:
         """
         Gửi transcript bài giảng để tóm tắt các ý chính và câu hỏi ôn tập:
         Ưu tiên 1: Ollama Local LLM (Qwen 2.5 3B trên GPU Tesla T4) - 100% Offline & Free.
         Ưu tiên 2: Google Gemini 2.5 Flash API (Cloud AI).
         Dự phòng: Tóm tắt cơ bản nếu không có LLM nào.
+
+        duration_seconds: thời lượng video, dùng để tự động tính số câu hỏi.
+        quiz_target: ghi đè số câu hỏi mong muốn (nếu cần).
         """
+        quiz_count = int(quiz_target or quiz_count_for_duration(duration_seconds))
+        quiz_count = max(1, min(MAX_QUIZ_COUNT, quiz_count))
+
         if not full_text or len(full_text.strip()) < 10:
+            sections = normalize_sections(
+                None,
+                key_points=["Nội dung bài giảng quá ngắn để phân tích chi tiết."],
+                duration_seconds=duration_seconds,
+            )
             return {
                 "folder": "Bài giảng chung",
                 "tags": ["Bài giảng", "Học tập"],
                 "summary": "Nội dung bài giảng quá ngắn để tóm tắt.",
                 "key_points": [],
                 "formulas_and_terms": [],
-                "quiz": []
+                "sections": sections,
+                "quiz": [],
+                "quiz_target": quiz_count,
             }
+
+        duration_hint = (
+            f"{int(float(duration_seconds))} giây"
+            if duration_seconds not in (None, "", 0)
+            else "chưa xác định (hãy ước lượng theo nội dung)"
+        )
 
         quiz_schema = """
             "quiz": [
                 {
-                    "question": "Nội dung câu hỏi trắc nghiệm tự kiểm tra kiến thức?",
+                    "section_id": 1,
+                    "section_title": "Tên phần nội dung tương ứng",
+                    "question": "Câu hỏi trắc nghiệm kiểm tra chi tiết kiến thức trong phần này?",
                     "options": ["A. Lựa chọn 1", "B. Lựa chọn 2", "C. Lựa chọn 3", "D. Lựa chọn 4"],
                     "correct_answer": "A",
-                    "explanation": "Giải thích ngắn gọn lý do đúng",
+                    "explanation": "Giải thích ngắn gọn lý do đáp án đúng và liên hệ với nội dung phần tương ứng",
                     "timestamp_sec": 60
                 }
             ],
@@ -184,12 +384,33 @@ class SummaryService:
                 + condensed_text[-1400:]
             )
 
+        title_hint = f'Tiêu đề bài giảng: "{video_title}".' if video_title else ""
+        quiz_rule = (
+            f"Sinh CHÍNH XÁC {quiz_count} câu hỏi trắc nghiệm, phân bổ đều theo các sections "
+            f"(mỗi section có ít nhất 1 câu, section dài hơn có thể có nhiều câu hơn). "
+            "Mỗi câu phải ghi rõ section_id, section_title và timestamp_sec nằm trong khoảng thời gian của section đó. "
+            "Câu hỏi phải kiểm tra chi tiết cụ thể (khái niệm, ví dụ, công thức, lập luận) chứ không hỏi chung chung; "
+            "các phương án nhiễu phải hợp lý và không trùng lặp."
+            if include_quiz
+            else "Không sinh quiz (quiz là mảng rỗng), nhưng vẫn phải chia sections đầy đủ."
+        )
+
         prompt = f"""
-        Bạn là một chuyên gia giáo dục và sư phạm AI xuất sắc. Dưới đây là phụ đề bài giảng:
+        Bạn là một chuyên gia giáo dục và sư phạm AI xuất sắc. {title_hint}
+        Dưới đây là phụ đề bài giảng (thời lượng ước tính: {duration_hint}):
         ---
         {condensed_text}
         ---
-        Hãy phân tích chuyên sâu nội dung bài giảng trên, tự động phân loại chủ đề/thư mục và gắn thẻ (tags) từ khóa phù hợp nhất, rồi trả về kết quả ĐÚNG ĐỊNH DẠNG JSON sau:
+
+        Hãy phân tích chuyên sâu nội dung bài giảng trên, tự động phân loại chủ đề/thư mục và gắn thẻ (tags) từ khóa phù hợp nhất.
+
+        QUY TẮC BẮT BUỘC:
+        1. Chia bài giảng thành 3-5 sections theo trình tự thời gian. Mỗi section có tiêu đề ngắn gọn, tóm tắt 1-2 câu và khoảng thời gian start_sec/end_sec bao phủ toàn bộ bài giảng.
+        2. {quiz_rule}
+        3. Toàn bộ nội dung trả về bằng tiếng Việt, giữ nguyên thuật ngữ chuyên ngành/tên riêng khi cần.
+        4. Chỉ trả về JSON hợp lệ, không thêm markdown hay lời giải thích bên ngoài.
+
+        Trả về kết quả ĐÚNG ĐỊNH DẠNG JSON sau:
         {{
             "folder": "Tên chủ đề hoặc lĩnh vực môn học ngắn gọn của bài giảng (2-4 từ, ví dụ: 'Trí tuệ nhân tạo', 'Toán học', 'Lập trình', 'Kinh tế', 'Khoa học máy tính', 'Kỹ năng mềm')",
             "tags": [
@@ -197,6 +418,19 @@ class SummaryService:
                 "TừKhóa2",
                 "TừKhóa3",
                 "TừKhóa4"
+            ],
+            "sections": [
+                {{
+                    "id": 1,
+                    "title": "Tên phần nội dung ngắn gọn",
+                    "summary": "Tóm tắt 1-2 câu nội dung cốt lõi của phần này",
+                    "start_sec": 0,
+                    "end_sec": 180,
+                    "key_points": [
+                        "Ý chính chi tiết của phần này",
+                        "Ví dụ hoặc lập luận quan trọng"
+                    ]
+                }}
             ],
             "summary": "Đoạn văn 3-5 câu tóm tắt tổng quan bài học một cách súc tích",
             "key_points": [
@@ -297,13 +531,21 @@ class SummaryService:
                 tags_clean = []
             if not tags_clean:
                 tags_clean = ["Bài giảng", "Học tập"]
+
+            sections = normalize_sections(
+                parsed.get("sections"),
+                key_points=kp,
+                duration_seconds=duration_seconds,
+            )
             return {
                 "folder": folder_clean,
                 "tags": tags_clean,
                 "summary": parsed.get("summary", ""),
                 "key_points": kp,
                 "formulas_and_terms": terms,
-                "quiz": normalize_quiz(parsed.get("quiz", [])),
+                "sections": sections,
+                "quiz": normalize_quiz(parsed.get("quiz", []), sections=sections) if include_quiz else [],
+                "quiz_target": quiz_count,
                 "mindmap": normalize_mindmap(parsed.get("mindmap"), default_title="Sơ đồ tư duy bài học", key_points=kp, terms=terms),
                 "exercises": normalize_exercises(parsed.get("exercises"), key_points=kp)
             }
@@ -320,7 +562,7 @@ class SummaryService:
                 "format": "json",
                 "options": {
                     "temperature": 0.2,
-                    "num_predict": 1200
+                    "num_predict": max(1200, min(3800, 900 + quiz_count * 110))
                 }
             }
             # Giới hạn timeout 28s để không bao giờ bị Cloudflare cắt kết nối (HTTP 524)
@@ -388,15 +630,6 @@ class SummaryService:
         logger.info("Chưa có Ollama hoặc Gemini, sinh bản tóm tắt cơ bản.")
         words = full_text.split()
         preview = " ".join(words[:60]) + ("..." if len(words) > 60 else "")
-        default_quiz = [
-            {
-                "question": "Mô hình AI nào được dùng để bóc tách phụ đề và mốc thời gian trong ứng dụng?",
-                "options": ["A. Whisper AI", "B. ResNet-50", "C. YOLOv8", "D. BERT"],
-                "correct_answer": "A",
-                "answer": "A. Whisper AI",
-                "explanation": "Hệ thống sử dụng lõi faster-whisper để nhận diện giọng nói chính xác."
-            }
-        ] if include_quiz else []
 
         default_kp = [
             "Bóc tách âm thanh và nhận diện giọng nói AI hoàn tất.",
@@ -407,6 +640,112 @@ class SummaryService:
             "Speech-to-Text (ASR): Nhận diện lời nói thành phụ đề",
             "Timestamps Alignment: Đồng bộ mốc thời gian giây"
         ]
+        sections = normalize_sections(
+            None,
+            key_points=default_kp,
+            duration_seconds=duration_seconds,
+        )
+
+        detail_a = " ".join(words[:40]) or "Nội dung đang được hệ thống ghi nhận."
+        detail_b = " ".join(words[40:90]) or "Các mốc kiến thức tiếp theo trong bài giảng."
+        default_quiz = [
+            {
+                "section_id": 1,
+                "question": "Ý nào sau đây tóm đúng nội dung mở đầu của bài giảng?",
+                "options": [
+                    f"A. {detail_a[:90]}",
+                    "B. Một chủ đề hoàn toàn không liên quan",
+                    "C. Chỉ là phần giới thiệu không có kiến thức",
+                    "D. Tất cả các phương án trên đều sai",
+                ],
+                "correct_answer": "A",
+                "explanation": "Phương án A bám sát nội dung mở đầu được ghi nhận từ phụ đề.",
+            },
+            {
+                "section_id": 2,
+                "question": "Hệ thống đã thực hiện bước nào để tạo phụ đề cho bài giảng?",
+                "options": [
+                    "A. Chỉ sao chép văn bản thủ công",
+                    "B. Bóc tách âm thanh và nhận diện giọng nói bằng AI",
+                    "C. Xóa toàn bộ âm thanh gốc",
+                    "D. Không cần xử lý nội dung",
+                ],
+                "correct_answer": "B",
+                "explanation": "Hệ thống dùng AI nhận diện giọng nói để tạo phụ đề kèm mốc thời gian.",
+            },
+            {
+                "section_id": 2,
+                "question": "Mốc thời gian (timestamp) trong phụ đề có tác dụng gì?",
+                "options": [
+                    "A. Trang trí giao diện",
+                    "B. Giúp đồng bộ phụ đề với video khi phát lại",
+                    "C. Tăng dung lượng file",
+                    "D. Thay thế hoàn toàn bản tóm tắt",
+                ],
+                "correct_answer": "B",
+                "explanation": "Timestamp giúp phụ đề hiển thị đúng thời điểm tương ứng với video.",
+            },
+            {
+                "section_id": 3,
+                "question": "Công cụ AI nào có thể được dùng để tóm tắt bài giảng trong hệ thống?",
+                "options": [
+                    "A. Ollama (Qwen) hoặc Gemini",
+                    "B. Chỉ Excel",
+                    "C. Chỉ Photoshop",
+                    "D. Không có công cụ nào",
+                ],
+                "correct_answer": "A",
+                "explanation": "Hệ thống ưu tiên Ollama local và dự phòng bằng Gemini Cloud AI.",
+            },
+            {
+                "section_id": 3,
+                "question": f"Nội dung nào phù hợp nhất với phần kết của bài giảng?",
+                "options": [
+                    f"A. {detail_b[:90]}",
+                    "B. Một nội dung không xuất hiện trong bài",
+                    "C. Chỉ là quảng cáo sản phẩm",
+                    "D. Không có thông tin nào",
+                ],
+                "correct_answer": "A",
+                "explanation": "Phương án A được lấy từ phần cuối nội dung phụ đề đã ghi nhận.",
+            },
+        ]
+
+        # Bổ sung câu hỏi dự phòng cho đủ số lượng theo thời lượng video.
+        if include_quiz and quiz_count > len(default_quiz):
+            pool_points = []
+            for sec in sections:
+                sec_points = sec.get("key_points") or [sec.get("title") or "Nội dung bài giảng"]
+                for point in sec_points:
+                    text_point = str(point).strip()
+                    if text_point:
+                        pool_points.append((sec.get("id"), text_point))
+
+            pool_index = 0
+            while len(default_quiz) < quiz_count and pool_points:
+                section_id, point = pool_points[pool_index % len(pool_points)]
+                distractors = [p for _, p in pool_points if p != point][:3]
+                while len(distractors) < 3:
+                    distractors.append("Nội dung không được đề cập trong bài giảng")
+                correct_letter = "ABCD"[len(default_quiz) % 4]
+                distractor_iter = iter(distractors)
+                options = []
+                for letter in "ABCD":
+                    if letter == correct_letter:
+                        options.append(f"{letter}. {point[:110]}")
+                    else:
+                        options.append(f"{letter}. {next(distractor_iter)[:110]}")
+                default_quiz.append({
+                    "section_id": section_id,
+                    "question": "Nội dung nào sau đây được trình bày trong bài giảng?",
+                    "options": options,
+                    "correct_answer": correct_letter,
+                    "explanation": "Phương án đúng bám sát nội dung đã ghi nhận từ phụ đề.",
+                })
+                pool_index += 1
+
+        if include_quiz:
+            default_quiz = default_quiz[:quiz_count]
 
         return {
             "folder": "Bài giảng chung",
@@ -414,7 +753,9 @@ class SummaryService:
             "summary": f"Tóm tắt sơ lược bài học: {preview}",
             "key_points": default_kp,
             "formulas_and_terms": default_terms,
-            "quiz": normalize_quiz(default_quiz),
+            "sections": sections,
+            "quiz": normalize_quiz(default_quiz, sections=sections) if include_quiz else [],
+            "quiz_target": quiz_count,
             "mindmap": normalize_mindmap(None, default_title="Sơ đồ tư duy bài giảng", key_points=default_kp, terms=default_terms),
             "exercises": normalize_exercises(None, key_points=default_kp)
         }

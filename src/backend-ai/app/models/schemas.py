@@ -100,7 +100,9 @@ class ProcessVideoResponse(BaseModel):
     summary: Optional[str] = None
     key_points: Optional[List[str]] = []
     formulas_and_terms: Optional[List[str]] = []
+    sections: Optional[List[dict]] = []
     quiz: Optional[List[dict]] = []
+    quiz_target: Optional[int] = None
     mindmap: Optional[dict] = None
     folder: Optional[str] = None
     tags: Optional[List[str]] = []
