@@ -89,6 +89,8 @@ class UpdateProfileRequest(BaseModel):
 class ProcessVideoResponse(BaseModel):
     video_url: str
     media_url: Optional[str] = None
+    media_stream_url: Optional[str] = None
+    is_drive: Optional[bool] = False
     media_access_token: Optional[str] = None
     title: str
     duration_seconds: float

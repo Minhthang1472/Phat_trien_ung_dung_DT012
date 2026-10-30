@@ -8,6 +8,8 @@ import Icon from '../../ui/Icon';
 export default function VideoPlayerSection({
   isYouTube,
   youtubeId,
+  isDrive,
+  drivePreviewUrl,
   mediaSrc,
   isAudioOnly,
   title,
@@ -44,6 +46,15 @@ export default function VideoPlayerSection({
             src={`https://www.youtube.com/embed/${youtubeId}?enablejsapi=1&origin=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
             style={{ width: '100%', height: '100%', minHeight: 220, border: 'none', borderRadius: 12 }}
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            title={title}
+          />
+        ) : isDrive && drivePreviewUrl ? (
+          <iframe
+            id="drive-sync-iframe"
+            src={drivePreviewUrl}
+            style={{ width: '100%', height: '100%', minHeight: 220, border: 'none', borderRadius: 12, backgroundColor: '#000' }}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
             allowFullScreen
             title={title}
           />
@@ -211,6 +222,23 @@ export default function VideoPlayerSection({
               androidHardwareAccelerationDisabled: false,
               setSupportMultipleWindows: false,
             }}
+          />
+        ) : isDrive && drivePreviewUrl ? (
+          <WebView
+            ref={webViewRef}
+            style={styles.nativeWebView}
+            containerStyle={styles.nativeWebViewContainer}
+            originWhitelist={['*']}
+            source={{ uri: drivePreviewUrl }}
+            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+            allowsInlineMediaPlayback={true}
+            allowsFullscreenVideo={true}
+            mediaPlaybackRequiresUserAction={false}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            scrollEnabled={false}
+            androidLayerType="hardware"
+            androidHardwareAccelerationDisabled={false}
           />
         ) : mediaSrc ? (
           <WebView

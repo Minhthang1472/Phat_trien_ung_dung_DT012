@@ -30,7 +30,10 @@ class Settings:
     SMTP_FROM: str = os.getenv("SMTP_FROM", "")
     PUBLIC_API_URL: str = os.getenv("PUBLIC_API_URL", "http://127.0.0.1:8000")
     ALLOWED_VIDEO_HOSTS: list[str] = [
-        host.strip().lower() for host in os.getenv("ALLOWED_VIDEO_HOSTS", "youtube.com,youtu.be").split(",") if host.strip()
+        host.strip().lower() for host in os.getenv(
+            "ALLOWED_VIDEO_HOSTS", 
+            "youtube.com,youtu.be,drive.google.com,docs.google.com,dropbox.com"
+        ).split(",") if host.strip()
     ]
     CORS_ORIGINS: list[str] = [
         origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8081").split(",") if origin.strip()

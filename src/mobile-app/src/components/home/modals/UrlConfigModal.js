@@ -49,7 +49,7 @@ export default function UrlConfigModal({
             <View style={styles.headerTextWrap}>
               <Text style={styles.title}>CẤU HÌNH TẠO PHỤ ĐỀ</Text>
               <Text style={styles.subtitle} numberOfLines={1}>
-                {videoInfo?.title || 'Bài giảng YouTube'}
+                {videoInfo?.title || 'Bài giảng video'}
               </Text>
             </View>
             <TouchableOpacity

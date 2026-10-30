@@ -11,13 +11,56 @@ logger = logging.getLogger("uvicorn")
 
 class AudioService:
     @staticmethod
+    def is_google_drive(video_url: str) -> bool:
+        u = (video_url or "").lower()
+        return "drive.google.com" in u or "docs.google.com" in u
+
+    @staticmethod
+    def extract_drive_id(video_url: str) -> str:
+        import re
+        patterns = [
+            r'\/file\/d\/([0-9A-Za-z_-]{25,})',
+            r'id=([0-9A-Za-z_-]{25,})',
+            r'\/d\/([0-9A-Za-z_-]{25,})',
+        ]
+        for p in patterns:
+            m = re.search(p, video_url)
+            if m:
+                return m.group(1)
+        return ""
+
+    @staticmethod
     def validate_source_url(video_url: str) -> str:
-        parsed = urlparse(video_url.strip())
+        raw_url = video_url.strip()
+        parsed = urlparse(raw_url)
         host = (parsed.hostname or "").lower().rstrip(".")
+        if parsed.scheme not in ("http", "https") or not host:
+            raise HTTPException(status_code=400, detail="URL không hợp lệ. Vui lòng cung cấp liên kết bắt đầu bằng http:// hoặc https://.")
+
+        # SSRF Protection: Ngăn chặn truy cập vào dải IP nội bộ hoặc metadata cục bộ
+        blocked_prefixes = ("127.", "10.", "192.168.", "169.254.", "0.", "localhost")
+        if host in blocked_prefixes or any(host.startswith(p) for p in blocked_prefixes) or "metadata.google" in host:
+            raise HTTPException(status_code=400, detail="Không cho phép truy cập địa chỉ IP nội bộ.")
+        if host.startswith("172."):
+            parts = host.split(".")
+            if len(parts) >= 2 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31:
+                raise HTTPException(status_code=400, detail="Không cho phép truy cập địa chỉ IP nội bộ.")
+
+        # Kiểm tra danh sách domain cho phép (YouTube, Drive, Dropbox, LMS...)
         allowed = any(host == item or host.endswith(f".{item}") for item in settings.ALLOWED_VIDEO_HOSTS)
-        if parsed.scheme != "https" or not host or not allowed:
-            raise HTTPException(status_code=400, detail="URL không thuộc domain video được hệ thống cho phép.")
-        return video_url.strip()
+        is_edu_or_lms = (
+            host.endswith(".edu") or host.endswith(".edu.vn") or host.endswith(".ac.uk") or host.endswith(".edu.au") or
+            any(k in host for k in ["canvas", "moodle", "blackboard", "coursera", "edx", "udemy", "drive", "dropbox"])
+        )
+        path_lower = parsed.path.lower()
+        is_direct_media = any(path_lower.endswith(ext) for ext in [".mp4", ".m3u8", ".webm", ".mov", ".m4a", ".mp3", ".wav"])
+
+        if not (allowed or is_edu_or_lms or is_direct_media):
+            raise HTTPException(
+                status_code=400,
+                detail="URL không thuộc domain video hoặc hệ thống đào tạo (YouTube, Google Drive, LMS trường học) được hệ thống hỗ trợ."
+            )
+        return raw_url
 
     @staticmethod
     def verify_copyright_and_drm(info: dict) -> tuple[bool, str]:
@@ -84,6 +127,8 @@ class AudioService:
 
     @staticmethod
     def extract_video_id(video_url: str) -> str:
+        if AudioService.is_google_drive(video_url):
+            return AudioService.extract_drive_id(video_url)
         import re
         patterns = [
             r'(?:v=|\/)([0-9A-Za-z_-]{11})(?:\?|&|\/|$)',

@@ -157,6 +157,12 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
                 cached_fb["folder"] = request.folder
             if request.tags:
                 cached_fb["tags"] = request.tags
+            if audio_service.is_google_drive(url):
+                drive_id = audio_service.extract_drive_id(url)
+                if drive_id:
+                    cached_fb["media_url"] = f"https://drive.google.com/file/d/{drive_id}/preview"
+                    cached_fb["media_stream_url"] = cached_fb["media_url"]
+                    cached_fb["is_drive"] = True
             cached_lang = (cached_fb.get("language") or "").lower().strip()
             segs = cached_fb.get("segments", [])
             # Nếu cache đã đúng ngôn ngữ đích và đã có tiếng Việt
@@ -273,8 +279,15 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
     include_quiz = True if request.include_quiz is None else request.include_quiz
     summary_data = summary_service.summarize_transcript(full_transcript, include_quiz=include_quiz)
 
+    is_drive = audio_service.is_google_drive(url)
+    drive_id = audio_service.extract_drive_id(url) if is_drive else ""
+    preview_url = f"https://drive.google.com/file/d/{drive_id}/preview" if is_drive and drive_id else url
+
     result = {
         "video_url": url,
+        "media_url": preview_url if is_drive else url,
+        "media_stream_url": preview_url if is_drive else url,
+        "is_drive": is_drive,
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],
         "start_time": request.start_time or 0,
@@ -1023,9 +1036,16 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
     )
     worker.start()
 
+    is_drive = audio_service.is_google_drive(url)
+    drive_id = audio_service.extract_drive_id(url) if is_drive else ""
+    preview_url = f"https://drive.google.com/file/d/{drive_id}/preview" if is_drive and drive_id else url
+
     return {
         "job_id": job_id,
         "video_url": url,
+        "media_url": preview_url if is_drive else url,
+        "media_stream_url": preview_url if is_drive else url,
+        "is_drive": is_drive,
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],
         "language": target_lang,

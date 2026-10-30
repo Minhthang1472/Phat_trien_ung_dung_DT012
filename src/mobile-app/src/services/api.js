@@ -313,10 +313,12 @@ class ApiService {
       if (response.ok) {
         return await response.json();
       }
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.detail || `Máy chủ phản hồi lỗi (${response.status})`);
     } catch (err) {
       console.warn('Lỗi đọc metadata video nhanh:', err);
+      throw err;
     }
-    return { title: '', duration_seconds: 0, is_long_video: false };
   }
 
   async cancelJob(jobId) {

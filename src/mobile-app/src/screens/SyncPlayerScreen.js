@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -306,6 +306,19 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
   const youtubeId = isYouTube
     ? lecture.video_url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/)?.[1]
     : null;
+
+  const isDrive = Boolean(
+    lecture?.is_drive ||
+    (lecture?.video_url && (lecture.video_url.includes('drive.google.com') || lecture.video_url.includes('docs.google.com')))
+  );
+
+  const driveId = isDrive
+    ? (lecture?.video_url?.match(/(?:file\/d\/|id=|\/d\/)([0-9A-Za-z_-]{25,})/)?.[1] || '')
+    : '';
+
+  const drivePreviewUrl = driveId
+    ? `https://drive.google.com/file/d/${driveId}/preview`
+    : (lecture?.media_url?.includes('drive.google.com') ? lecture.media_url : null);
 
   // Nguồn phát file thực tế (từ bộ nhớ upload, link server /uploads/ hoặc link trực tiếp)
   const rawMediaSrc =
@@ -715,6 +728,8 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
             <VideoPlayerSection
               isYouTube={isYouTube}
               youtubeId={youtubeId}
+              isDrive={isDrive}
+              drivePreviewUrl={drivePreviewUrl}
               mediaSrc={mediaSrc}
               isAudioOnly={isAudioOnly}
               title={title}
