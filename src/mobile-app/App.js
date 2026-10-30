@@ -37,7 +37,7 @@ export default function App() {
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
-      document.title = 'PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG';
+      document.title = 'EdTech AI - Học Thông Minh Mỗi Ngày';
       // Expo web không tự khóa chiều cao #root, khiến ScrollView không cuộn
       // mà cả trang cuộn theo (bottom nav bị đẩy khỏi màn hình).
       const rootEl = document.getElementById('root');

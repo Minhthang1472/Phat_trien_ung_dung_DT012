@@ -37,17 +37,6 @@ export default function HomeWelcomeSection({
         <View pointerEvents="none" style={styles.decorArc} />
 
         <View style={styles.content}>
-          <View style={styles.brandRow}>
-            <BrandLogo
-              size={50}
-              showWordmark
-              showTagline
-              title="EdTech AI"
-              tagline="HỌC THÔNG MINH MỖI NGÀY"
-              wordmarkStyle={styles.brandWordmark}
-            />
-          </View>
-
           <View style={styles.greetingBlock}>
             <Text style={styles.title}>Chào mừng trở lại!</Text>
             <Text style={styles.subtitle}>

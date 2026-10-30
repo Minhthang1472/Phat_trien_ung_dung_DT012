@@ -16,7 +16,7 @@ class ApiService {
   async syncServerUrlFromFirebase() {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       const res = await fetch(
         'https://firestore.googleapis.com/v1/projects/ptud-dt012/databases/(default)/documents/system_config/server',
         { signal: controller.signal }
@@ -75,7 +75,7 @@ class ApiService {
     try {
       const baseUrl = await this.getBaseUrl();
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       const response = await fetch(`${baseUrl}/`, {
         method: 'GET',
@@ -616,7 +616,7 @@ class ApiService {
     try {
       const baseUrl = await this.getBaseUrl();
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
 
       const response = await fetch(`${baseUrl}/api/history?limit=${limit}`, {
         method: 'GET',

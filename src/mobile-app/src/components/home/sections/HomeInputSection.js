@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
+  ScrollView,
 } from 'react-native';
 import { colors, fonts, radius, spacing } from '../../../constants/theme';
 import Card from '../../ui/Card';
@@ -33,6 +34,11 @@ export default function HomeInputSection({
   onUploadFile,
   onPasteSample,
 }) {
+  const [selectOpen, setSelectOpen] = useState(false);
+  const currentLangObj =
+    supportedLanguages.find((l) => l.code === targetLang) ||
+    supportedLanguages[0] ||
+    { label: 'Tiếng Việt', code: 'vi' };
   return (
     <Card style={styles.card}>
       <View style={styles.headerRow}>
@@ -88,24 +94,65 @@ export default function HomeInputSection({
         </View>
       </View>
 
-      <View style={styles.langRow}>
-        {supportedLanguages.map((lang) => {
-          const active = targetLang === lang.code;
-          return (
-            <TouchableOpacity
-              key={lang.code}
-              style={[styles.langChip, active && styles.activeLangChip]}
-              onPress={() => onChangeTargetLang(lang.code)}
-              disabled={loading}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.langChipText, active && styles.activeLangChipText]}>
-                {lang.label}
-              </Text>
-              <LanguageMark code={lang.code} size={16} active={active} />
-            </TouchableOpacity>
-          );
-        })}
+      {/* Select Box Chọn ngôn ngữ */}
+      <View style={styles.selectContainer}>
+        <TouchableOpacity
+          style={[styles.selectBox, selectOpen && styles.selectBoxOpen]}
+          onPress={() => setSelectOpen((prev) => !prev)}
+          disabled={loading}
+          activeOpacity={0.8}
+          accessibilityLabel="Chọn ngôn ngữ dịch"
+        >
+          <View style={styles.selectLeft}>
+            <LanguageMark code={currentLangObj?.code} size={18} active />
+            <Text style={styles.selectValueText}>{currentLangObj?.label}</Text>
+          </View>
+          <View style={styles.selectRight}>
+            <Icon
+              name={selectOpen ? 'expandLess' : 'expandMore'}
+              size={20}
+              color={colors.slate}
+            />
+          </View>
+        </TouchableOpacity>
+
+        {selectOpen && (
+          <View style={styles.dropdownMenu}>
+            {supportedLanguages.map((lang, idx) => {
+              const isSelected = targetLang === lang.code;
+              return (
+                <TouchableOpacity
+                  key={lang.code}
+                  style={[
+                    styles.dropdownItem,
+                    isSelected && styles.dropdownItemSelected,
+                    idx === supportedLanguages.length - 1 && styles.dropdownItemLast,
+                  ]}
+                  onPress={() => {
+                    onChangeTargetLang(lang.code);
+                    setSelectOpen(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.dropdownItemLeft}>
+                    <LanguageMark code={lang.code} size={16} active={isSelected} />
+                    <Text
+                      style={[
+                        styles.dropdownItemText,
+                        isSelected && styles.dropdownItemTextSelected,
+                      ]}
+                    >
+                      {lang.label}
+                    </Text>
+                  </View>
+                  {isSelected ? (
+                    <Icon name="checkCircle" size={17} color={colors.mintDeep} />
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       </View>
 
       {/* Nút hành động chính */}
@@ -126,7 +173,6 @@ export default function HomeInputSection({
           <GradientButtonContent
             title="BẮT ĐẦU TẠO PHỤ ĐỀ & TÓM TẮT"
             subtitle="Tự động tối ưu: < 30p bóc tách toàn bộ • ≥ 30p nạp ngầm siêu tốc"
-            icon={<Icon name="bolt" size={20} color={colors.lemon} />}
           />
         )}
       </GradientButton>
@@ -288,38 +334,84 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     color: colors.violet,
   },
-  langRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
+  selectContainer: {
     marginBottom: spacing.md,
+    position: 'relative',
+    zIndex: 10,
   },
-  langChip: {
+  selectBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    justifyContent: 'space-between',
     backgroundColor: colors.surfaceLow,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(30, 27, 75, 0.08)',
+    borderRadius: radius.md,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
-  activeLangChip: {
-    backgroundColor: colors.mintDeep,
-    shadowColor: colors.mintDeep,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 12,
-    elevation: 3,
+  selectBoxOpen: {
+    borderColor: colors.mintDeep,
+    backgroundColor: '#FFFFFF',
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
-  langChipText: {
-    fontFamily: fonts.semiBold,
-    fontSize: 11.5,
-    lineHeight: 16,
-    color: colors.slate,
+  selectLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
-  activeLangChipText: {
+  selectValueText: {
     fontFamily: fonts.bold,
-    color: '#FFFFFF',
+    fontSize: 14,
+    color: colors.ink,
+  },
+  selectRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dropdownMenu: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderTopWidth: 0,
+    borderColor: colors.mintDeep,
+    borderBottomLeftRadius: radius.md,
+    borderBottomRightRadius: radius.md,
+    overflow: 'hidden',
+    shadowColor: colors.ink,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(30, 27, 75, 0.05)',
+  },
+  dropdownItemSelected: {
+    backgroundColor: colors.mintSoft,
+  },
+  dropdownItemLast: {
+    borderBottomWidth: 0,
+  },
+  dropdownItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dropdownItemText: {
+    fontFamily: fonts.medium,
+    fontSize: 13.5,
+    color: colors.ink,
+  },
+  dropdownItemTextSelected: {
+    fontFamily: fonts.bold,
+    color: colors.mintDeep,
   },
   primaryAction: {
     marginBottom: spacing.sm,

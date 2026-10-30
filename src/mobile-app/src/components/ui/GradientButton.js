@@ -55,6 +55,11 @@ export function GradientButtonContent({ title, subtitle, icon, iconColor = color
       <View style={styles.titleRow}>
         {icon ? <View style={styles.iconWrap}>{icon}</View> : null}
         <Text style={styles.title}>{title}</Text>
+        {icon ? (
+          <View style={[styles.iconWrap, styles.iconBalance]} pointerEvents="none">
+            {icon}
+          </View>
+        ) : null}
       </View>
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
     </View>
@@ -83,10 +88,14 @@ const styles = StyleSheet.create({
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
   },
   iconWrap: {
     marginTop: -1,
+  },
+  iconBalance: {
+    opacity: 0,
   },
   title: {
     fontFamily: fonts.bold,

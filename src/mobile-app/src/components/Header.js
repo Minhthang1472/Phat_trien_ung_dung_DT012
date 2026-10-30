@@ -77,25 +77,35 @@ export default function Header({
             )}
 
             {brand && !showBack ? (
-              <View
-                style={[
-                  styles.statusPill,
-                  { backgroundColor: online ? colors.mintSoft : colors.lemonSoft },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.statusDot,
-                    { backgroundColor: online ? colors.mint : colors.lemon },
-                  ]}
-                />
-                <Text
-                  style={[
-                    styles.statusText,
-                    { color: online ? colors.mintDeep : '#8A6100' },
-                  ]}
-                >
-                  {online ? 'TRỰC TUYẾN' : 'NGOẠI TUYẾN'}
+              <View style={styles.brandTitleWrap}>
+                <View style={styles.brandTitleRow}>
+                  <Text style={styles.brandTitleText}>
+                    EdTech <Text style={styles.brandTitleAccent}>AI</Text>
+                  </Text>
+                  <View
+                    style={[
+                      styles.statusPillCompact,
+                      { backgroundColor: online ? colors.mintSoft : colors.lemonSoft },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.statusDot,
+                        { backgroundColor: online ? colors.mint : colors.lemon },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.statusTextCompact,
+                        { color: online ? colors.mintDeep : '#8A6100' },
+                      ]}
+                    >
+                      {online ? 'TRỰC TUYẾN' : 'NGOẠI TUYẾN'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.brandTagline} numberOfLines={1}>
+                  HỌC THÔNG MINH MỖI NGÀY
                 </Text>
               </View>
             ) : (
@@ -211,6 +221,48 @@ const styles = StyleSheet.create({
     gap: 9,
     flexShrink: 1,
     minWidth: 0,
+  },
+  brandTitleWrap: {
+    flexShrink: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  brandTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  brandTitleText: {
+    fontFamily: fonts.extraBold,
+    fontSize: 16,
+    lineHeight: 20,
+    color: colors.ink,
+    letterSpacing: -0.3,
+  },
+  brandTitleAccent: {
+    color: colors.coral,
+  },
+  brandTagline: {
+    fontFamily: fonts.bold,
+    fontSize: 8.5,
+    lineHeight: 11,
+    color: colors.slate,
+    letterSpacing: 0.6,
+    marginTop: 1,
+  },
+  statusPillCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  statusTextCompact: {
+    fontFamily: fonts.extraBold,
+    fontSize: 8.5,
+    lineHeight: 11,
+    letterSpacing: 0.5,
   },
   backButton: {
     width: 40,
