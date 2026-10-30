@@ -316,23 +316,32 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
     ? (lecture?.video_url?.match(/(?:file\/d\/|id=|\/d\/)([0-9A-Za-z_-]{25,})/)?.[1] || '')
     : '';
 
+  const driveDirectStreamUrl = driveId
+    ? `https://drive.usercontent.google.com/download?id=${driveId}&export=download&confirm=t`
+    : null;
+
   const drivePreviewUrl = driveId
     ? `https://drive.google.com/file/d/${driveId}/preview`
     : (lecture?.media_url?.includes('drive.google.com') ? lecture.media_url : null);
 
-  // Nguồn phát file thực tế (từ bộ nhớ upload, link server /uploads/ hoặc link trực tiếp)
+  // Nguồn phát file thực tế: Sử dụng Backend Proxy Stream cho Google Drive & LMS để đồng bộ 100% nút Phát/Tua
+  const backendProxyStreamUrl = (isDrive || (lecture?.video_url && !isYouTube && !lecture.video_url.startsWith('local_file://')))
+    ? `${serverBaseUrl}/api/video/stream-media?video_url=${encodeURIComponent(lecture?.video_url || '')}`
+    : null;
+
   const rawMediaSrc =
     burnedMediaUrl ||
-    (lecture?.media_stream_url
+    (lecture?.media_stream_url && !lecture.media_stream_url.includes('/preview') && !lecture.media_stream_url.includes('drive.google.com')
       ? (lecture.media_stream_url.startsWith('http')
         ? lecture.media_stream_url
         : `${serverBaseUrl}${lecture.media_stream_url}`)
       : null) ||
-    (lecture?.media_url
+    (lecture?.media_url && !lecture.media_url.includes('/preview') && !lecture.media_url.includes('drive.google.com')
       ? (lecture.media_url.startsWith('http')
         ? lecture.media_url
         : `${serverBaseUrl}${lecture.media_url}`)
       : null) ||
+    backendProxyStreamUrl ||
     (lecture?.video_url && !lecture.video_url.startsWith('local_file://') ? lecture.video_url : null);
   const mediaSrc = rawMediaSrc && lecture?.media_access_token && rawMediaSrc.includes('/uploads/')
     ? `${rawMediaSrc}${rawMediaSrc.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(lecture.media_access_token)}`
@@ -452,6 +461,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
             if (typeof sec === 'number' && !isNaN(sec) && Math.abs(sec - lastTimeUpdateRef.current) >= 0.25) {
               lastTimeUpdateRef.current = sec;
               setCurrentTime(sec);
+              checkRangeStop(sec);
               checkInVideoQuiz(sec);
               saveProgressThrottled(sec);
             }
@@ -461,6 +471,31 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
       return () => clearInterval(pollTimer);
     }
   }, [isPlaying, isYouTube, interactiveQuizEnabled, activeCheckpointQuiz, checkpointQuizzes]);
+
+  // Bộ đếm đồng bộ phụ đề thời gian thực cho Google Drive & LMS iframe
+  useEffect(() => {
+    let timer = null;
+    const isIframeVideo = isDrive || (!isYouTube && !lecture?.media_stream_url?.includes('/uploads/') && !lecture?.video_url?.startsWith('local_file://'));
+    if (isPlaying && isIframeVideo) {
+      timer = setInterval(() => {
+        setCurrentTime((prev) => {
+          const next = Math.round((prev + 0.5) * 10) / 10;
+          if (duration > 0 && next >= duration) {
+            setIsPlaying(false);
+            return duration;
+          }
+          lastTimeUpdateRef.current = next;
+          checkRangeStop(next);
+          checkInVideoQuiz(next);
+          saveProgressThrottled(next);
+          return next;
+        });
+      }, 500);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isPlaying, isDrive, isYouTube, duration, lecture]);
 
   // Lưu tiến độ khi thoát màn hình
   useEffect(() => {
@@ -489,6 +524,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
     if (Math.abs(sec - lastTimeUpdateRef.current) >= 0.25) {
       lastTimeUpdateRef.current = sec;
       setCurrentTime(sec);
+      checkRangeStop(sec);
       checkInVideoQuiz(sec);
       saveProgressThrottled(sec);
     }

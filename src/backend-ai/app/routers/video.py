@@ -15,10 +15,11 @@ from fastapi import (
     File,
     Form,
     Query,
+    Header,
     Response,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
@@ -76,6 +77,62 @@ async def serve_uploaded_media(filename: str, access_token: Optional[str] = Quer
         if not owned:
             raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập file này.")
     return FileResponse(file_path)
+
+
+@router.get("/api/video/stream-media")
+async def stream_media_endpoint(
+    video_url: str = Query(..., description="URL video bài giảng (Google Drive, LMS, direct URL)"),
+    range: Optional[str] = Header(None)
+):
+    """
+    Media Proxy Stream: Chuyển tiếp luồng video MP4 từ Google Drive / LMS về App.
+    Hỗ trợ Range Request (HTTP 206) để phát trực tiếp trong thẻ <video> mà không bị chặn CORS,
+    giúp đồng bộ 100% các nút điều khiển Phát, Tạm dừng và Tua thời gian.
+    """
+    url = video_url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="Vui lòng cung cấp URL video.")
+
+    # Kiểm tra tính hợp lệ domain & bảo mật SSRF
+    audio_service.validate_source_url(url)
+
+    target_url = url
+    if audio_service.is_google_drive(url):
+        drive_id = audio_service.extract_drive_id(url)
+        if not drive_id:
+            raise HTTPException(status_code=400, detail="Không tìm thấy ID file Google Drive.")
+        target_url = f"https://drive.usercontent.google.com/download?id={drive_id}&export=download&confirm=t"
+
+    req_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    }
+    if range:
+        req_headers["Range"] = range
+
+    try:
+        r = requests.get(target_url, headers=req_headers, stream=True, timeout=15)
+    except Exception as e:
+        logger.error(f"Lỗi kết nối nguồn media {target_url}: {e}")
+        raise HTTPException(status_code=502, detail=f"Không thể kết nối đến máy chủ chứa video: {e}")
+
+    status_code = r.status_code if r.status_code in (200, 206) else 200
+    res_headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Type": r.headers.get("content-type", "video/mp4"),
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Range, Authorization, Content-Type",
+        "Access-Control-Expose-Headers": "Content-Range, Accept-Ranges, Content-Length",
+    }
+    if "content-range" in r.headers:
+        res_headers["Content-Range"] = r.headers["content-range"]
+    if "content-length" in r.headers:
+        res_headers["Content-Length"] = r.headers["content-length"]
+
+    return StreamingResponse(
+        r.iter_content(chunk_size=1024 * 128),
+        status_code=status_code,
+        headers=res_headers
+    )
 
 
 # Bộ lưu trữ trạng thái các tác vụ bị hủy ngang (Yêu cầu 1)
@@ -160,8 +217,10 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
             if audio_service.is_google_drive(url):
                 drive_id = audio_service.extract_drive_id(url)
                 if drive_id:
-                    cached_fb["media_url"] = f"https://drive.google.com/file/d/{drive_id}/preview"
-                    cached_fb["media_stream_url"] = cached_fb["media_url"]
+                    direct_stream = f"https://drive.usercontent.google.com/download?id={drive_id}&export=download&confirm=t"
+                    cached_fb["media_url"] = direct_stream
+                    cached_fb["media_stream_url"] = direct_stream
+                    cached_fb["preview_url"] = f"https://drive.google.com/file/d/{drive_id}/preview"
                     cached_fb["is_drive"] = True
             cached_lang = (cached_fb.get("language") or "").lower().strip()
             segs = cached_fb.get("segments", [])
@@ -281,12 +340,14 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
 
     is_drive = audio_service.is_google_drive(url)
     drive_id = audio_service.extract_drive_id(url) if is_drive else ""
+    proxy_stream_path = f"/api/video/stream-media?video_url={urllib.parse.quote(url)}"
     preview_url = f"https://drive.google.com/file/d/{drive_id}/preview" if is_drive and drive_id else url
 
     result = {
         "video_url": url,
-        "media_url": preview_url if is_drive else url,
-        "media_stream_url": preview_url if is_drive else url,
+        "media_url": proxy_stream_path if (is_drive or not "youtu" in url) else url,
+        "media_stream_url": proxy_stream_path if (is_drive or not "youtu" in url) else url,
+        "preview_url": preview_url,
         "is_drive": is_drive,
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],
@@ -1038,13 +1099,15 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
 
     is_drive = audio_service.is_google_drive(url)
     drive_id = audio_service.extract_drive_id(url) if is_drive else ""
+    proxy_stream_path = f"/api/video/stream-media?video_url={urllib.parse.quote(url)}"
     preview_url = f"https://drive.google.com/file/d/{drive_id}/preview" if is_drive and drive_id else url
 
     return {
         "job_id": job_id,
         "video_url": url,
-        "media_url": preview_url if is_drive else url,
-        "media_stream_url": preview_url if is_drive else url,
+        "media_url": proxy_stream_path if (is_drive or not "youtu" in url) else url,
+        "media_stream_url": proxy_stream_path if (is_drive or not "youtu" in url) else url,
+        "preview_url": preview_url,
         "is_drive": is_drive,
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],

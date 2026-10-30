@@ -34,6 +34,26 @@ export default function LectureCard({
     lecture?.media_url?.startsWith('/uploads/') ||
     lecture?.media_stream_url?.startsWith('/uploads/');
 
+  const isDrive = Boolean(
+    lecture?.is_drive ||
+    (lecture?.video_url && (lecture.video_url.includes('drive.google.com') || lecture.video_url.includes('docs.google.com')))
+  );
+
+  const isLms = Boolean(
+    lecture?.video_url && (
+      lecture.video_url.includes('.edu') ||
+      lecture.video_url.includes('canvas') ||
+      lecture.video_url.includes('moodle') ||
+      lecture.video_url.includes('blackboard') ||
+      lecture.video_url.includes('coursera') ||
+      lecture.video_url.includes('edx')
+    )
+  );
+
+  const sourceName = isLocalUpload ? 'File máy' : isDrive ? 'Google Drive' : isLms ? 'LMS' : 'YouTube';
+  const sourceColor = isLocalUpload ? colors.mint : isDrive ? '#1A73E8' : isLms ? '#7952B3' : '#FF4D4F';
+  const sourceTextColor = isLocalUpload ? colors.mintDeep : isDrive ? '#155724' : isLms ? '#4A2574' : '#93000A';
+
   const isAudio =
     lecture?.video_url?.endsWith('.mp3') ||
     lecture?.video_url?.endsWith('.m4a') ||
@@ -144,7 +164,7 @@ export default function LectureCard({
                   style={[
                     styles.sourceDot,
                     {
-                      backgroundColor: isLocalUpload ? colors.mint : '#FF4D4F',
+                      backgroundColor: sourceColor,
                     },
                   ]}
                 />
@@ -152,11 +172,11 @@ export default function LectureCard({
                   style={[
                     styles.sourceTagText,
                     {
-                      color: isLocalUpload ? colors.mintDeep : '#93000A',
+                      color: sourceTextColor,
                     },
                   ]}
                 >
-                  {isLocalUpload ? 'File máy' : 'YouTube'}
+                  {sourceName}
                 </Text>
               </View>
 

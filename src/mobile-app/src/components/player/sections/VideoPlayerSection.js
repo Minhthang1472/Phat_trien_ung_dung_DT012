@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Platform, Image } from 'react-native';
 import { WebView } from 'react-native-webview';
 import YoutubePlayer from 'react-native-youtube-iframe';
@@ -37,6 +37,9 @@ export default function VideoPlayerSection({
   apiService,
   styles,
 }) {
+  const [fallbackToIframe, setFallbackToIframe] = useState(false);
+  const fallbackEmbedUrl = drivePreviewUrl || (lecture?.video_url && !lecture.video_url.startsWith('local_file://') ? lecture.video_url : null);
+
   return (
     <View style={styles.videoContainer}>
       {Platform.OS === 'web' ? (
@@ -49,16 +52,7 @@ export default function VideoPlayerSection({
             allowFullScreen
             title={title}
           />
-        ) : isDrive && drivePreviewUrl ? (
-          <iframe
-            id="drive-sync-iframe"
-            src={drivePreviewUrl}
-            style={{ width: '100%', height: '100%', minHeight: 220, border: 'none', borderRadius: 12, backgroundColor: '#000' }}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-            allowFullScreen
-            title={title}
-          />
-        ) : mediaSrc ? (
+        ) : mediaSrc && !fallbackToIframe ? (
           !isAudioOnly ? (
             <video
               ref={htmlMediaRef}
@@ -80,6 +74,10 @@ export default function VideoPlayerSection({
               onSeeked={handleMediaSeeked}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
+              onError={(e) => {
+                console.warn('Lỗi luồng video trực tiếp, chuyển sang chế độ nhúng Iframe:', e);
+                if (fallbackEmbedUrl) setFallbackToIframe(true);
+              }}
             />
           ) : (
             <div
@@ -154,6 +152,15 @@ export default function VideoPlayerSection({
               />
             </div>
           )
+        ) : fallbackEmbedUrl ? (
+          <iframe
+            id="embed-sync-iframe"
+            src={fallbackEmbedUrl}
+            style={{ width: '100%', height: '100%', minHeight: 220, border: 'none', borderRadius: 12, backgroundColor: '#000' }}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+            title={title}
+          />
         ) : youtubeId ? (
           <View style={styles.thumbnailContainer}>
             <Image
@@ -181,7 +188,7 @@ export default function VideoPlayerSection({
           </View>
         )
       ) : (
-        /* PHÁT TRÊN MOBILE (Android / iOS) QUA REACT-NATIVE-YOUTUBE-IFRAME */
+        /* PHÁT TRÊN MOBILE (Android / iOS) */
         isYouTube && youtubeId ? (
           <YoutubePlayer
             ref={ytPlayerRef}
@@ -223,24 +230,7 @@ export default function VideoPlayerSection({
               setSupportMultipleWindows: false,
             }}
           />
-        ) : isDrive && drivePreviewUrl ? (
-          <WebView
-            ref={webViewRef}
-            style={styles.nativeWebView}
-            containerStyle={styles.nativeWebViewContainer}
-            originWhitelist={['*']}
-            source={{ uri: drivePreviewUrl }}
-            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
-            allowsInlineMediaPlayback={true}
-            allowsFullscreenVideo={true}
-            mediaPlaybackRequiresUserAction={false}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            scrollEnabled={false}
-            androidLayerType="hardware"
-            androidHardwareAccelerationDisabled={false}
-          />
-        ) : mediaSrc ? (
+        ) : mediaSrc && !fallbackToIframe ? (
           <WebView
             ref={webViewRef}
             style={styles.nativeWebView}
@@ -260,6 +250,27 @@ export default function VideoPlayerSection({
             androidLayerType="hardware"
             androidHardwareAccelerationDisabled={false}
             onMessage={handleWebViewMessage}
+            onError={(e) => {
+              console.warn('Lỗi WebView mediaSrc, chuyển sang chế độ nhúng URL:', e);
+              if (fallbackEmbedUrl) setFallbackToIframe(true);
+            }}
+          />
+        ) : fallbackEmbedUrl ? (
+          <WebView
+            ref={webViewRef}
+            style={styles.nativeWebView}
+            containerStyle={styles.nativeWebViewContainer}
+            originWhitelist={['*']}
+            source={{ uri: fallbackEmbedUrl }}
+            userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+            allowsInlineMediaPlayback={true}
+            allowsFullscreenVideo={true}
+            mediaPlaybackRequiresUserAction={false}
+            javaScriptEnabled={true}
+            domStorageEnabled={true}
+            scrollEnabled={false}
+            androidLayerType="hardware"
+            androidHardwareAccelerationDisabled={false}
           />
         ) : youtubeId ? (
           <View style={styles.thumbnailContainer}>
