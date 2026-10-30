@@ -1,4 +1,5 @@
 export { default as Icon } from './Icon';
+export { default as BrandLogo } from './BrandLogo';
 export { default as LanguageMark, getLangTone } from './LanguageMark';
 export { default as Card } from './Card';
 export { default as Pill } from './Pill';

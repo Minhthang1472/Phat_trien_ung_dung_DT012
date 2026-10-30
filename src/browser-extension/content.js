@@ -82,7 +82,35 @@
     if (overlayBox) {
       overlayBox.classList.add("lecture-ai-speaking");
     }
-    const stopSpeakingEffect = () => {
+    // Encryption utility for extension_token
+const cryptoUtil = {
+  async encrypt(text, key) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(text);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const hash = await crypto.subtle.digest('SHA-256', encoder.encode(key));
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const ivWithSalt = new Uint8Array(iv.length + salt.length);
+    ivWithSalt.set(iv, 0);
+    ivWithSalt.set(salt, iv.length);
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: ivWithSalt }, hash, data);
+    return btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
+  },
+  async decrypt(text, key) {
+    const decoder = new TextDecoder();
+    const data = Uint8Array.from(atob(text), c => c.charCodeAt(0));
+    const iv = data.slice(0, 12);
+    const salt = data.slice(12, 12 + 16);
+    const hash = await crypto.subtle.digest('SHA-256', encoder.encode(key));
+    const ivWithSalt = new Uint8Array(iv.length + salt.length);
+    ivWithSalt.set(iv, 0);
+    ivWithSalt.set(salt, iv.length);
+    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivWithSalt }, hash, data);
+    return decoder.decode(plaintext);
+  }
+};
+
+const stopSpeakingEffect = () => {
       if (overlayBox) overlayBox.classList.remove("lecture-ai-speaking");
     };
 
@@ -93,7 +121,14 @@
       try {
         const stored = await chrome.storage?.local?.get(["extension_token"]);
         if (stored && stored.extension_token) {
-          headers["Authorization"] = `Bearer ${stored.extension_token}`;
+          const ENCRYPTION_KEY = "LectureAI_Extension_Secret_Key_2026";
+          try {
+            const decrypted = await cryptoUtil.decrypt(stored.extension_token, ENCRYPTION_KEY);
+            headers["Authorization"] = `Bearer ${decrypted}`;
+          } catch (_) {
+            // Fallback to raw token if decryption fails
+            headers["Authorization"] = `Bearer ${stored.extension_token}`;
+          }
         }
       } catch (_) { }
 

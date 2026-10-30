@@ -119,7 +119,7 @@ Lưu trữ thông tin tài khoản của sinh viên và giảng viên.
 | `_id` | ObjectId | Primary Key | Khóa chính tự sinh |
 | `name` | String | Required | Họ và tên người dùng |
 | `email` | String | Required, **Unique Index** | Email đăng nhập |
-| `password_hash` | String | Required | Mật khẩu băm (bcrypt) |
+| `password_hash` | String | Required | Mật khẩu băm (PBKDF2-SHA256, 240,000 vòng lặp) |
 | `role` | String | Enum: `["student", "lecturer"]` | Vai trò người dùng |
 | `created_at` | DateTime | Default: `now()` | Thời điểm tạo tài khoản |
 

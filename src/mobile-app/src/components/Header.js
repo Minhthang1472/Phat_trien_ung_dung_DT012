@@ -3,12 +3,14 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, fonts, gradients, radius } from '../constants/theme';
 import GlassBar from './ui/GlassBar';
 import Icon from './ui/Icon';
+import BrandLogo from './ui/BrandLogo';
 import NotificationModal from './NotificationModal';
 import { notificationService } from '../services/notificationService';
 import { apiService } from '../services/api';
 
 export default function Header({
   title = 'EdTech AI',
+  brand = false,
   serverStatus,
   onOpenSettings,
   onBack,
@@ -56,7 +58,7 @@ export default function Header({
     <>
       <GlassBar style={styles.container} intensity={50} tint="light">
         <View style={styles.inner}>
-          <View style={styles.leftSection}>
+          <View style={[styles.leftSection, brand && !showBack && styles.leftSectionBrand]}>
             {showBack ? (
               <TouchableOpacity
                 style={styles.backButton}
@@ -66,22 +68,15 @@ export default function Header({
               >
                 <Icon name="back" size={24} color={colors.ink} />
               </TouchableOpacity>
+            ) : brand ? (
+              <BrandLogo size={38} />
             ) : (
               <View style={styles.logoBadge}>
                 <Icon name="school" size={22} color={colors.coral} />
               </View>
             )}
 
-            <View style={styles.titleWrap}>
-              <View style={styles.titleRow}>
-                <Text style={styles.title} numberOfLines={1}>
-                  {title}
-                </Text>
-                {!showBack ? (
-                  <Icon name="sparkle" size={15} color={colors.coral} style={styles.sparkle} />
-                ) : null}
-              </View>
-
+            {brand && !showBack ? (
               <View
                 style={[
                   styles.statusPill,
@@ -103,7 +98,40 @@ export default function Header({
                   {online ? 'TRỰC TUYẾN' : 'NGOẠI TUYẾN'}
                 </Text>
               </View>
-            </View>
+            ) : (
+              <View style={styles.titleWrap}>
+                <View style={styles.titleRow}>
+                  <Text style={styles.title} numberOfLines={1}>
+                    {title}
+                  </Text>
+                  {!showBack ? (
+                    <Icon name="sparkle" size={15} color={colors.coral} style={styles.sparkle} />
+                  ) : null}
+                </View>
+
+                <View
+                  style={[
+                    styles.statusPill,
+                    { backgroundColor: online ? colors.mintSoft : colors.lemonSoft },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.statusDot,
+                      { backgroundColor: online ? colors.mint : colors.lemon },
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.statusText,
+                      { color: online ? colors.mintDeep : '#8A6100' },
+                    ]}
+                  >
+                    {online ? 'TRỰC TUYẾN' : 'NGOẠI TUYẾN'}
+                  </Text>
+                </View>
+              </View>
+            )}
           </View>
 
           <View style={styles.rightSection}>
@@ -174,6 +202,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  leftSectionBrand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
     flexShrink: 1,
     minWidth: 0,
   },

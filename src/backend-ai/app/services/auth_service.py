@@ -88,6 +88,19 @@ class AuthService:
         return claims
 
     @staticmethod
+    def create_ws_token(user: Dict[str, Any]) -> str:
+        """Tạo WebSocket token ngắn hạn (1 giờ) dùng cho luồng live stream."""
+        if len(settings.JWT_SECRET) < 32:
+            raise HTTPException(status_code=503, detail="JWT_SECRET chưa được cấu hình an toàn trên server.")
+        payload = {
+            "sub": user["id"],
+            "email": user["email"],
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+            "type": "ws",
+        }
+        return jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")
+
+    @staticmethod
     def get_user(user_id: str) -> Optional[Dict[str, Any]]:
         if not firebase_service.db:
             firebase_service.init_firebase()

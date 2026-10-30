@@ -1100,6 +1100,7 @@ export default function HomeScreen({ onNavigate }) {
 
       <Header
         title="EdTech AI"
+        brand
         serverStatus={serverStatus}
         streakLabel={`${streakDays} Ngày`}
       />
@@ -1120,7 +1121,6 @@ export default function HomeScreen({ onNavigate }) {
         {/* 0. Banner chào mừng + mục tiêu ngày */}
         <HomeWelcomeSection
           totalMinutes={studyStats.todayMinutes}
-          streakDays={streakDays}
         />
 
         {/* 1. Khung Nhập Liên Kết & Nút Tác Vụ */}

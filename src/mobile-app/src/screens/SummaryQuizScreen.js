@@ -23,6 +23,10 @@ import MindmapViewer from '../components/MindmapViewer';
 import ExerciseCard from '../components/ExerciseCard';
 import Icon from '../components/ui/Icon';
 import { apiService } from '../services/api';
+import {
+  buildQuizGroups,
+  formatSectionRange,
+} from '../utils/quizSections';
 
 export default function SummaryQuizScreen({ lecture, onShare }) {
   const [subTab, setSubTab] = useState('summary'); // 'summary' | 'mindmap' | 'exercises'
@@ -31,6 +35,8 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
   const keyPoints = lecture?.key_points || [];
   const formulasAndTerms = lecture?.formulas_and_terms || [];
   const quizList = lecture?.quiz || [];
+  const sections = lecture?.sections || lecture?.full_data?.sections || [];
+  const quizGroups = buildQuizGroups(quizList, sections);
   const mindmap = lecture?.mindmap || null;
   const exercises = lecture?.exercises || [];
 
@@ -50,6 +56,16 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
     try {
       let content = `=== BÀI GIẢNG: ${lecture?.title || 'Không tên'} ===\n\n`;
       content += `📝 TÓM TẮT:\n${summary}\n\n`;
+
+      if (sections.length > 0) {
+        content += `🧭 LỘ TRÌNH KIẾN THỨC:\n`;
+        sections.forEach((sec, i) => {
+          const range = formatSectionRange(sec);
+          content += `  ${i + 1}. ${sec.title || `Phần ${i + 1}`}${range ? ` (${range})` : ''}\n`;
+          if (sec.summary) content += `     ${sec.summary}\n`;
+        });
+        content += '\n';
+      }
 
       if (keyPoints.length > 0) {
         content += `📌 ĐIỂM KIẾN THỨC CỐT LÕI:\n`;
@@ -199,6 +215,40 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
               </View>
             )}
 
+            {sections.length > 0 && (
+              <View style={styles.routeBox}>
+                <View style={styles.routeHeader}>
+                  <Icon name="account-tree" size={13} color={colors.coral} />
+                  <Text style={styles.routeLabel}>Lộ trình kiến thức theo phần</Text>
+                </View>
+                {sections.map((sec, idx) => {
+                  const range = formatSectionRange(sec);
+                  return (
+                    <View key={sec.id || idx} style={styles.routeItem}>
+                      <View style={styles.routeIndex}>
+                        <Text style={styles.routeIndexText}>{idx + 1}</Text>
+                      </View>
+                      <View style={styles.routeContent}>
+                        <View style={styles.routeTitleRow}>
+                          <Text style={styles.routeTitle} numberOfLines={2}>
+                            {sec.title || `Phần ${idx + 1}`}
+                          </Text>
+                          {range ? (
+                            <Text style={styles.routeTime}>{range}</Text>
+                          ) : null}
+                        </View>
+                        {sec.summary ? (
+                          <Text style={styles.routeSummary} numberOfLines={2}>
+                            {sec.summary}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
             {formulasAndTerms.length > 0 && (
               <View style={styles.formulasBox}>
                 <Text style={styles.formulasLabel}>Thuật ngữ & Công thức quan trọng</Text>
@@ -222,8 +272,38 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
               <Text style={styles.sectionTitle}>CÂU HỎI TRẮC NGHIỆM TỰ ÔN TẬP</Text>
             </View>
 
-            {quizList.length > 0 ? (
-              quizList.map((q, idx) => <QuizCard key={idx} quiz={q} index={idx} />)
+            {quizGroups.length > 0 ? (
+              quizGroups.map((group) => (
+                <View key={group.key} style={styles.quizGroup}>
+                  {group.section ? (
+                    <View style={styles.quizGroupHeader}>
+                      <View style={styles.quizGroupIndex}>
+                        <Text style={styles.quizGroupIndexText}>
+                          {sections.findIndex((sec) => sec === group.section) + 1}
+                        </Text>
+                      </View>
+                      <View style={styles.quizGroupTitleWrap}>
+                        <Text style={styles.quizGroupTitle} numberOfLines={2}>
+                          {group.section.title || 'Phần nội dung'}
+                        </Text>
+                        {formatSectionRange(group.section) ? (
+                          <Text style={styles.quizGroupTime}>
+                            {formatSectionRange(group.section)} • {group.questions.length} câu
+                          </Text>
+                        ) : (
+                          <Text style={styles.quizGroupTime}>
+                            {group.questions.length} câu hỏi
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  ) : null}
+
+                  {group.questions.map(({ quiz, index }) => (
+                    <QuizCard key={`${group.key}_${index}`} quiz={quiz} index={index} />
+                  ))}
+                </View>
+              ))
             ) : (
               <View style={styles.emptyQuiz}>
                 <Text style={styles.emptyQuizText}>
@@ -450,6 +530,80 @@ const styles = StyleSheet.create({
     lineHeight: 19,
   },
 
+  routeBox: {
+    marginBottom: spacing.md,
+    padding: 11,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceLow,
+  },
+  routeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 8,
+  },
+  routeLabel: {
+    fontFamily: fonts.bold,
+    fontSize: 10.5,
+    lineHeight: 14,
+    color: colors.coralDeep,
+    letterSpacing: 0.2,
+  },
+  routeItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 6,
+  },
+  routeIndex: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceLowest,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    flexShrink: 0,
+    marginTop: 1,
+  },
+  routeIndexText: {
+    fontFamily: fonts.extraBold,
+    fontSize: 9.5,
+    color: colors.coral,
+  },
+  routeContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  routeTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  routeTitle: {
+    flex: 1,
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.ink,
+  },
+  routeTime: {
+    fontFamily: fonts.extraBold,
+    fontSize: 9,
+    lineHeight: 13,
+    color: colors.muted,
+    flexShrink: 0,
+  },
+  routeSummary: {
+    marginTop: 2,
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.slate,
+  },
+
   formulasBox: {
     marginBottom: spacing.xs,
   },
@@ -479,6 +633,52 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
+  quizGroup: {
+    marginBottom: spacing.xs,
+  },
+  quizGroupHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: radius.sm,
+    backgroundColor: colors.mintSoft,
+  },
+  quizGroupIndex: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.mint,
+    flexShrink: 0,
+  },
+  quizGroupIndexText: {
+    fontFamily: fonts.extraBold,
+    fontSize: 10,
+    color: '#FFFFFF',
+  },
+  quizGroupTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  quizGroupTitle: {
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    lineHeight: 16,
+    color: colors.mintDeep,
+  },
+  quizGroupTime: {
+    marginTop: 1,
+    fontFamily: fonts.semiBold,
+    fontSize: 9.5,
+    lineHeight: 13,
+    color: colors.mintDeep,
+    opacity: 0.8,
+  },
   emptyQuiz: {
     paddingVertical: spacing.lg,
     alignItems: 'center',
