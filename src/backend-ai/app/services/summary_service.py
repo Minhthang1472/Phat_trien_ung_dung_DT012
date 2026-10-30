@@ -2,6 +2,8 @@ import logging
 import json
 import re
 import requests
+import random
+import time
 from google import genai
 from google.genai import types
 from app.core.config import settings
@@ -164,19 +166,22 @@ def _assign_section(section_ref, timestamp_sec, fallback_index, sections):
 
 
 def normalize_quiz(raw_quiz, sections=None) -> list:
-    """Đảm bảo mọi phần tử trong quiz đều là dictionary hợp lệ, có timestamp_sec và section."""
+    """Đảm bảo mọi phần tử trong quiz đều là dictionary hợp lệ, tự động xáo trộn và phân bổ cân bằng tự nhiên A, B, C, D."""
     if not isinstance(raw_quiz, list):
         return []
 
     clean_quiz = []
     sections = sections or []
+    letters = ['A', 'B', 'C', 'D']
+    balanced_cycle = ['C', 'A', 'D', 'B', 'D', 'B', 'C', 'A']
+
     for index, item in enumerate(raw_quiz):
         if isinstance(item, dict):
             q_text = item.get("question") or item.get("title") or "Câu hỏi ôn tập"
-            opts = item.get("options")
-            if not isinstance(opts, list) or len(opts) < 2:
-                opts = DEFAULT_QUIZ_OPTIONS
-            ans = item.get("correct_answer") or item.get("answer") or "A"
+            raw_opts = item.get("options")
+            if not isinstance(raw_opts, list) or len(raw_opts) < 2:
+                raw_opts = DEFAULT_QUIZ_OPTIONS
+            raw_ans = str(item.get("correct_answer") or item.get("answer") or "A").strip()
             exp = item.get("explanation") or "Dựa trên nội dung bài giảng."
             raw_ts = item.get("timestamp_sec") or item.get("time_sec") or item.get("timestamp")
             try:
@@ -194,11 +199,55 @@ def normalize_quiz(raw_quiz, sections=None) -> list:
                 section_ref, ts_val, index, sections
             )
 
+            # XÁO TRỘN ĐÁP ÁN ĐỂ PHÂN BỔ ĐỀU TỰ NHIÊN A, B, C, D (Chống lạm dụng A, B)
+            correct_idx = 0
+            raw_ans_upper = raw_ans.upper()
+            if raw_ans_upper in ('A', 'B', 'C', 'D'):
+                correct_idx = ord(raw_ans_upper) - ord('A')
+            else:
+                m = re.match(r'^([A-D])[\.\:\s]', raw_ans_upper)
+                if m:
+                    correct_idx = ord(m.group(1)) - ord('A')
+                else:
+                    for i, o in enumerate(raw_opts):
+                        if raw_ans in str(o) or raw_ans_upper in str(o).upper():
+                            correct_idx = i
+                            break
+            correct_idx = max(0, min(correct_idx, len(raw_opts) - 1))
+
+            # Tách nội dung không chứa tiền tố "A. ", "B. "
+            clean_texts = [re.sub(r'^[A-E][\.\:\-\)]\s*', '', str(o).strip()) for o in raw_opts]
+            correct_content = clean_texts[correct_idx]
+            wrong_contents = [c for i, c in enumerate(clean_texts) if i != correct_idx]
+            
+            # Xáo trộn các phương án sai
+            random.seed(int(time.time() * 1000) + index * 17)
+            random.shuffle(wrong_contents)
+
+            # Vị trí mục tiêu cho đáp án đúng từ chu trình cân bằng
+            target_letter = balanced_cycle[index % len(balanced_cycle)]
+            target_pos = min(ord(target_letter) - ord('A'), len(raw_opts) - 1)
+
+            new_ordered = []
+            w_idx = 0
+            for pos in range(len(raw_opts)):
+                if pos == target_pos:
+                    new_ordered.append(correct_content)
+                else:
+                    if w_idx < len(wrong_contents):
+                        new_ordered.append(wrong_contents[w_idx])
+                        w_idx += 1
+                    else:
+                        new_ordered.append(correct_content)
+
+            final_options = [f"{letters[i]}. {text}" for i, text in enumerate(new_ordered)]
+            final_ans = letters[target_pos]
+
             clean_quiz.append({
                 "question": str(q_text).strip(),
-                "options": [str(o) for o in opts],
-                "correct_answer": str(ans).strip(),
-                "answer": str(ans).strip(),
+                "options": final_options,
+                "correct_answer": final_ans,
+                "answer": final_ans,
                 "explanation": str(exp).strip(),
                 "timestamp_sec": ts_val,
                 "section_id": section_id,
@@ -206,17 +255,17 @@ def normalize_quiz(raw_quiz, sections=None) -> list:
             })
         elif isinstance(item, str) and item.strip():
             section_id, section_title = _assign_section(None, None, index, sections)
-            # Nếu LLM trả về dạng chuỗi câu hỏi tự luận, tự động chuyển thành format trắc nghiệm chuẩn
+            target_letter = balanced_cycle[index % len(balanced_cycle)]
             clean_quiz.append({
                 "question": item.strip(),
                 "options": [
-                    "A. Hoàn toàn đồng ý",
-                    "B. Cần thêm cơ sở phân tích",
+                    "A. Cần thêm cơ sở phân tích",
+                    "B. Hoàn toàn đồng ý",
                     "C. Không phù hợp với ngữ cảnh",
                     "D. Góc nhìn khác"
                 ],
-                "correct_answer": "A",
-                "answer": "A",
+                "correct_answer": target_letter,
+                "answer": target_letter,
                 "explanation": "Câu hỏi gợi mở củng cố kiến thức từ bài giảng.",
                 "timestamp_sec": None,
                 "section_id": section_id,
@@ -390,7 +439,8 @@ class SummaryService:
             f"(mỗi section có ít nhất 1 câu, section dài hơn có thể có nhiều câu hơn). "
             "Mỗi câu phải ghi rõ section_id, section_title và timestamp_sec nằm trong khoảng thời gian của section đó. "
             "Câu hỏi phải kiểm tra chi tiết cụ thể (khái niệm, ví dụ, công thức, lập luận) chứ không hỏi chung chung; "
-            "các phương án nhiễu phải hợp lý và không trùng lặp."
+            "các phương án nhiễu phải hợp lý và không trùng lặp. "
+            "QUAN TRỌNG: Phân bổ ngẫu nhiên và đồng đều các đáp án đúng cho các chữ cái A, B, C, D (ví dụ: câu 1 là C, câu 2 là A, câu 3 là D, câu 4 là B, câu 5 là D, câu 6 là C). Tuyệt đối KHÔNG được để hầu hết đáp án đúng đều rơi vào A hoặc B."
             if include_quiz
             else "Không sinh quiz (quiz là mảng rỗng), nhưng vẫn phải chia sections đầy đủ."
         )
