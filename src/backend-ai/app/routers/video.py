@@ -106,6 +106,18 @@ def _ensure_media_owner(user_id: str, media_url: str) -> None:
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập file này.")
 
 
+def _ensure_media_token_active(claims: dict) -> None:
+    """Media token của tài khoản đã vô hiệu hoá không được tiếp tục sử dụng."""
+    owner_id = claims.get("sub")
+    if not owner_id or not firebase_service.db:
+        return
+    owner = auth_service.get_user(owner_id)
+    if not owner:
+        raise HTTPException(status_code=403, detail="Không tìm thấy chủ sở hữu media.")
+    if auth_service.is_account_deleted(owner):
+        raise HTTPException(status_code=403, detail="Tài khoản đã bị vô hiệu hoá.")
+
+
 async def _read_upload_limited(
     file: UploadFile,
     max_bytes: int,
@@ -217,6 +229,7 @@ async def serve_uploaded_media(filename: str, access_token: Optional[str] = Quer
         claims = auth_service.decode_media_token(access_token)
         if claims.get("media_url") != media_url:
             raise HTTPException(status_code=403, detail="Media token không khớp file.")
+        _ensure_media_token_active(claims)
     else:
         _ensure_media_owner(user["id"], media_url)
     return FileResponse(file_path)
@@ -268,6 +281,7 @@ async def stream_media_endpoint(
         claims = auth_service.decode_media_token(access_token)
         if claims.get("media_url") != url:
             raise HTTPException(status_code=403, detail="Media token không khớp URL stream.")
+        _ensure_media_token_active(claims)
     elif not user:
         raise HTTPException(status_code=401, detail="Vui lòng đăng nhập để phát video qua máy chủ.")
 

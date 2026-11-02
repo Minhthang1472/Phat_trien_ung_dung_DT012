@@ -286,7 +286,8 @@ pytest
 
 Bộ test bao phủ: băm/giải mã JWT, parser SRT/WebVTT, chuẩn hóa quiz/mindmap,
 xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL, health/readiness, SSRF, phân
-quyền cache theo `owner_id`, media token và giới hạn upload (78 test).
+quyền cache theo `owner_id`, xuất dữ liệu, vô hiệu hoá tài khoản (xoá mềm),
+media token và giới hạn upload (79 test).
 
 GitHub Actions chạy thêm kiểm tra manifest extension, `expo-doctor`,
 `expo export --platform web` và build Docker image.
@@ -387,7 +388,7 @@ Rules Admin).
 * **Tab Hồ sơ:** Theo dõi cấp bậc học viên, tích lũy điểm kinh nghiệm (EXP) và quản lý tài khoản cá nhân.
 * **Xuất tài liệu:** Nút **Tài liệu** cho phép lưu bản tóm tắt dạng văn bản (`.txt`) hoặc gọi máy chủ dựng **PDF / Word (.docx) / Markdown** có bìa, mục lục và bảng phụ đề song ngữ.
 * **Bộ nhớ đệm ngoại tuyến:** Tóm tắt, mindmap và quiz được lưu bằng `AsyncStorage`; mục **Cài đặt → Quản lý dữ liệu** xoá đồng thời lịch sử và cache. Extension dùng `IndexedDB` và có nút **Xoá bộ nhớ đệm bài giảng** trong popup.
-* **Quyền riêng tư dữ liệu:** Tại **Cài đặt → Dữ liệu & sao lưu** có thể tải toàn bộ dữ liệu cá nhân dạng JSON; mục **Bảo mật tài khoản** cho phép xoá vĩnh viễn tài khoản cùng bài giảng, media; tài khoản email/mật khẩu phải xác nhận mật khẩu, còn tài khoản Google dùng phiên đăng nhập hiện tại.
+* **Quyền riêng tư dữ liệu:** Tại **Cài đặt → Dữ liệu & sao lưu** có thể tải toàn bộ dữ liệu cá nhân dạng JSON; mục **Bảo mật tài khoản** cho phép **vô hiệu hoá tài khoản** (xoá mềm). Hệ thống đăng xuất và chặn đăng nhập, nhưng bài giảng, media và file vẫn được giữ trong Firestore để quản trị viên khôi phục khi cần. Tài khoản email/mật khẩu phải xác nhận mật khẩu, còn tài khoản Google dùng phiên đăng nhập hiện tại.
 
 ---
 
@@ -414,7 +415,7 @@ Rules Admin).
 | `POST` | `/api/auth/extension-session` | Cấp phiên riêng cho từng bản cài extension (device-scoped) | Public |
 | `POST` | `/api/auth/ws-token` | Cấp token WebSocket ngắn hạn (1 giờ) | Bearer Token |
 | `GET` | `/api/auth/export-data` | Xuất toàn bộ dữ liệu cá nhân dạng JSON | Bearer Token |
-| `DELETE` | `/api/auth/account` | Xoá tài khoản, bài giảng và media (mật khẩu bắt buộc với tài khoản email) | Bearer Token |
+| `DELETE` | `/api/auth/account` | Vô hiệu hoá tài khoản (xoá mềm, giữ dữ liệu; mật khẩu bắt buộc với tài khoản email) | Bearer Token |
 | `GET` | `/api/export` | Xuất tài liệu bài giảng (`?video_url=...&format=pdf\|docx\|md`) | Bearer Token |
 | `GET` | `/health` | Liveness probe (tiến trình còn sống) | Public |
 | `GET` | `/health/ready` | Readiness probe (Firebase, thư mục upload, JWT secret) | Public |

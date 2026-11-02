@@ -306,7 +306,7 @@ class ApiService {
     );
   }
 
-  // Xoá tài khoản sau khi xác nhận mật khẩu; backend xoá luôn bài giảng và media.
+  // Vô hiệu hoá tài khoản (xoá mềm); backend giữ nguyên bài giảng và media.
   async deleteAccount(password) {
     const baseUrl = await this.getBaseUrl();
     const response = await fetch(`${baseUrl}/api/auth/account`, {

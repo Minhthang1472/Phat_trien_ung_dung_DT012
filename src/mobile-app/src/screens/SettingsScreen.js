@@ -44,7 +44,7 @@ export default function SettingsScreen({ onNavigate }) {
   const [changeMsg, setChangeMsg] = useState('');
   const [changeError, setChangeError] = useState('');
 
-  // States cho Popup Xoá tài khoản
+  // States cho Popup Vô hiệu hoá tài khoản
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -251,7 +251,7 @@ export default function SettingsScreen({ onNavigate }) {
 
   const confirmDeleteAccount = async () => {
     if (requiresDeletePassword && !deletePassword) {
-      setDeleteError('Vui lòng nhập mật khẩu để xác nhận xoá tài khoản.');
+      setDeleteError('Vui lòng nhập mật khẩu để xác nhận vô hiệu hoá tài khoản.');
       return;
     }
     setDeleteLoading(true);
@@ -262,14 +262,14 @@ export default function SettingsScreen({ onNavigate }) {
       setDeletePassword('');
       setUser(null);
       Alert.alert(
-        'Đã xoá tài khoản',
-        'Tài khoản và toàn bộ dữ liệu liên quan đã được xoá khỏi máy chủ.'
+        'Đã vô hiệu hoá tài khoản',
+        'Bạn đã được đăng xuất. Dữ liệu bài giảng và media vẫn được lưu trữ để quản trị viên có thể khôi phục khi cần.'
       );
       if (onNavigate) {
         onNavigate('Profile');
       }
     } catch (error) {
-      setDeleteError(error.message || 'Không thể xoá tài khoản. Vui lòng thử lại.');
+      setDeleteError(error.message || 'Không thể vô hiệu hoá tài khoản. Vui lòng thử lại.');
     } finally {
       setDeleteLoading(false);
     }

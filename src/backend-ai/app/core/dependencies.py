@@ -67,6 +67,8 @@ def get_current_user(
     user = auth_service.get_user(claims.get("sub", ""))
     if not user:
         raise HTTPException(status_code=401, detail="Không tìm thấy tài khoản.")
+    if auth_service.is_account_deleted(user):
+        raise HTTPException(status_code=403, detail="Tài khoản đã bị vô hiệu hoá.")
     return user
 
 
@@ -77,7 +79,10 @@ def get_optional_user(
         return None
     try:
         claims = auth_service.decode_token(credentials.credentials)
-        return auth_service.get_user(claims.get("sub", ""))
+        user = auth_service.get_user(claims.get("sub", ""))
+        if auth_service.is_account_deleted(user):
+            return None
+        return user
     except HTTPException:
         return None
 

@@ -50,7 +50,7 @@ export default function AccountSecuritySection({
       >
         <Icon name="delete" size={17} color={colors.error} />
         <Text style={[styles.logoutBtnText, { color: colors.error }]}>
-          Xoá tài khoản vĩnh viễn
+          Vô hiệu hoá tài khoản
         </Text>
       </TouchableOpacity>
     </>

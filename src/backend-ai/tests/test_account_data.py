@@ -27,6 +27,9 @@ class FakeRef:
     def exists(self):
         return self.id in self._store
 
+    def get(self):
+        return self
+
     def to_dict(self):
         return dict(self._store.get(self.id) or {})
 
@@ -37,6 +40,11 @@ class FakeRef:
             self._store[self.id] = merged
         else:
             self._store[self.id] = dict(payload)
+
+    def update(self, payload):
+        merged = dict(self._store.get(self.id) or {})
+        merged.update(payload)
+        self._store[self.id] = merged
 
     def delete(self):
         self._store.pop(self.id, None)
@@ -128,12 +136,9 @@ def _seed(db):
 
 @pytest.fixture
 def account_client(monkeypatch, tmp_path):
-    from app.routers import auth as auth_router
-
     db = FakeDB()
     _seed(db)
     monkeypatch.setattr(firebase_service, "db", db)
-    monkeypatch.setattr(auth_router, "UPLOAD_DIR", str(tmp_path))
     app.dependency_overrides[get_current_user] = lambda: dict(USER)
     try:
         yield TestClient(app), db, tmp_path
@@ -169,7 +174,7 @@ def test_delete_account_rejects_wrong_password(account_client):
     assert db.collection("lectures").document("lecture-1").exists
 
 
-def test_delete_account_removes_owner_data_and_uploaded_file(account_client):
+def test_delete_account_soft_deletes_and_keeps_all_data(account_client):
     client, db, tmp_path = account_client
     upload = tmp_path / "a.mp4"
     upload.write_bytes(b"video")
@@ -179,29 +184,63 @@ def test_delete_account_removes_owner_data_and_uploaded_file(account_client):
     )
 
     assert response.status_code == 200
-    assert response.json()["removed"] == {
-        "lectures": 1,
-        "media_owners": 1,
-        "files": 1,
-    }
-    assert not upload.exists()
-    assert not db.collection("users").document("user-1").exists
-    assert not db.collection("lectures").document("lecture-1").exists
-    assert not db.collection("media_owners").document("m-1").exists
-    assert db.collection("lectures").document("lecture-2").exists
-    assert db.collection("lectures").document("lecture-2").to_dict()["owner_id"] == "user-2"
+    payload = response.json()
+    assert payload["deleted"] is True
+    assert payload["soft"] is True
+    assert payload["retained"] == {"lectures": 1, "media_owners": 1}
+    assert payload["deleted_at"]
+
+    # Xoá mềm: tài liệu người dùng vẫn còn, chỉ được đánh dấu vô hiệu hoá.
+    user_doc = db.collection("users").document("user-1")
+    assert user_doc.exists
+    user_data = user_doc.to_dict()
+    assert user_data["deleted"] is True
+    assert user_data["account_status"] == "deleted"
+    assert user_data["deleted_at"]
+
+    # Bài giảng, quyền media và file upload đều được giữ nguyên.
+    assert upload.exists()
+    assert db.collection("lectures").document("lecture-1").exists
+    assert db.collection("media_owners").document("m-1").exists
+    assert db.collection("users").document("user-2").exists
 
 
-def test_remove_uploaded_media_blocks_path_traversal():
-    from app.routers.auth import _remove_uploaded_media
+def test_soft_deleted_account_cannot_log_in(monkeypatch):
+    db = FakeDB()
+    _seed(db)
+    db.collection("users").document("user-1").update(
+        {"deleted": True, "account_status": "deleted"}
+    )
+    monkeypatch.setattr(firebase_service, "db", db)
 
-    assert _remove_uploaded_media(["/uploads/../secret.mp4"]) == 0
-    assert _remove_uploaded_media(["https://example.com/uploads/a.mp4"]) == 0
+    response = TestClient(app).post(
+        "/api/auth/login",
+        json={"email": "hocvien", "password": "secret123"},
+    )
+
+    assert response.status_code == 403
+    assert "vô hiệu hoá" in response.json()["detail"]
 
 
-def test_google_account_can_delete_without_password(monkeypatch, tmp_path):
-    from app.routers import auth as auth_router
+def test_soft_deleted_account_token_is_rejected(monkeypatch):
+    db = FakeDB()
+    _seed(db)
+    db.collection("users").document("user-1").update(
+        {"deleted": True, "account_status": "deleted"}
+    )
+    monkeypatch.setattr(firebase_service, "db", db)
+    token = auth_service.create_token(USER)
 
+    response = TestClient(app).get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403
+    assert "vô hiệu hoá" in response.json()["detail"]
+
+
+def test_google_account_can_delete_without_password(monkeypatch):
     google_user = {
         "id": "google_123",
         "email": "google@example.com",
@@ -211,7 +250,6 @@ def test_google_account_can_delete_without_password(monkeypatch, tmp_path):
     db = FakeDB()
     db.collection("users").document("google_123").set(google_user)
     monkeypatch.setattr(firebase_service, "db", db)
-    monkeypatch.setattr(auth_router, "UPLOAD_DIR", str(tmp_path))
     app.dependency_overrides[get_current_user] = lambda: dict(google_user)
     try:
         response = TestClient(app).request("DELETE", "/api/auth/account", json={})
@@ -219,4 +257,5 @@ def test_google_account_can_delete_without_password(monkeypatch, tmp_path):
         app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200
-    assert not db.collection("users").document("google_123").exists
+    assert db.collection("users").document("google_123").exists
+    assert db.collection("users").document("google_123").to_dict()["deleted"] is True

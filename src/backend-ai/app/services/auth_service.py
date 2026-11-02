@@ -110,6 +110,21 @@ class AuthService:
         return doc.to_dict() if doc.exists else None
 
     @staticmethod
+    def is_account_deleted(user: Optional[Dict[str, Any]]) -> bool:
+        """Tài khoản đã bị xoá mềm (vô hiệu hoá) hay chưa.
+
+        Dữ liệu vẫn được giữ trong Firestore để quản trị viên có thể khôi phục;
+        chỉ các luồng đăng nhập/phiên hiện tại bị chặn.
+        """
+        if not user:
+            return False
+        return bool(
+            user.get("deleted")
+            or user.get("deleted_at")
+            or user.get("account_status") == "deleted"
+        )
+
+    @staticmethod
     def new_email_token() -> str:
         return secrets.token_urlsafe(32)
 

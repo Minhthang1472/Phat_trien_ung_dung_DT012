@@ -32,7 +32,7 @@ export default function DeleteAccountModal({
         <View style={styles.modalCard}>
           <View style={styles.modalHeader}>
             <Icon name="delete" size={22} color={colors.error} />
-            <Text style={styles.modalTitle}>Xoá tài khoản</Text>
+            <Text style={styles.modalTitle}>Vô hiệu hoá tài khoản</Text>
             <TouchableOpacity
               onPress={onClose}
               style={styles.closeBtn}
@@ -43,9 +43,10 @@ export default function DeleteAccountModal({
           </View>
 
           <Text style={styles.modalDesc}>
-            Hành động này không thể hoàn tác. Toàn bộ bài giảng, phụ đề, quiz,
-            media đã tải lên và hồ sơ cá nhân sẽ bị xoá vĩnh viễn khỏi máy chủ.
-            Hãy xuất dữ liệu trước nếu bạn muốn giữ bản sao.
+            Tài khoản sẽ bị vô hiệu hoá và bạn bị đăng xuất khỏi mọi thiết bị.
+            Bài giảng, phụ đề, quiz và media vẫn được lưu trữ nội bộ; quản trị
+            viên có thể khôi phục tài khoản khi cần. Hãy xuất dữ liệu trước nếu
+            bạn muốn giữ bản sao.
             {requiresPassword ? '' : ' Tài khoản Google đã được xác thực bằng phiên đăng nhập hiện tại.'}
           </Text>
 
@@ -95,7 +96,7 @@ export default function DeleteAccountModal({
               {loading ? (
                 <ActivityIndicator color="#fff" size="small" />
               ) : (
-                <Text style={styles.submitBtnText}>Xoá vĩnh viễn</Text>
+                <Text style={styles.submitBtnText}>Vô hiệu hoá</Text>
               )}
             </TouchableOpacity>
           </View>

@@ -1,6 +1,7 @@
 import os
 import hashlib
 import logging
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 try:
@@ -351,54 +352,78 @@ class FirebaseService:
 
         return {"lectures": lectures, "media_owners": media_owners}
 
-    def delete_user_data(self, user_id: str) -> Dict[str, Any]:
-        """Xoá tài khoản cùng toàn bộ bài giảng và quyền media của người dùng."""
+    def soft_delete_user_data(self, user_id: str) -> Dict[str, Any]:
+        """Vô hiệu hoá tài khoản (xoá mềm), giữ nguyên toàn bộ dữ liệu.
+
+        Chỉ đánh dấu ``deleted/deleted_at/account_status`` trên tài liệu người
+        dùng. Bài giảng, quyền media và file upload vẫn được giữ lại để quản
+        trị viên có thể khôi phục hoặc tra cứu khi cần.
+        """
         if not self.db:
             self.init_firebase()
         if not self.db:
-            return {"deleted": False, "lectures": 0, "media_owners": 0, "media_urls": []}
+            return {
+                "deleted": False,
+                "soft": True,
+                "lectures": 0,
+                "media_owners": 0,
+            }
 
-        media_urls = set()
-        deleted_counts = {"lectures": 0, "media_owners": 0}
-
+        retained = {"lectures": 0, "media_owners": 0}
         for collection_name in ("lectures", "media_owners"):
             try:
-                docs = list(
-                    self.db.collection(collection_name)
-                    .where("owner_id", "==", user_id)
-                    .stream()
+                retained[collection_name] = len(
+                    list(
+                        self.db.collection(collection_name)
+                        .where("owner_id", "==", user_id)
+                        .stream()
+                    )
                 )
             except Exception as exc:
-                logger.warning("Không đọc được %s để xoá: %s", collection_name, exc)
-                continue
+                logger.warning(
+                    "Không đếm được %s của %s: %s", collection_name, user_id, exc
+                )
 
-            for doc in docs:
-                data = doc.to_dict() or {}
-                if data.get("media_url"):
-                    media_urls.add(data["media_url"])
-                if data.get("media_stream_url"):
-                    media_urls.add(data["media_stream_url"])
+        user_ref = self.db.collection("users").document(user_id)
+        snapshot = user_ref.get()
+        if not snapshot.exists:
+            return {"deleted": False, "soft": True, **retained}
 
-            for start in range(0, len(docs), 400):
-                batch = self.db.batch()
-                for doc in docs[start:start + 400]:
-                    batch.delete(doc.reference)
-                batch.commit()
-                deleted_counts[collection_name] += len(docs[start:start + 400])
+        user = snapshot.to_dict() or {}
+        if user.get("deleted") or user.get("deleted_at"):
+            return {
+                "deleted": True,
+                "soft": True,
+                "already_deleted": True,
+                **retained,
+            }
 
+        deleted_at = datetime.now(timezone.utc).isoformat()
         try:
-            self.db.collection("users").document(user_id).delete()
+            user_ref.update(
+                {
+                    "deleted": True,
+                    "deleted_at": deleted_at,
+                    "account_status": "deleted",
+                }
+            )
         except Exception as exc:
-            logger.warning("Không xoá được tài khoản %s: %s", user_id, exc)
-            return {"deleted": False, **deleted_counts, "media_urls": sorted(media_urls)}
+            logger.warning("Không vô hiệu hoá được tài khoản %s: %s", user_id, exc)
+            return {"deleted": False, "soft": True, **retained}
 
         logger.info(
-            "Đã xoá tài khoản %s (%s bài giảng, %s media)",
+            "Đã vô hiệu hoá tài khoản %s (giữ lại %s bài giảng, %s media)",
             user_id,
-            deleted_counts["lectures"],
-            deleted_counts["media_owners"],
+            retained["lectures"],
+            retained["media_owners"],
         )
-        return {"deleted": True, **deleted_counts, "media_urls": sorted(media_urls)}
+        return {
+            "deleted": True,
+            "soft": True,
+            "deleted_at": deleted_at,
+            **retained,
+        }
+
 
 firebase_service = FirebaseService()
 

@@ -1,11 +1,9 @@
 import hashlib
 import json
-import os
 import random
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security
 from fastapi.concurrency import run_in_threadpool
@@ -28,7 +26,6 @@ from app.models.schemas import (
 from app.services.auth_service import auth_service
 from app.services.email_service import email_service, render_otp_email
 from app.core.dependencies import (
-    UPLOAD_DIR,
     auth_rate_limit,
     get_current_user,
     heavy_rate_limit,
@@ -39,23 +36,13 @@ from app.core.dependencies import (
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _remove_uploaded_media(media_urls) -> int:
-    """Xoá file upload thuộc tài khoản, chặn mọi đường dẫn thoát khỏi UPLOAD_DIR."""
-    removed = 0
-    for media_url in media_urls or []:
-        if not isinstance(media_url, str) or not media_url.startswith("/uploads/"):
-            continue
-        name = unquote(media_url.split("?", 1)[0][len("/uploads/"):])
-        if not name or os.path.basename(name) != name:
-            continue
-        path = os.path.join(UPLOAD_DIR, name)
-        try:
-            if os.path.isfile(path):
-                os.remove(path)
-                removed += 1
-        except OSError as exc:
-            logger.warning("Không xoá được file media %s: %s", path, exc)
-    return removed
+def _ensure_active_user(user: dict) -> None:
+    """Chặn tài khoản đã xoá mềm ở mọi luồng cấp lại phiên đăng nhập."""
+    if auth_service.is_account_deleted(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Tài khoản đã bị vô hiệu hoá. Vui lòng liên hệ quản trị viên.",
+        )
 
 
 @router.post("/register")
@@ -68,7 +55,16 @@ async def register(request: RegisterRequest, _limit=Depends(auth_rate_limit)):
 
     user_id = hashlib.sha256(email.encode("utf-8")).hexdigest()
     user_ref = firebase_service.db.collection("users").document(user_id)
-    if user_ref.get().exists:
+    existing_user = user_ref.get()
+    if existing_user.exists:
+        if auth_service.is_account_deleted(existing_user.to_dict() or {}):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Email này thuộc một tài khoản đã bị vô hiệu hoá. "
+                    "Vui lòng liên hệ quản trị viên để khôi phục."
+                ),
+            )
         raise HTTPException(status_code=409, detail="Email này đã được đăng ký.")
 
     username = (request.display_name or email.split("@")[0]).strip()
@@ -158,6 +154,8 @@ async def login(request: LoginRequest, _limit=Depends(auth_rate_limit)):
     if not user or not auth_service.verify_password(request.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Tên đăng nhập hoặc mật khẩu không đúng.")
 
+    _ensure_active_user(user)
+
     if user.get("email_verified") is False:
         if not email_service.configured():
             user["email_verified"] = True
@@ -191,6 +189,7 @@ async def extension_session(request: ExtensionSessionRequest, _limit=Depends(aut
 
     if doc.exists:
         user = doc.to_dict()
+        _ensure_active_user(user)
         if not user.get("id"):
             user["id"] = user_id
     else:
@@ -221,6 +220,7 @@ async def verify_otp(request: VerifyOtpRequest, _limit=Depends(auth_rate_limit))
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Không tìm thấy tài khoản với email này.")
     user = doc.to_dict()
+    _ensure_active_user(user)
     if user.get("email_verified"):
         token = auth_service.create_token(user)
         return {"token": token, "user": user_public_data(user), "message": "Tài khoản đã được xác minh trước đó."}
@@ -316,6 +316,8 @@ async def google_login(request: GoogleLoginRequest, _limit=Depends(auth_rate_lim
     user_id = f"google_{google_user['provider_id']}"
     user_ref = firebase_service.db.collection("users").document(user_id)
     existing = user_ref.get()
+    if existing.exists:
+        _ensure_active_user(existing.to_dict() or {})
     user = existing.to_dict() if existing.exists else {
         "id": user_id,
         "email": google_user["email"],
@@ -344,6 +346,7 @@ async def forgot_password(request: ForgotPasswordRequest, _limit=Depends(auth_ra
         raise HTTPException(status_code=404, detail="Email này chưa được đăng ký tài khoản.")
 
     user = snapshot.to_dict()
+    _ensure_active_user(user)
     otp = f"{random.randint(100000, 999999)}"
     user_ref.update({
         "reset_otp": otp,
@@ -376,6 +379,7 @@ async def verify_reset_otp(request: VerifyOtpRequest, _limit=Depends(auth_rate_l
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Tài khoản không tồn tại.")
     user = doc.to_dict()
+    _ensure_active_user(user)
     saved_otp = str(user.get("reset_otp", "")).strip()
     if not saved_otp or saved_otp != request.otp.strip():
         raise HTTPException(status_code=400, detail="Mã OTP không chính xác.")
@@ -399,6 +403,7 @@ async def reset_password_otp(request: ResetPasswordOtpRequest, _limit=Depends(au
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Tài khoản không tồn tại.")
     user = doc.to_dict()
+    _ensure_active_user(user)
     saved_otp = str(user.get("reset_otp", "")).strip()
     if not saved_otp or saved_otp != request.otp.strip():
         raise HTTPException(status_code=400, detail="Mã OTP không chính xác.")
@@ -428,6 +433,7 @@ async def reset_password(request: ResetPasswordRequest, _limit=Depends(auth_rate
         raise HTTPException(status_code=400, detail="Token đặt lại mật khẩu không hợp lệ.")
     user_ref = matches[0].reference
     reset_user = matches[0].to_dict()
+    _ensure_active_user(reset_user)
     expires_at = reset_user.get("reset_expires_at")
     if expires_at and datetime.fromisoformat(expires_at) < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Token đặt lại mật khẩu đã hết hạn.")
@@ -621,17 +627,23 @@ async def delete_account(
     if password_hash and not auth_service.verify_password(request.password or "", password_hash):
         raise HTTPException(status_code=400, detail="Mật khẩu xác nhận không đúng.")
 
-    result = firebase_service.delete_user_data(user["id"])
+    result = firebase_service.soft_delete_user_data(user["id"])
     if not result.get("deleted"):
-        raise HTTPException(status_code=500, detail="Không thể xoá tài khoản. Vui lòng thử lại.")
+        raise HTTPException(
+            status_code=500,
+            detail="Không thể vô hiệu hoá tài khoản. Vui lòng thử lại.",
+        )
 
-    removed_files = _remove_uploaded_media(result.get("media_urls"))
     return {
         "deleted": True,
-        "message": "Đã xoá tài khoản và toàn bộ dữ liệu liên quan.",
-        "removed": {
+        "soft": True,
+        "message": (
+            "Tài khoản đã được vô hiệu hoá. Dữ liệu bài giảng và media vẫn "
+            "được lưu trữ để quản trị viên có thể khôi phục khi cần."
+        ),
+        "retained": {
             "lectures": result.get("lectures", 0),
             "media_owners": result.get("media_owners", 0),
-            "files": removed_files,
         },
+        "deleted_at": result.get("deleted_at"),
     }
