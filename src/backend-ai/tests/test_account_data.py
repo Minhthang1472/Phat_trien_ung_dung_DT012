@@ -153,6 +153,7 @@ def test_export_data_returns_owner_documents_without_password(account_client):
     assert len(payload["lectures"]) == 1
     assert payload["lectures"][0]["title"] == "Bài của tôi"
     assert len(payload["media_owners"]) == 1
+    assert payload["user"]["has_password"] is True
     assert "password_hash" not in payload["user"]
 
 
@@ -196,3 +197,26 @@ def test_remove_uploaded_media_blocks_path_traversal():
 
     assert _remove_uploaded_media(["/uploads/../secret.mp4"]) == 0
     assert _remove_uploaded_media(["https://example.com/uploads/a.mp4"]) == 0
+
+
+def test_google_account_can_delete_without_password(monkeypatch, tmp_path):
+    from app.routers import auth as auth_router
+
+    google_user = {
+        "id": "google_123",
+        "email": "google@example.com",
+        "display_name": "Google User",
+        "auth_provider": "google",
+    }
+    db = FakeDB()
+    db.collection("users").document("google_123").set(google_user)
+    monkeypatch.setattr(firebase_service, "db", db)
+    monkeypatch.setattr(auth_router, "UPLOAD_DIR", str(tmp_path))
+    app.dependency_overrides[get_current_user] = lambda: dict(google_user)
+    try:
+        response = TestClient(app).request("DELETE", "/api/auth/account", json={})
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200
+    assert not db.collection("users").document("google_123").exists

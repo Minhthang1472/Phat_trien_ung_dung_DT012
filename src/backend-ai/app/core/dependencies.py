@@ -89,5 +89,7 @@ def user_public_data(user):
         "email": user.get("email"),
         "display_name": user.get("display_name") or user.get("username") or user.get("email", "").split("@")[0],
         "avatar": user.get("avatar"),
+        "auth_provider": user.get("auth_provider") or "password",
+        "has_password": bool(user.get("password_hash")),
         "created_at": user.get("created_at"),
     }

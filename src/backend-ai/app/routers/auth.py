@@ -617,7 +617,8 @@ async def delete_account(
     if not firebase_service.db:
         raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
 
-    if not auth_service.verify_password(request.password, user.get("password_hash", "")):
+    password_hash = user.get("password_hash") or ""
+    if password_hash and not auth_service.verify_password(request.password or "", password_hash):
         raise HTTPException(status_code=400, detail="Mật khẩu xác nhận không đúng.")
 
     result = firebase_service.delete_user_data(user["id"])

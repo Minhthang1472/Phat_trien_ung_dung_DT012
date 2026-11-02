@@ -247,8 +247,10 @@ export default function SettingsScreen({ onNavigate }) {
     setDeleteModalVisible(true);
   };
 
+  const requiresDeletePassword = user?.has_password !== false;
+
   const confirmDeleteAccount = async () => {
-    if (!deletePassword) {
+    if (requiresDeletePassword && !deletePassword) {
       setDeleteError('Vui lòng nhập mật khẩu để xác nhận xoá tài khoản.');
       return;
     }
@@ -395,6 +397,7 @@ export default function SettingsScreen({ onNavigate }) {
         setPassword={setDeletePassword}
         loading={deleteLoading}
         error={deleteError}
+        requiresPassword={requiresDeletePassword}
         onSubmit={confirmDeleteAccount}
         styles={styles}
       />

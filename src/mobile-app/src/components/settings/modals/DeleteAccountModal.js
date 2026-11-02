@@ -17,6 +17,7 @@ export default function DeleteAccountModal({
   setPassword,
   loading,
   error,
+  requiresPassword = true,
   onSubmit,
   styles,
 }) {
@@ -45,6 +46,7 @@ export default function DeleteAccountModal({
             Hành động này không thể hoàn tác. Toàn bộ bài giảng, phụ đề, quiz,
             media đã tải lên và hồ sơ cá nhân sẽ bị xoá vĩnh viễn khỏi máy chủ.
             Hãy xuất dữ liệu trước nếu bạn muốn giữ bản sao.
+            {requiresPassword ? '' : ' Tài khoản Google đã được xác thực bằng phiên đăng nhập hiện tại.'}
           </Text>
 
           {error ? (
@@ -53,21 +55,23 @@ export default function DeleteAccountModal({
             </View>
           ) : null}
 
-          <View style={styles.inputField}>
-            <Text style={styles.inputLabel}>MẬT KHẨU XÁC NHẬN</Text>
-            <View style={styles.inputWrap}>
-              <Icon name="key" size={16} color={colors.muted} style={{ marginRight: 8 }} />
-              <TextInput
-                style={styles.textInput}
-                placeholder="Nhập mật khẩu hiện tại"
-                placeholderTextColor={colors.textMuted}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                autoCapitalize="none"
-              />
+          {requiresPassword ? (
+            <View style={styles.inputField}>
+              <Text style={styles.inputLabel}>MẬT KHẨU XÁC NHẬN</Text>
+              <View style={styles.inputWrap}>
+                <Icon name="key" size={16} color={colors.muted} style={{ marginRight: 8 }} />
+                <TextInput
+                  style={styles.textInput}
+                  placeholder="Nhập mật khẩu hiện tại"
+                  placeholderTextColor={colors.textMuted}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                />
+              </View>
             </View>
-          </View>
+          ) : null}
 
           <View style={styles.modalBtnRow}>
             <TouchableOpacity

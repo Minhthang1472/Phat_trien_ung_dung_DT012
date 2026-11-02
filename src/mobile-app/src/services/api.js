@@ -315,7 +315,7 @@ class ApiService {
         'Content-Type': 'application/json',
         ...(await this.getAuthHeaders()),
       },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ password: password || '' }),
     });
     const data = await this.parseResponse(response);
     await this.logout();
