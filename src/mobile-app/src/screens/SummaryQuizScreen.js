@@ -112,6 +112,38 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
     }
   };
 
+  // Xuất PDF/DOCX/Markdown do backend dựng (bìa, mục lục, bảng phụ đề...).
+  const handleExportServerDocument = async (format) => {
+    try {
+      Alert.alert('Đang tạo tài liệu', `Máy chủ đang dựng file ${format.toUpperCase()}...`);
+      const res = await apiService.exportLectureDocument(lecture, format);
+      if (res && res.isDefault) {
+        Alert.alert('Thành công', `Đã lưu tài liệu vào thư mục mặc định:\n${res.dirName}`);
+      } else if (res && !res.cancelled) {
+        Alert.alert('Thành công', `Đã xuất tài liệu ${format.toUpperCase()} thành công!`);
+      }
+    } catch (err) {
+      Alert.alert('Lỗi xuất tài liệu', err.message);
+    }
+  };
+
+  // Alert trên Android tối đa 3 nút nên tách thành 2 bước.
+  const handleExportDocumentMenu = () => {
+    Alert.alert('Xuất tài liệu ôn tập', 'Chọn định dạng bạn muốn lưu:', [
+      { text: 'Hủy', style: 'cancel' },
+      { text: 'Văn bản (.txt)', onPress: () => handleExportSummary() },
+      {
+        text: 'PDF / Word / Markdown',
+        onPress: () =>
+          Alert.alert('Tài liệu từ máy chủ', 'Chọn định dạng:', [
+            { text: 'PDF', onPress: () => handleExportServerDocument('pdf') },
+            { text: 'Word (.docx)', onPress: () => handleExportServerDocument('docx') },
+            { text: 'Markdown (.md)', onPress: () => handleExportServerDocument('md') },
+          ]),
+      },
+    ]);
+  };
+
   // Tính năng tải Video Hardsub
   const handleDownloadVideo = () => {
     Alert.alert(
@@ -356,7 +388,7 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
       <View style={styles.exportRow}>
         <TouchableOpacity
           style={[styles.exportBtn, styles.exportFileBtn]}
-          onPress={handleExportSummary}
+          onPress={handleExportDocumentMenu}
           activeOpacity={0.85}
         >
           <Icon name="download" size={16} color={colors.mintDeep} />

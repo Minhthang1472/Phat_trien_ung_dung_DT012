@@ -663,9 +663,18 @@ document.addEventListener("DOMContentLoaded", async () => {
           throw new Error(detail);
         }
         const blob = await res.blob();
+        // Ưu tiên tên file do server đặt (Content-Disposition) nếu được expose.
+        let filename = `lecture_ai_${Date.now()}.${fmt}`;
+        const disposition = res.headers.get("Content-Disposition") || "";
+        const encodedName = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+        const plainName = /filename="?([^";]+)"?/i.exec(disposition);
+        try {
+          if (encodedName) filename = decodeURIComponent(encodedName[1]);
+          else if (plainName) filename = plainName[1];
+        } catch (_) {}
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `lecture_ai_${Date.now()}.${fmt}`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -674,6 +683,25 @@ document.addEventListener("DOMContentLoaded", async () => {
       } catch (err) {
         alert(`Không thể tải tài liệu: ${err.message}`);
       }
+    });
+  }
+
+  // Xoá toàn bộ cache bài giảng trong IndexedDB của extension.
+  const btnClearCache = document.getElementById("btnClearCache");
+  if (btnClearCache) {
+    btnClearCache.addEventListener("click", async () => {
+      if (!window.LectureCache) {
+        statusText.innerText = "Bộ nhớ đệm chưa sẵn sàng.";
+        return;
+      }
+      const ok = window.confirm(
+        "Xoá toàn bộ phụ đề và tóm tắt đã lưu trên trình duyệt? Dữ liệu trên máy chủ vẫn được giữ nguyên."
+      );
+      if (!ok) return;
+      const cleared = await window.LectureCache.clear();
+      statusText.innerText = cleared
+        ? "Đã xoá bộ nhớ đệm bài giảng."
+        : "Không thể xoá bộ nhớ đệm.";
     });
   }
 });

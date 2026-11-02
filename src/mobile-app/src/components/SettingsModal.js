@@ -197,14 +197,15 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
             <View style={styles.sectionCard}>
               <Text style={styles.sectionTitle}>🧹 QUẢN LÝ DỮ LIỆU & BỘ NHỚ</Text>
               <Text style={styles.sectionDesc}>
-                Làm sạch dữ liệu lưu tạm trên máy khi cần thiết lập lại hoặc giải phóng dung lượng:
+                Làm sạch dữ liệu lưu tạm trên máy khi cần thiết lập lại hoặc giải phóng dung lượng.
+                Thao tác này xoá cả lịch sử bài giảng và bộ nhớ đệm tóm tắt / mindmap / quiz:
               </Text>
               <TouchableOpacity
                 style={styles.clearCacheBtn}
                 onPress={handleClearHistory}
                 activeOpacity={0.7}
               >
-                <Text style={styles.clearCacheText}>🗑️ Xóa bộ nhớ đệm lịch sử bài giảng</Text>
+                <Text style={styles.clearCacheText}>🗑️ Xóa lịch sử &amp; bộ nhớ đệm bài giảng</Text>
               </TouchableOpacity>
             </View>
 
@@ -226,7 +227,7 @@ export default function SettingsModal({ visible, onClose, onSaved, onClearedHist
                 </View>
                 <View style={styles.statusItem}>
                   <Text style={styles.statusLabel}>• Phiên bản ứng dụng:</Text>
-                  <Text style={styles.statusValue}>v1.2.0 (Giai đoạn 2)</Text>
+                  <Text style={styles.statusValue}>v2.0.0</Text>
                 </View>
               </View>
             </View>

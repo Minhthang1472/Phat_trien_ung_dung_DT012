@@ -90,7 +90,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
-    expose_headers=["X-Request-ID"],
+    expose_headers=["X-Request-ID", "Content-Disposition"],
 )
 
 

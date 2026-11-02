@@ -340,6 +340,8 @@ xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL và các endpoint health/m
 * **Tab Tóm tắt & Mindmap:** Đọc các ý chính tóm lược và sơ đồ cây phân cấp tri thức bài học.
 * **Tab Trắc nghiệm:** Làm bài tập trắc nghiệm củng cố kiến thức, nhận điểm số và giải thích đáp án ngay lập tức.
 * **Tab Hồ sơ:** Theo dõi cấp bậc học viên, tích lũy điểm kinh nghiệm (EXP) và quản lý tài khoản cá nhân.
+* **Xuất tài liệu:** Nút **Tài liệu** cho phép lưu bản tóm tắt dạng văn bản (`.txt`) hoặc gọi máy chủ dựng **PDF / Word (.docx) / Markdown** có bìa, mục lục và bảng phụ đề song ngữ.
+* **Bộ nhớ đệm ngoại tuyến:** Tóm tắt, mindmap và quiz được lưu bằng `AsyncStorage`; mục **Cài đặt → Quản lý dữ liệu** xoá đồng thời lịch sử và cache. Extension dùng `IndexedDB` và có nút **Xoá bộ nhớ đệm bài giảng** trong popup.
 
 ---
 

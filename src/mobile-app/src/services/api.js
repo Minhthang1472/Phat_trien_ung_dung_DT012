@@ -5,6 +5,7 @@ import * as LegacyFileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
 import { getDefaultApiUrl, STORAGE_KEYS } from '../constants/config';
+import { clearLectureCache, removeLectureCache } from '../utils/lectureCache';
 
 const SAF = LegacyFileSystem?.StorageAccessFramework || FileSystem?.StorageAccessFramework;
 
@@ -685,6 +686,8 @@ class ApiService {
     try {
       const key = await this.getUserScopedKey(STORAGE_KEYS.RECENT_LECTURES);
       await AsyncStorage.removeItem(key);
+      // Dọn luôn cache tóm tắt/mindmap/quiz để không hiện lại dữ liệu cũ.
+      await clearLectureCache();
       return true;
     } catch (e) {
       console.warn('Lỗi xóa local history:', e);
@@ -714,6 +717,9 @@ class ApiService {
     } catch (e) {
       console.warn('Lỗi xóa bài giảng trong local storage:', e);
     }
+
+    // 3. Xóa cache tóm tắt/quiz của riêng bài giảng này
+    await removeLectureCache(videoUrl);
 
     return true;
   }
@@ -1048,6 +1054,86 @@ class ApiService {
 
     const safeTitle = (lecture.title || 'lecture_summary').replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_').substring(0, 30);
     return this.exportFile(`${safeTitle}_Summary.txt`, text, 'text/plain');
+  }
+
+  // --- Xuất tài liệu bài giảng từ backend (PDF / DOCX / Markdown) ---
+  async exportLectureDocument(lecture, format = 'pdf') {
+    const videoUrl = lecture?.video_url;
+    if (!videoUrl) {
+      throw new Error('Bài giảng chưa có đường dẫn video để xuất tài liệu.');
+    }
+
+    const fmt = String(format || 'pdf').toLowerCase();
+    const formats = {
+      pdf: {
+        ext: 'pdf',
+        mime: 'application/pdf',
+        label: 'PDF',
+      },
+      docx: {
+        ext: 'docx',
+        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        label: 'Word',
+      },
+      md: {
+        ext: 'md',
+        mime: 'text/markdown',
+        label: 'Markdown',
+      },
+    };
+    const meta = formats[fmt];
+    if (!meta) {
+      throw new Error('Định dạng xuất không hợp lệ (chỉ hỗ trợ pdf, docx, md).');
+    }
+
+    const baseUrl = await this.getBaseUrl();
+    const url = `${baseUrl}/api/export?video_url=${encodeURIComponent(videoUrl)}&format=${fmt}`;
+    const headers = await this.getAuthHeaders();
+    const safeTitle = (lecture?.title || 'bai_giang')
+      .replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_')
+      .substring(0, 40);
+    const filename = `${safeTitle}.${meta.ext}`;
+
+    // Web: tải blob trực tiếp trong trình duyệt.
+    if (Platform.OS === 'web') {
+      const response = await fetch(url, { headers });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(detail?.detail || `Máy chủ trả về lỗi ${response.status}`);
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objectUrl);
+      return { success: true, isDefault: false, format: fmt };
+    }
+
+    // Mobile: tải file có kèm Authorization rồi lưu vào thư mục mặc định / share sheet.
+    const downloadAsync = FileSystem.downloadAsync || LegacyFileSystem.downloadAsync;
+    const cacheDirectory = FileSystem.cacheDirectory || LegacyFileSystem.cacheDirectory;
+    if (typeof downloadAsync !== 'function' || !cacheDirectory) {
+      throw new Error('Thiết bị không hỗ trợ tải tài liệu từ máy chủ.');
+    }
+
+    const tempUri = `${cacheDirectory}lecture_${Date.now()}.${meta.ext}`;
+    const download = await downloadAsync(url, tempUri, { headers });
+    if (!download || download.status !== 200) {
+      try {
+        await (FileSystem.deleteAsync || LegacyFileSystem.deleteAsync)(tempUri, {
+          idempotent: true,
+        });
+      } catch (_) {}
+      throw new Error(
+        `Máy chủ trả về lỗi ${download?.status || 'không xác định'} khi tạo ${meta.label}.`
+      );
+    }
+
+    return this.exportBinaryFile(filename, download.uri || tempUri, meta.mime);
   }
 
   // --- Xuất Video kèm phụ đề ghi cứng (Burn/Hardsub MP4 bằng FFmpeg) ---
