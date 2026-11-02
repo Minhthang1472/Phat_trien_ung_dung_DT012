@@ -363,6 +363,7 @@ xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL và các endpoint health/m
 | `POST` | `/api/subtitles/process` | Dịch & tạo trắc nghiệm từ file phụ đề tải lên (.srt, .vtt) | Bearer Token |
 | `POST` | `/api/video/burn-subtitles`| Nhúng (burn) phụ đề cứng trực tiếp vào video qua FFmpeg | Bearer Token |
 | `GET` | `/api/video/stream-status` | Theo dõi tiến độ job streaming nền | Bearer Token |
+| `POST` | `/api/media/token` | Cấp token ngắn hạn mới cho file `/uploads/...` thuộc sở hữu | Bearer Token |
 | `POST` | `/api/auth/extension-session` | Cấp phiên riêng cho từng bản cài extension (device-scoped) | Public |
 | `POST` | `/api/auth/ws-token` | Cấp token WebSocket ngắn hạn (1 giờ) | Bearer Token |
 | `GET` | `/api/export` | Xuất tài liệu bài giảng (`?video_url=...&format=pdf\|docx\|md`) | Bearer Token |

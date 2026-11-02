@@ -34,6 +34,17 @@ import {
   SubtitleListSection,
 } from '../components/player';
 
+// Gắn/thay media token trong URL /uploads/... mà không tạo query trùng lặp.
+function withMediaToken(src, token) {
+  if (!src || !token || !src.includes('/uploads/')) return src;
+  const [base, query = ''] = src.split('?');
+  const params = query
+    .split('&')
+    .filter((part) => part && !part.startsWith('access_token='));
+  params.push(`access_token=${encodeURIComponent(token)}`);
+  return `${base}?${params.join('&')}`;
+}
+
 export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, endTime }) {
   const effectiveStartTime = initialSeekTime || lecture?.start_time || lecture?.initial_time || 0;
   const effectiveEndTime = endTime || lecture?.end_time || null;
@@ -45,6 +56,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
   const [isPlaying, setIsPlaying] = useState(false);
   const [burningSubtitles, setBurningSubtitles] = useState(false);
   const [burnedMediaUrl, setBurnedMediaUrl] = useState(null);
+  const [mediaToken, setMediaToken] = useState(lecture?.media_access_token || null);
   const [serverBaseUrl, setServerBaseUrl] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showCC, setShowCC] = useState(true);
@@ -107,6 +119,45 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
   useEffect(() => {
     apiService.getBaseUrl().then(setServerBaseUrl).catch(() => {});
   }, []);
+
+  // Media token sống ngắn hạn: xin mới khi mở player và tự gia hạn trước khi hết hạn.
+  useEffect(() => {
+    const source = burnedMediaUrl || lecture?.media_stream_url || lecture?.media_url || '';
+    if (!source || !source.includes('/uploads/')) {
+      setMediaToken(lecture?.media_access_token || null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timer = null;
+
+    const refresh = async () => {
+      try {
+        const uploadPath = `/uploads/${source.split('/uploads/')[1].split('?')[0]}`;
+        const data = await apiService.getMediaAccessToken(uploadPath);
+        if (cancelled || !data?.token) return;
+        setMediaToken(data.token);
+        const ttlSeconds = Number(data.expires_in) || 3600;
+        const delayMs = Math.max(60, ttlSeconds - 120) * 1000;
+        if (timer) clearTimeout(timer);
+        // Token mới được xin lại sớm hơn hạn 2 phút, tối đa mỗi 30 phút.
+        timer = setTimeout(refresh, Math.min(delayMs, 30 * 60 * 1000));
+      } catch (_) {
+        // Giữ token cũ (nếu có) và thử lại sau 5 phút.
+        if (!cancelled) {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(refresh, 5 * 60 * 1000);
+        }
+      }
+    };
+
+    setMediaToken(lecture?.media_access_token || null);
+    refresh();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [burnedMediaUrl, lecture?.media_access_token, lecture?.media_stream_url, lecture?.media_url]);
 
   // Lắng nghe cập nhật phụ đề song song ngầm (Task 7)
   useEffect(() => {
@@ -347,9 +398,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
       : null) ||
     backendProxyStreamUrl ||
     (lecture?.video_url && !lecture.video_url.startsWith('local_file://') ? lecture.video_url : null);
-  const mediaSrc = rawMediaSrc && lecture?.media_access_token && rawMediaSrc.includes('/uploads/')
-    ? `${rawMediaSrc}${rawMediaSrc.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(lecture.media_access_token)}`
-    : rawMediaSrc;
+  const mediaSrc = withMediaToken(rawMediaSrc, mediaToken);
 
   const isAudioOnly = Boolean(
     (lecture?.media_mime_type && lecture.media_mime_type.startsWith('audio/')) ||

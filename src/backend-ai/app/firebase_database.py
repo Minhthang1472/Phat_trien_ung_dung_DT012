@@ -61,6 +61,53 @@ class FirebaseService:
         """Băm URL thành ID cố định an toàn cho Firestore Document ID"""
         return hashlib.md5(video_url.strip().encode("utf-8")).hexdigest()
 
+    def register_media_owner(self, user_id: str, media_url: str) -> bool:
+        """Lưu quyền sở hữu file upload để cấp lại media token sau này."""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return False
+        try:
+            doc_id = self.get_document_id(f"{user_id}:{media_url}")
+            self.db.collection("media_owners").document(doc_id).set(
+                {
+                    "owner_id": user_id,
+                    "media_url": media_url,
+                    "created_at": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("Không lưu được quyền sở hữu media: %s", exc)
+            return False
+
+    def user_owns_media(self, user_id: str, media_url: str) -> bool:
+        """Kiểm tra file media thuộc sở hữu người dùng (bảng media_owners hoặc lectures)."""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return False
+        try:
+            doc_id = self.get_document_id(f"{user_id}:{media_url}")
+            if self.db.collection("media_owners").document(doc_id).get().exists:
+                return True
+        except Exception as exc:
+            logger.warning("Không đọc được media_owners: %s", exc)
+
+        try:
+            owned = list(
+                self.db.collection("lectures")
+                .where("owner_id", "==", user_id)
+                .where("media_url", "==", media_url)
+                .limit(1)
+                .stream()
+            )
+            return bool(owned)
+        except Exception as exc:
+            logger.error("Không kiểm tra được quyền sở hữu media: %s", exc)
+            return False
+
     def get_lecture_cache(self, video_url: str, owner_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Tra cứu bài giảng trong Firebase Firestore Cache (0.01s).

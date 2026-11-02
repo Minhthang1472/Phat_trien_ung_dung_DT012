@@ -109,6 +109,24 @@ class ApiService {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
+  // Xin media token ngắn hạn cho file upload (/uploads/...) của chính người dùng.
+  async getMediaAccessToken(mediaUrl) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/media/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(await this.getAuthHeaders()),
+      },
+      body: JSON.stringify({ media_url: mediaUrl }),
+    });
+    const data = await this.parseResponse(response);
+    if (!data || !data.token) {
+      throw new Error('Máy chủ không trả về media token.');
+    }
+    return data;
+  }
+
   async saveAuthSession(data) {
     try {
       if (Platform.OS !== 'web') await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_TOKEN, data.token);

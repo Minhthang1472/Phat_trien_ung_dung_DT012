@@ -22,6 +22,9 @@
     "default_popup": "popup.html",
     "default_title": "PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG"
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
   "content_scripts": [
     {
       "matches": [

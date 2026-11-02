@@ -77,7 +77,7 @@ class AuthService:
             "sub": user_id,
             "media_url": media_url,
             "type": "media",
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=settings.MEDIA_TOKEN_TTL_MINUTES),
         }, settings.JWT_SECRET, algorithm="HS256")
 
     @staticmethod

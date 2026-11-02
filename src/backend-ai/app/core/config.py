@@ -22,6 +22,9 @@ class Settings:
     FFMPEG_PATH: str = os.getenv("FFMPEG_PATH", "ffmpeg")
     JWT_SECRET: str = os.getenv("JWT_SECRET", "")
     JWT_EXPIRE_HOURS: int = int(os.getenv("JWT_EXPIRE_HOURS", "168"))
+    # Token ngắn hạn gắn vào URL media (/uploads/...). Đủ dài cho một buổi học,
+    # mobile sẽ tự xin token mới trước khi hết hạn.
+    MEDIA_TOKEN_TTL_MINUTES: int = int(os.getenv("MEDIA_TOKEN_TTL_MINUTES", "120"))
     GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
     SMTP_HOST: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
     SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))

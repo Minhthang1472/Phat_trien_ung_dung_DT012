@@ -365,28 +365,39 @@ class AudioService:
 
     @staticmethod
     def extract_audio_from_file(
-        file_bytes: bytes,
-        filename: str,
+        file_bytes: bytes = None,
+        filename: str = "upload.mp4",
         duration_limit_sec: int = None,
         start_time_sec: float = 0,
-        end_time_sec: float = None
+        end_time_sec: float = None,
+        source_path: str = None,
     ) -> dict:
         """
         Tiếp nhận file âm thanh/video upload trực tiếp từ máy (mp3, wav, mp4, m4a, flac...),
         hỗ trợ cắt mốc thời gian bắt đầu và kết thúc (Yêu cầu 4)
         và chuẩn hóa thành file WAV 16kHz Mono tối ưu cho mô hình Whisper.
+
+        ``source_path`` cho phép dùng file đã ghi ra đĩa (upload theo chunk) mà
+        không cần giữ thêm một bản trong RAM.
         """
         import subprocess
         import uuid
 
         temp_dir = tempfile.gettempdir()
         file_ext = os.path.splitext(filename)[1] or ".mp4"
-        raw_temp_path = os.path.join(temp_dir, f"raw_{uuid.uuid4().hex[:8]}{file_ext}")
         out_wav_path = os.path.join(temp_dir, f"proc_{uuid.uuid4().hex[:8]}.wav")
 
-        # Lưu file tạm từ bytes
-        with open(raw_temp_path, "wb") as f:
-            f.write(file_bytes)
+        if source_path and os.path.isfile(source_path):
+            raw_temp_path = source_path
+            delete_raw_temp = False
+        else:
+            if not file_bytes:
+                raise ValueError("Thiếu dữ liệu file để xử lý âm thanh.")
+            raw_temp_path = os.path.join(temp_dir, f"raw_{uuid.uuid4().hex[:8]}{file_ext}")
+            delete_raw_temp = True
+            # Lưu file tạm từ bytes
+            with open(raw_temp_path, "wb") as f:
+                f.write(file_bytes)
 
         # Chạy FFmpeg cắt đoạn và chuẩn hóa 16kHz mono
         cmd = ["ffmpeg", "-y"]
@@ -403,7 +414,7 @@ class AudioService:
             logger.info(f"Đang chuẩn hóa audio từ file upload: {filename} (Mốc: {start_time_sec or 0}s -> {end_time_sec or 'hết'})")
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         finally:
-            if os.path.exists(raw_temp_path):
+            if delete_raw_temp and os.path.exists(raw_temp_path):
                 try: os.remove(raw_temp_path)
                 except Exception: pass
 

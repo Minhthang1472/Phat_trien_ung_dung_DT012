@@ -1,4 +1,13 @@
 document.addEventListener("DOMContentLoaded", async () => {
+  // Escape mọi nội dung do AI sinh ra trước khi đưa vào innerHTML.
+  const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch]));
+
   // Mã hoá token bằng AES-GCM với khoá suy ra từ device_id của chính máy này.
   const cryptoUtil = {
     async deriveKey(keyText, usages) {
@@ -360,18 +369,18 @@ document.addEventListener("DOMContentLoaded", async () => {
       const groups = buildGroups();
       quizContent.innerHTML = groups.map((g) => {
         const cards = g.entries.map(({ q, i }) => {
-          const opts = (q.options || []).map(o => `<div class="quiz-opt">${o}</div>`).join("");
+          const opts = (q.options || []).map(o => `<div class="quiz-opt">${escapeHtml(o)}</div>`).join("");
           return `
             <div class="quiz-card">
-              <div class="quiz-q">${i + 1}. ${q.question}</div>
+              <div class="quiz-q">${i + 1}. ${escapeHtml(q.question)}</div>
               ${opts}
-              <div class="quiz-ans">✓ Đáp án: ${q.correct_answer || q.answer || "A"}</div>
+              <div class="quiz-ans">✓ Đáp án: ${escapeHtml(q.correct_answer || q.answer || "A")}</div>
             </div>`;
         }).join("");
         if (!g.section) return cards;
         const s = g.section;
         const meta = [`${formatTime(s.start_sec)} - ${formatTime(s.end_sec)}`, `${g.entries.length} câu`].filter(Boolean).join(" • ");
-        return `<div class="quiz-section"><div class="quiz-section-head"><div class="quiz-section-title">${s.title || "Phần nội dung"}</div><div class="quiz-section-meta">${meta}</div></div>${cards}</div>`;
+        return `<div class="quiz-section"><div class="quiz-section-head"><div class="quiz-section-title">${escapeHtml(s.title || "Phần nội dung")}</div><div class="quiz-section-meta">${escapeHtml(meta)}</div></div>${cards}</div>`;
       }).join("");
     } else {
       quizContent.innerHTML = "<p style='color:#8a90a6;font-weight:500;'>Không có câu hỏi ôn tập cho video này.</p>";

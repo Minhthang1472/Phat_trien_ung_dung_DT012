@@ -15,6 +15,17 @@
   let currentAudio = null;
   let activeBackendUrl = "http://127.0.0.1:8000";
 
+  // Phụ đề do AI sinh ra có thể chứa ký tự HTML; luôn escape trước khi render.
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[ch]));
+  }
+
   try {
     chrome.storage?.local?.get(["serverUrl"]).then((stored) => {
       if (stored && stored.serverUrl) activeBackendUrl = stored.serverUrl;
@@ -499,9 +510,9 @@ const stopSpeakingEffect = () => {
       const origText = matchingSeg.original_text || "";
 
       // TÁCH BIỆT 2 DÒNG THÀNH 2 KHỐI HOÀN TOÀN ĐỘC LẬP
-      let htmlContent = `<div class="lecture-ai-line-wrapper"><span class="lecture-ai-sub-line lecture-ai-main-sub" style="font-size: ${currentFontSize}px;">${transText}</span></div>`;
+      let htmlContent = `<div class="lecture-ai-line-wrapper"><span class="lecture-ai-sub-line lecture-ai-main-sub" style="font-size: ${Number(currentFontSize) || 20}px;">${escapeHtml(transText)}</span></div>`;
       if (isBilingual && origText && origText !== transText) {
-        htmlContent += `<div class="lecture-ai-line-wrapper"><span class="lecture-ai-sub-line lecture-ai-orig-sub" title="Bôi đen chữ hoặc nhấp đúp để nghe phát âm">${origText}</span></div>`;
+        htmlContent += `<div class="lecture-ai-line-wrapper"><span class="lecture-ai-sub-line lecture-ai-orig-sub" title="Bôi đen chữ hoặc nhấp đúp để nghe phát âm">${escapeHtml(origText)}</span></div>`;
       }
 
       overlayBox.innerHTML = htmlContent;

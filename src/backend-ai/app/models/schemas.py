@@ -96,6 +96,10 @@ class UpdateProfileRequest(BaseModel):
     email_otp: Optional[str] = None
 
 
+class MediaTokenRequest(BaseModel):
+    media_url: str = Field(..., description="Đường dẫn file media (/uploads/... hoặc URL đầy đủ)")
+
+
 class ProcessVideoResponse(BaseModel):
     video_url: str
     media_url: Optional[str] = None

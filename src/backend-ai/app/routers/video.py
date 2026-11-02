@@ -31,6 +31,7 @@ from app.models.schemas import (
     SubtitleSegment,
     LookaheadSubtitleRequest,
     BurnSubtitlesRequest,
+    MediaTokenRequest,
 )
 from app.services.audio_service import audio_service
 from app.services.whisper_service import whisper_service
@@ -56,28 +57,157 @@ from app.core.dependencies import (
 
 router = APIRouter(tags=["video"])
 
+MAX_MEDIA_UPLOAD_SIZE = 150 * 1024 * 1024  # 150MB
+MAX_SUBTITLE_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+UPLOAD_CHUNK_SIZE = 1024 * 1024  # Đọc/ghi từng 1MB để không nạp cả file vào RAM
+ALLOWED_MEDIA_EXTENSIONS = (
+    ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v",
+    ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"
+)
+
+
+def _format_size_mb(size_bytes: int) -> str:
+    return f"{size_bytes / (1024 * 1024):.1f}MB"
+
+
+def _normalize_media_url(media_url: str) -> str:
+    """Chuẩn hoá URL media về dạng /uploads/<tên file>, chặn path traversal."""
+    raw = (media_url or "").strip()
+    if "/uploads/" in raw:
+        raw = "/uploads/" + raw.split("/uploads/", 1)[1]
+    raw = raw.split("?", 1)[0].split("#", 1)[0]
+    prefix = "/uploads/"
+    if not raw.startswith(prefix):
+        raise HTTPException(
+            status_code=400,
+            detail="Chỉ hỗ trợ file media đã tải lên hệ thống (/uploads/...).",
+        )
+    name = os.path.basename(raw)
+    if not name or name != raw[len(prefix):]:
+        raise HTTPException(status_code=400, detail="Đường dẫn media không hợp lệ.")
+    return f"{prefix}{name}"
+
+
+def _resolve_upload_path(media_url: str) -> str:
+    name = os.path.basename(media_url)
+    upload_root = os.path.abspath(UPLOAD_DIR)
+    file_path = os.path.abspath(os.path.join(UPLOAD_DIR, name))
+    if not file_path.startswith(upload_root + os.sep) or not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Không tìm thấy file media.")
+    return file_path
+
+
+def _ensure_media_owner(user_id: str, media_url: str) -> None:
+    """Chỉ chủ sở hữu bài giảng mới được xin token cho file upload."""
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+    if not firebase_service.user_owns_media(user_id, media_url):
+        raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập file này.")
+
+
+async def _read_upload_limited(
+    file: UploadFile,
+    max_bytes: int,
+    empty_detail: str,
+    limit_label: str,
+) -> bytes:
+    """Đọc upload theo chunk và dừng ngay khi vượt giới hạn."""
+    declared = getattr(file, "size", None)
+    if declared is not None and declared > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Dung lượng file ({_format_size_mb(declared)}) vượt quá giới hạn {limit_label}.",
+        )
+    chunks = []
+    total = 0
+    while True:
+        chunk = await file.read(UPLOAD_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Dung lượng file vượt quá giới hạn {limit_label}. Vui lòng chọn file nhỏ hơn.",
+            )
+        chunks.append(chunk)
+    if total == 0:
+        raise HTTPException(status_code=400, detail=empty_detail)
+    return b"".join(chunks)
+
+
+async def _save_upload_limited(
+    file: UploadFile,
+    dest_path: str,
+    max_bytes: int,
+    limit_label: str,
+    empty_detail: str,
+) -> int:
+    """Ghi upload ra đĩa theo chunk, xoá file dở dang nếu vượt giới hạn."""
+    declared = getattr(file, "size", None)
+    if declared is not None and declared > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Dung lượng file ({_format_size_mb(declared)}) vượt quá giới hạn {limit_label}.",
+        )
+    total = 0
+    try:
+        with open(dest_path, "wb") as out:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Dung lượng file vượt quá giới hạn {limit_label}. Vui lòng chọn file nhỏ hơn.",
+                    )
+                out.write(chunk)
+        if total == 0:
+            raise HTTPException(status_code=400, detail=empty_detail)
+    except Exception:
+        try:
+            os.remove(dest_path)
+        except OSError:
+            pass
+        raise
+    return total
+
+
+@router.post("/api/media/token")
+async def issue_media_token(
+    request: MediaTokenRequest,
+    user=Depends(get_current_user),
+    _limit=Depends(heavy_rate_limit),
+):
+    """Cấp media token mới cho file upload thuộc sở hữu của người dùng."""
+    media_url = _normalize_media_url(request.media_url)
+    _resolve_upload_path(media_url)
+    _ensure_media_owner(user["id"], media_url)
+    token = auth_service.create_media_token(user["id"], media_url)
+    return {
+        "media_url": media_url,
+        "token": token,
+        "expires_in": settings.MEDIA_TOKEN_TTL_MINUTES * 60,
+    }
+
+
 @router.get("/uploads/{filename}")
 async def serve_uploaded_media(filename: str, access_token: Optional[str] = Query(None), user=Depends(get_optional_user)):
     if not access_token and not user:
         raise HTTPException(status_code=401, detail="Vui lòng đăng nhập để truy cập file.")
     safe_name = os.path.basename(filename)
-    file_path = os.path.abspath(os.path.join(UPLOAD_DIR, safe_name))
-    upload_root = os.path.abspath(UPLOAD_DIR)
-    if not file_path.startswith(upload_root + os.sep) or not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="Không tìm thấy file media.")
+    file_path = _resolve_upload_path(f"/uploads/{safe_name}")
     media_url = f"/uploads/{safe_name}"
     if access_token:
         claims = auth_service.decode_media_token(access_token)
         if claims.get("media_url") != media_url:
             raise HTTPException(status_code=403, detail="Media token không khớp file.")
     else:
-        if not firebase_service.db:
-            firebase_service.init_firebase()
-        if not firebase_service.db:
-            raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
-        owned = list(firebase_service.db.collection("lectures").where("owner_id", "==", user["id"]).where("media_url", "==", media_url).limit(1).stream())
-        if not owned:
-            raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập file này.")
+        _ensure_media_owner(user["id"], media_url)
     return FileResponse(file_path)
 
 
@@ -477,11 +607,6 @@ async def upload_video(
         cancelled_jobs.discard(job_id)
         raise HTTPException(status_code=499, detail="Tác vụ đã bị người dùng hủy ngang.")
 
-    MAX_MEDIA_UPLOAD_SIZE = 150 * 1024 * 1024  # 150MB
-    ALLOWED_MEDIA_EXTENSIONS = (
-        ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v",
-        ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"
-    )
     saved_file_path = None
     try:
         safe_fname = os.path.basename(file.filename or "lecture.mp4")
@@ -491,26 +616,23 @@ async def upload_video(
                 detail="Chỉ hỗ trợ file video hoặc ghi âm (.mp4, .mov, .mkv, .webm, .avi, .mp3, .wav, .m4a)."
             )
 
-        contents = await file.read()
-        if not contents or len(contents) == 0:
-            raise HTTPException(status_code=400, detail="File tải lên bị rỗng. Vui lòng chọn file hợp lệ.")
-        if len(contents) > MAX_MEDIA_UPLOAD_SIZE:
-            size_mb = len(contents) / (1024 * 1024)
-            raise HTTPException(
-                status_code=413,
-                detail=f"Dung lượng file ({size_mb:.1f}MB) vượt quá giới hạn 150MB. Vui lòng nén file hoặc chọn file nhỏ hơn."
-            )
-
-        # Lưu file để có thể phát trực tiếp trên Web / App
+        # Lưu file theo chunk để có thể phát trực tiếp trên Web / App mà không
+        # nạp toàn bộ nội dung vào RAM trước khi kiểm tra dung lượng.
         unique_name = f"{uuid.uuid4().hex[:12]}_{safe_fname}"
         saved_file_path = os.path.join(UPLOAD_DIR, unique_name)
-        with open(saved_file_path, "wb") as f_saved:
-            f_saved.write(contents)
+        await _save_upload_limited(
+            file,
+            saved_file_path,
+            MAX_MEDIA_UPLOAD_SIZE,
+            "150MB",
+            "File tải lên bị rỗng. Vui lòng chọn file hợp lệ.",
+        )
         media_stream_url = f"/uploads/{unique_name}"
 
         audio_info = audio_service.extract_audio_from_file(
-            file_bytes=contents,
+            file_bytes=None,
             filename=file.filename or "upload_audio.mp4",
+            source_path=saved_file_path,
             duration_limit_sec=max_duration_seconds,
             start_time_sec=start_time or 0,
             end_time_sec=end_time
@@ -591,6 +713,7 @@ async def upload_video(
     result = {
         "video_url": f"local_file://{file.filename}",
         "media_url": media_stream_url,
+        "media_access_token": auth_service.create_media_token(user["id"], media_stream_url),
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],
         "language": target_lang,
@@ -613,6 +736,7 @@ async def upload_video(
 
     # Lưu vào Firebase Firestore làm kho lưu vĩnh cửu
     firebase_service.save_lecture_cache(result["video_url"], result)
+    firebase_service.register_media_owner(user["id"], media_stream_url)
 
     if job_id:
         cancelled_jobs.discard(job_id)
@@ -686,6 +810,7 @@ async def burn_subtitles_into_video(request: BurnSubtitlesRequest, user=Depends(
             except OSError:
                 pass
 
+    firebase_service.register_media_owner(user["id"], f"/uploads/{output_name}")
     return {
         "media_url": f"/uploads/{output_name}",
         "media_access_token": auth_service.create_media_token(user["id"], f"/uploads/{output_name}"),
@@ -710,9 +835,12 @@ async def process_subtitle_file(
     if not filename.lower().endswith((".srt", ".vtt")):
         raise HTTPException(status_code=400, detail="Chi ho tro tep phu de .srt hoac .vtt.")
 
-    content = await file.read()
-    if not content or len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Tep phu de trong hoac vuot qua 10 MB.")
+    content = await _read_upload_limited(
+        file,
+        MAX_SUBTITLE_UPLOAD_SIZE,
+        "Tep phu de trong hoac vuot qua 10 MB.",
+        "10MB",
+    )
 
     segments = parse_subtitle(content)
     if not segments:
@@ -867,9 +995,12 @@ async def pair_video_and_subtitles(
     if not sub_fname.lower().endswith((".srt", ".vtt")):
         raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file phụ đề định dạng .srt hoặc .vtt.")
 
-    sub_bytes = await subtitle_file.read()
-    if not sub_bytes or len(sub_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Tệp phụ đề rỗng hoặc vượt quá giới hạn 10MB.")
+    sub_bytes = await _read_upload_limited(
+        subtitle_file,
+        MAX_SUBTITLE_UPLOAD_SIZE,
+        "Tệp phụ đề rỗng hoặc vượt quá giới hạn 10MB.",
+        "10MB",
+    )
 
     segments = parse_subtitle(sub_bytes)
     if not segments:
@@ -880,13 +1011,20 @@ async def pair_video_and_subtitles(
 
     if video_file:
         v_name = os.path.basename(video_file.filename or "paired_lecture.mp4")
-        v_bytes = await video_file.read()
-        if len(v_bytes) > 150 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="File video tải kèm vượt quá giới hạn 150MB.")
+        if not v_name.lower().endswith(ALLOWED_MEDIA_EXTENSIONS):
+            raise HTTPException(
+                status_code=415,
+                detail="Chỉ hỗ trợ file video hoặc ghi âm (.mp4, .mov, .mkv, .webm, .avi, .mp3, .wav, .m4a)."
+            )
         unique_name = f"{uuid.uuid4().hex[:12]}_{v_name}"
         saved_path = os.path.join(UPLOAD_DIR, unique_name)
-        with open(saved_path, "wb") as f_v:
-            f_v.write(v_bytes)
+        await _save_upload_limited(
+            video_file,
+            saved_path,
+            MAX_MEDIA_UPLOAD_SIZE,
+            "150MB",
+            "File video tải kèm bị rỗng.",
+        )
         media_stream_url = f"/uploads/{unique_name}"
         lecture_url = f"local_file://{v_name}"
 
@@ -917,6 +1055,10 @@ async def pair_video_and_subtitles(
     result = {
         "video_url": lecture_url,
         "media_url": media_stream_url,
+        "media_access_token": (
+            auth_service.create_media_token(user["id"], media_stream_url)
+            if media_stream_url else None
+        ),
         "title": final_title,
         "duration_seconds": max_duration,
         "language": target_lang,
@@ -936,6 +1078,8 @@ async def pair_video_and_subtitles(
     }
 
     firebase_service.save_lecture_cache(lecture_url, result)
+    if media_stream_url:
+        firebase_service.register_media_owner(user["id"], media_stream_url)
     return result
 
 
