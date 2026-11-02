@@ -1,0 +1,32 @@
+rules_version = '2';
+
+// Toàn bộ dữ liệu nghiệp vụ được đọc/ghi qua backend FastAPI bằng Firebase
+// Admin SDK (bỏ qua security rules). Trình duyệt và mobile chỉ được đọc tài
+// liệu cấu hình máy chủ công khai; mọi truy cập trực tiếp khác đều bị chặn.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Cấu hình API base URL dùng chung cho extension và mobile.
+    match /system_config/server {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Tài khoản, bài giảng và quyền sở hữu media: chỉ backend truy cập.
+    match /users/{userId} {
+      allow read, write: if false;
+    }
+
+    match /lectures/{lectureId} {
+      allow read, write: if false;
+    }
+
+    match /media_owners/{ownerId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

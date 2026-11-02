@@ -285,7 +285,11 @@ pytest
 ```
 
 Bộ test bao phủ: băm/giải mã JWT, parser SRT/WebVTT, chuẩn hóa quiz/mindmap,
-xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL và các endpoint health/metrics.
+xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL, health/readiness, SSRF, phân
+quyền cache theo `owner_id`, media token và giới hạn upload (70 test).
+
+GitHub Actions chạy thêm kiểm tra manifest extension, `expo-doctor`,
+`expo export --platform web` và build Docker image.
 
 ---
 
@@ -321,6 +325,47 @@ xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL và các endpoint health/m
      npm start
      ```
      Mở ứng dụng **Expo Go** trên điện thoại, quét mã QR hiển thị trên màn hình terminal để chạy ứng dụng trực tiếp trên thiết bị di động.
+
+---
+
+### ĐÓNG GÓI ỨNG DỤNG DI ĐỘNG (EAS BUILD)
+
+`app.json` đã khai báo định danh phát hành `com.edtechai.lecture` cho cả
+Android (`android.package`, `versionCode`) và iOS (`ios.bundleIdentifier`,
+`buildNumber`). Cấu hình build nằm trong `eas.json`:
+
+```powershell
+npm install -g eas-cli
+eas login
+eas build --profile preview --platform android   # APK cài trực tiếp
+eas build --profile production --platform all     # AAB/IPA cho store
+```
+
+* `development`: development client dùng khi cần debug native.
+* `preview`: APK nội bộ để cài thử trên máy thật.
+* `production`: AAB/IPA và tự tăng `versionCode`/`buildNumber`.
+
+> `cli.appVersionSource` đặt là `local`, nên phiên bản trong `app.json` là
+> nguồn duy nhất; profile production tự tăng số build mỗi lần chạy.
+
+---
+
+### TRIỂN KHAI FIRESTORE SECURITY RULES
+
+`firestore.rules` chặn toàn bộ truy cập trực tiếp từ trình duyệt/mobile; chỉ
+tài liệu `system_config/server` được đọc công khai. Backend dùng Firebase Admin
+SDK nên bỏ qua rules và vẫn hoạt động bình thường.
+
+```powershell
+npm install -g firebase-tools
+firebase login
+firebase deploy --only firestore:rules --project ptud-dt012
+```
+
+Workflow `.github/workflows/deploy-firestore-rules.yml` tự deploy khi
+`firestore.rules` thay đổi trên nhánh `main`, với điều kiện repo đã cấu hình
+secret `FIREBASE_SERVICE_ACCOUNT` (JSON service account có quyền Firebase
+Rules Admin).
 
 ---
 

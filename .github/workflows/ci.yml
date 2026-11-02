@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  extension-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-extension.mjs
+
+  mobile-checks:
+    runs-on: ubuntu-latest
+    env:
+      CI: '1'
+    defaults:
+      run:
+        working-directory: src/mobile-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/mobile-app/package-lock.json
+      - run: npm ci
+      - run: npx expo-doctor
+      - run: npx expo export --platform web --output-dir .expo-web-check
+      - run: rm -rf .expo-web-check
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: src/backend-ai
+          push: false
+          tags: lecture-ai-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
