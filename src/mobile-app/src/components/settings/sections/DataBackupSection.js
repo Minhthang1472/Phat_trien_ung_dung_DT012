@@ -8,6 +8,7 @@ import SectionHeading from './SectionHeading';
 export default function DataBackupSection({
   handleClearHistory,
   handleImport,
+  handleExportAccountData,
   styles,
 }) {
   return (
@@ -52,6 +53,21 @@ export default function DataBackupSection({
         <View style={styles.actionTextCol}>
           <Text style={styles.actionBtnText}>Xuất file cấu hình cá nhân</Text>
           <Text style={styles.actionBtnDesc}>Bao gồm bộ từ vựng, mốc thời gian và cài đặt</Text>
+        </View>
+        <Icon name="chevronRight" size={20} color={colors.muted} />
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.actionBtn}
+        onPress={handleExportAccountData}
+        activeOpacity={0.7}
+      >
+        <View style={[styles.actionIconWrap, { backgroundColor: colors.mintSoft }]}>
+          <Icon name="download" size={18} color={colors.mintDeep} />
+        </View>
+        <View style={styles.actionTextCol}>
+          <Text style={styles.actionBtnText}>Tải toàn bộ dữ liệu cá nhân</Text>
+          <Text style={styles.actionBtnDesc}>Bài giảng, phụ đề, quiz và media dạng JSON</Text>
         </View>
         <Icon name="chevronRight" size={20} color={colors.muted} />
       </TouchableOpacity>

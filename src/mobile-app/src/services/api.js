@@ -287,6 +287,44 @@ class ApiService {
     await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_USER);
   }
 
+  // Tải toàn bộ dữ liệu cá nhân (bài giảng, media, hồ sơ) dưới dạng JSON.
+  async exportAccountData() {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/export-data`, {
+      headers: await this.getAuthHeaders(),
+    });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      throw new Error(detail?.detail || `Lỗi HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    const stamp = new Date().toISOString().slice(0, 10);
+    return this.exportFile(
+      `lecture-ai-data-${stamp}.json`,
+      JSON.stringify(data, null, 2),
+      'application/json'
+    );
+  }
+
+  // Xoá tài khoản sau khi xác nhận mật khẩu; backend xoá luôn bài giảng và media.
+  async deleteAccount(password) {
+    const baseUrl = await this.getBaseUrl();
+    const response = await fetch(`${baseUrl}/api/auth/account`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(await this.getAuthHeaders()),
+      },
+      body: JSON.stringify({ password }),
+    });
+    const data = await this.parseResponse(response);
+    await this.logout();
+    try {
+      await clearLectureCache();
+    } catch (_) {}
+    return data;
+  }
+
   async exportUserConfig() {
     const keys = [
       STORAGE_KEYS.SERVER_URL,

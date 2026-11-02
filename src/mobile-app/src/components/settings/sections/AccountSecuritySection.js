@@ -7,6 +7,7 @@ import SectionHeading from './SectionHeading';
 export default function AccountSecuritySection({
   user,
   onOpenChangePassword,
+  onOpenDeleteAccount,
   handleLogout,
   styles,
 }) {
@@ -37,6 +38,20 @@ export default function AccountSecuritySection({
       >
         <Icon name="logout" size={17} color={colors.coralDeep} />
         <Text style={styles.logoutBtnText}>Đăng xuất khỏi tài khoản</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[
+          styles.logoutBtn,
+          { backgroundColor: colors.errorSoft, borderColor: colors.error },
+        ]}
+        onPress={onOpenDeleteAccount}
+        activeOpacity={0.7}
+      >
+        <Icon name="delete" size={17} color={colors.error} />
+        <Text style={[styles.logoutBtnText, { color: colors.error }]}>
+          Xoá tài khoản vĩnh viễn
+        </Text>
       </TouchableOpacity>
     </>
   );

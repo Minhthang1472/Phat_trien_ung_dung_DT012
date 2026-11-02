@@ -387,6 +387,7 @@ Rules Admin).
 * **Tab Hồ sơ:** Theo dõi cấp bậc học viên, tích lũy điểm kinh nghiệm (EXP) và quản lý tài khoản cá nhân.
 * **Xuất tài liệu:** Nút **Tài liệu** cho phép lưu bản tóm tắt dạng văn bản (`.txt`) hoặc gọi máy chủ dựng **PDF / Word (.docx) / Markdown** có bìa, mục lục và bảng phụ đề song ngữ.
 * **Bộ nhớ đệm ngoại tuyến:** Tóm tắt, mindmap và quiz được lưu bằng `AsyncStorage`; mục **Cài đặt → Quản lý dữ liệu** xoá đồng thời lịch sử và cache. Extension dùng `IndexedDB` và có nút **Xoá bộ nhớ đệm bài giảng** trong popup.
+* **Quyền riêng tư dữ liệu:** Tại **Cài đặt → Dữ liệu & sao lưu** có thể tải toàn bộ dữ liệu cá nhân dạng JSON; mục **Bảo mật tài khoản** cho phép xoá vĩnh viễn tài khoản cùng bài giảng, media sau khi xác nhận mật khẩu.
 
 ---
 

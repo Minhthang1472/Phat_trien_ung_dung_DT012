@@ -17,6 +17,7 @@ import AuraBackground from '../components/ui/AuraBackground';
 import {
   styles,
   ChangePasswordModal,
+  DeleteAccountModal,
   SystemInfoModal,
   LegalInfoModal,
   StorageSection,
@@ -42,6 +43,12 @@ export default function SettingsScreen({ onNavigate }) {
   const [changeLoading, setChangeLoading] = useState(false);
   const [changeMsg, setChangeMsg] = useState('');
   const [changeError, setChangeError] = useState('');
+
+  // States cho Popup Xoá tài khoản
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   // States cho Popup Thông tin hệ thống & Thông tin pháp lý
   const [systemInfoVisible, setSystemInfoVisible] = useState(false);
@@ -220,6 +227,52 @@ export default function SettingsScreen({ onNavigate }) {
     }
   };
 
+  const handleExportAccountData = async () => {
+    try {
+      const result = await apiService.exportAccountData();
+      if (!result?.cancelled) {
+        Alert.alert(
+          'Đã xuất dữ liệu',
+          'File JSON chứa toàn bộ bài giảng và media của bạn đã sẵn sàng.'
+        );
+      }
+    } catch (error) {
+      Alert.alert('Không thể xuất dữ liệu', error.message || 'Vui lòng thử lại sau.');
+    }
+  };
+
+  const openDeleteAccount = () => {
+    setDeletePassword('');
+    setDeleteError('');
+    setDeleteModalVisible(true);
+  };
+
+  const confirmDeleteAccount = async () => {
+    if (!deletePassword) {
+      setDeleteError('Vui lòng nhập mật khẩu để xác nhận xoá tài khoản.');
+      return;
+    }
+    setDeleteLoading(true);
+    setDeleteError('');
+    try {
+      await apiService.deleteAccount(deletePassword);
+      setDeleteModalVisible(false);
+      setDeletePassword('');
+      setUser(null);
+      Alert.alert(
+        'Đã xoá tài khoản',
+        'Tài khoản và toàn bộ dữ liệu liên quan đã được xoá khỏi máy chủ.'
+      );
+      if (onNavigate) {
+        onNavigate('Profile');
+      }
+    } catch (error) {
+      setDeleteError(error.message || 'Không thể xoá tài khoản. Vui lòng thử lại.');
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   const handleLogout = () => {
     if (Platform.OS === 'web') {
       const confirmed =
@@ -281,6 +334,7 @@ export default function SettingsScreen({ onNavigate }) {
             <DataBackupSection
               handleClearHistory={handleClearHistory}
               handleImport={handleImport}
+              handleExportAccountData={handleExportAccountData}
               styles={styles}
             />
 
@@ -298,6 +352,7 @@ export default function SettingsScreen({ onNavigate }) {
                 setChangeError('');
               }}
               handleLogout={handleLogout}
+              onOpenDeleteAccount={openDeleteAccount}
               styles={styles}
             />
 
@@ -326,6 +381,21 @@ export default function SettingsScreen({ onNavigate }) {
         changeMsg={changeMsg}
         changeError={changeError}
         onSubmit={handleChangePassword}
+        styles={styles}
+      />
+
+      <DeleteAccountModal
+        visible={deleteModalVisible}
+        onClose={() => {
+          setDeleteModalVisible(false);
+          setDeletePassword('');
+          setDeleteError('');
+        }}
+        password={deletePassword}
+        setPassword={setDeletePassword}
+        loading={deleteLoading}
+        error={deleteError}
+        onSubmit={confirmDeleteAccount}
         styles={styles}
       />
 
