@@ -12,6 +12,7 @@ from app.models.schemas import (
     RegisterRequest,
     LoginRequest,
     GoogleLoginRequest,
+    ExtensionSessionRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
     VerifyOtpRequest,
@@ -140,6 +141,44 @@ async def login(request: LoginRequest, _limit=Depends(auth_rate_limit)):
                 user_ref.update({"email_verified": True})
         else:
             raise HTTPException(status_code=403, detail="Hãy xác minh email trước khi đăng nhập.")
+
+    return {"token": auth_service.create_token(user), "user": user_public_data(user)}
+
+
+@router.post("/extension-session")
+async def extension_session(request: ExtensionSessionRequest, _limit=Depends(auth_rate_limit)):
+    """Cấp phiên riêng cho từng bản cài extension, không dùng tài khoản dùng chung.
+
+    Client sinh một device_id ngẫu nhiên (VD: crypto.randomUUID()) và lưu cục bộ.
+    Server ánh xạ device_id -> user ẩn, nhờ vậy mỗi bản cài có dữ liệu tách biệt
+    và có thể thu hồi bằng cách xoá user tương ứng.
+    """
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng để tạo phiên extension.")
+
+    device_id = request.device_id.strip()
+    digest = hashlib.sha256(f"extension:{device_id}".encode("utf-8")).hexdigest()
+    user_id = f"ext_{digest[:40]}"
+    user_ref = firebase_service.db.collection("users").document(user_id)
+    doc = user_ref.get()
+
+    if doc.exists:
+        user = doc.to_dict()
+        if not user.get("id"):
+            user["id"] = user_id
+    else:
+        user = {
+            "id": user_id,
+            "username": user_id,
+            "email": f"{user_id}@extension.local",
+            "display_name": "Extension User",
+            "auth_provider": "extension",
+            "email_verified": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        user_ref.set(user)
 
     return {"token": auth_service.create_token(user), "user": user_public_data(user)}
 

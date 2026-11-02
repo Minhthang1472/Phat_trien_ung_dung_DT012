@@ -46,6 +46,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ExtensionSessionRequest(BaseModel):
+    device_id: str = Field(
+        ...,
+        min_length=16,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="Mã thiết bị ngẫu nhiên do extension sinh ra và lưu cục bộ",
+    )
+
+
 class GoogleLoginRequest(BaseModel):
     id_token: str = Field(..., min_length=20)
 

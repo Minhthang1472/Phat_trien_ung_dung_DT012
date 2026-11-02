@@ -21,6 +21,7 @@ import { SUPPORTED_LANGUAGES } from '../constants/config';
 import { apiService } from '../services/api';
 import { streakService } from '../services/streakService';
 import { notificationService } from '../services/notificationService';
+import { saveLectureCache, loadLectureCache } from '../utils/lectureCache';
 import Header from '../components/Header';
 import LectureCard from '../components/LectureCard';
 import AuraBackground from '../components/ui/AuraBackground';
@@ -515,6 +516,7 @@ export default function HomeScreen({ onNavigate }) {
       if (parsedStart > 0) result.start_time = parsedStart;
       if (parsedEnd > 0) result.end_time = parsedEnd;
       await apiService.saveLectureToLocal(result);
+      if (result?.video_url) await saveLectureCache(result.video_url, result);
       setRecentLectures((prev) => {
         const filtered = (prev || []).filter((l) => l.video_url !== result.video_url);
         return [ensureAiClassification(result), ...filtered];
@@ -561,20 +563,28 @@ export default function HomeScreen({ onNavigate }) {
     } else if (lecture.segments && lecture.segments.length > 0) {
       onNavigate('SyncPlayer', { lecture, initialSeekTime, endTime: lecture.end_time || null });
     } else {
-      // Gọi API tải dữ liệu chi tiết
+      // Ưu tiên bộ nhớ đệm cục bộ, sau đó mới gọi Cloud Cache
       setLoading(true);
-      setLoadingStep('Đang tải bài giảng từ Cloud Cache...');
-      apiService
-        .processVideo(lecture.video_url, lecture.language || 'vi')
-        .then((fullData) => {
+      setLoadingStep('Đang tải bài giảng từ bộ nhớ đệm...');
+      (async () => {
+        const cached = lecture.video_url ? await loadLectureCache(lecture.video_url) : null;
+        if (cached) {
+          setLoading(false);
+          onNavigate('SyncPlayer', { lecture: { ...lecture, ...cached }, initialSeekTime });
+          return;
+        }
+
+        try {
+          const fullData = await apiService.processVideo(lecture.video_url, lecture.language || 'vi');
+          if (fullData?.video_url) await saveLectureCache(fullData.video_url, fullData);
           setLoading(false);
           onNavigate('SyncPlayer', { lecture: fullData, initialSeekTime });
-        })
-        .catch(() => {
+        } catch (_) {
           setLoading(false);
           // Fallback dùng sample
           onNavigate('SyncPlayer', { lecture: SAMPLE_LECTURES[0], initialSeekTime });
-        });
+        }
+      })();
     }
   };
 
@@ -821,6 +831,7 @@ export default function HomeScreen({ onNavigate }) {
         setUploadProgress(null);
         setPendingUploadFile(null);
         await apiService.saveLectureToLocal(data);
+        if (data?.video_url) await saveLectureCache(data.video_url, data);
         await checkHealthAndFetchHistory();
         onNavigate('SyncPlayer', { lecture: data });
       }, 700);
@@ -877,6 +888,7 @@ export default function HomeScreen({ onNavigate }) {
         includeQuiz,
       });
       setLoading(false);
+      if (data?.video_url) await saveLectureCache(data.video_url, data);
       await checkHealthAndFetchHistory();
       onNavigate('SyncPlayer', { lecture: data });
     } catch (err) {

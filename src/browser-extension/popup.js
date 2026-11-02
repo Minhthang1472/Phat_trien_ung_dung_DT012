@@ -1,44 +1,33 @@
 document.addEventListener("DOMContentLoaded", async () => {
-  // Encryption utility for extension_token
+  // Mã hoá token bằng AES-GCM với khoá suy ra từ device_id của chính máy này.
   const cryptoUtil = {
-    async encrypt(text, key) {
+    async deriveKey(keyText, usages) {
       const encoder = new TextEncoder();
-      const data = encoder.encode(text);
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const hash = await crypto.subtle.digest('SHA-256', encoder.encode(key));
-      const salt = crypto.getRandomValues(new Uint8Array(16));
-      const ivWithSalt = new Uint8Array(iv.length + salt.length);
-      ivWithSalt.set(iv, 0);
-      ivWithSalt.set(salt, iv.length);
-      
-      const ciphertext = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv: ivWithSalt },
-        hash,
-        data
-      );
-      
-      return btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
+      const digest = await crypto.subtle.digest('SHA-256', encoder.encode(keyText));
+      return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, usages);
     },
-    
-    async decrypt(text, key) {
-      const decoder = new TextDecoder();
-      const data = Uint8Array.from(atob(text), c => c.charCodeAt(0));
-      const iv = data.slice(0, 12);
-      const salt = data.slice(12, 12 + 16);
-      
-      const hash = await crypto.subtle.digest('SHA-256', encoder.encode(key));
-      
-      const ivWithSalt = new Uint8Array(iv.length + salt.length);
-      ivWithSalt.set(iv, 0);
-      ivWithSalt.set(salt, iv.length);
-      
-      const plaintext = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: ivWithSalt },
-        hash,
-        data
+    async encrypt(text, keyText) {
+      const key = await this.deriveKey(keyText, ['encrypt']);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        new TextEncoder().encode(text)
       );
-      
-      return decoder.decode(plaintext);
+      const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+      combined.set(iv, 0);
+      combined.set(new Uint8Array(ciphertext), iv.length);
+      let binary = '';
+      for (const byte of combined) binary += String.fromCharCode(byte);
+      return btoa(binary);
+    },
+    async decrypt(text, keyText) {
+      const key = await this.deriveKey(keyText, ['decrypt']);
+      const combined = Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+      const iv = combined.slice(0, 12);
+      const ciphertext = combined.slice(12);
+      const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+      return new TextDecoder().decode(plaintext);
     }
   };
   const btnProcessTab = document.getElementById("btnProcessTab");
@@ -144,42 +133,57 @@ document.addEventListener("DOMContentLoaded", async () => {
     return "http://127.0.0.1:8000";
   };
 
-  // Tự động xác thực tài khoản ẩn cho Extension (không cần người dùng đăng nhập thủ công)
+  // Mỗi bản cài extension có device_id riêng -> user riêng, không dùng tài khoản chung
+  const getDeviceId = async () => {
+    try {
+      const stored = await chrome.storage.local.get(["extension_device_id"]);
+      if (stored && stored.extension_device_id) return stored.extension_device_id;
+    } catch (_) {}
+
+    const raw = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `ext_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const deviceId = String(raw).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 128);
+    try {
+      await chrome.storage.local.set({ extension_device_id: deviceId });
+    } catch (_) {}
+    return deviceId;
+  };
+
   const getAuthToken = async () => {
-    const ENCRYPTION_KEY = "LectureAI_Extension_Secret_Key_2026";
+    const deviceId = await getDeviceId();
+
+    // 1. Dùng token đã lưu (giải mã bằng device_id của chính máy này)
     try {
       const stored = await chrome.storage.local.get(["extension_token"]);
       if (stored && stored.extension_token) {
         try {
-          const decrypted = await cryptoUtil.decrypt(stored.extension_token, ENCRYPTION_KEY);
-          return decrypted;
+          const decrypted = await cryptoUtil.decrypt(stored.extension_token, deviceId);
+          if (decrypted) return decrypted;
         } catch (_) {
-          return stored.extension_token;
+          // Token cũ (định dạng legacy) -> bỏ qua, xin phiên mới bên dưới
         }
       }
     } catch (_) {}
 
+    // 2. Xin phiên mới theo device_id
     try {
       const serverUrl = activeBackendUrl || "http://127.0.0.1:8000";
-      const loginRes = await fetchWithTimeout(`${serverUrl}/api/auth/login`, {
+      const sessionRes = await fetchWithTimeout(`${serverUrl}/api/auth/extension-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: "browser_extension@gmail.com",
-          password: "ExtensionPassword123@"
-        })
+        body: JSON.stringify({ device_id: deviceId })
       }, 4000);
-      if (loginRes.ok) {
-        const loginData = await loginRes.json();
-        if (loginData.token) {
-          const ENCRYPTION_KEY = "LectureAI_Extension_Secret_Key_2026";
+      if (sessionRes.ok) {
+        const sessionData = await sessionRes.json();
+        if (sessionData.token) {
           try {
-            const encrypted = await cryptoUtil.encrypt(loginData.token, ENCRYPTION_KEY);
-            chrome.storage.local.set({ extension_token: encrypted });
+            const encrypted = await cryptoUtil.encrypt(sessionData.token, deviceId);
+            await chrome.storage.local.set({ extension_token: encrypted });
           } catch (_) {
-            chrome.storage.local.set({ extension_token: loginData.token });
+            await chrome.storage.local.set({ extension_token: sessionData.token });
           }
-          return loginData.token;
+          return sessionData.token;
         }
       }
     } catch (_) {}
@@ -189,6 +193,38 @@ document.addEventListener("DOMContentLoaded", async () => {
   const getAuthHeaders = async () => {
     const token = await getAuthToken();
     return token ? { "Authorization": `Bearer ${token}` } : {};
+  };
+
+  // Bộ nhớ đệm IndexedDB: chỉ dùng khi cùng video + ngôn ngữ + tùy chọn quiz.
+  const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  const lectureCacheKey = (videoUrl) =>
+    `${videoUrl}::${targetLang.value}::${includeQuizCheck.checked ? 1 : 0}`;
+  const readLectureCache = async (videoUrl) => {
+    try {
+      if (!videoUrl || !window.LectureCache) return null;
+      return await window.LectureCache.get(lectureCacheKey(videoUrl), CACHE_TTL_MS);
+    } catch (_) {
+      return null;
+    }
+  };
+  const writeLectureCache = async (videoUrl, data) => {
+    try {
+      if (!videoUrl || !data || !window.LectureCache) return;
+      await window.LectureCache.put(lectureCacheKey(videoUrl), data);
+    } catch (_) {}
+  };
+  const applyLectureToTab = async (data) => {
+    if (!currentTab || !data) return;
+    renderResult(data);
+    await safeSendMessage(currentTab.id, {
+      action: "LOAD_SUBTITLES",
+      subtitles: data.segments || [],
+      isBilingual: bilingualCheck.checked,
+      targetLanguage: targetLang.value,
+      sourceLanguage: data.detected_language || "en",
+      serverUrl: activeBackendUrl,
+    });
+    updateOverlayButtonState();
   };
 
   // 1. Kiểm tra trạng thái Backend AI (Bất đồng bộ)
@@ -352,6 +388,14 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
 
+      // 1. Bộ nhớ đệm cục bộ (IndexedDB) - nạp tức thì, không cần mạng
+      const cached = await readLectureCache(currentTab.url);
+      if (cached && Array.isArray(cached.segments) && cached.segments.length > 0) {
+        statusText.innerText = `Đã nạp ${cached.segments.length} câu phụ đề từ bộ nhớ đệm.`;
+        await applyLectureToTab(cached);
+        return;
+      }
+
       const authHeaders = await getAuthHeaders();
       const infoRes = await fetchWithTimeout(`${activeBackendUrl}/api/video/info?video_url=${encodeURIComponent(currentTab.url)}`, {
         headers: { ...authHeaders }
@@ -375,16 +419,8 @@ document.addEventListener("DOMContentLoaded", async () => {
             const data = await procRes.json();
             const segCount = (data.segments || []).length;
             statusText.innerText = `Đã tự động nạp ${segCount} câu phụ đề & Tóm tắt!`;
-            renderResult(data);
-            await safeSendMessage(currentTab.id, {
-              action: "LOAD_SUBTITLES",
-              subtitles: data.segments,
-              isBilingual: bilingualCheck.checked,
-              targetLanguage: targetLang.value,
-              sourceLanguage: data.detected_language || "en",
-              serverUrl: activeBackendUrl,
-            });
-            updateOverlayButtonState();
+            await writeLectureCache(currentTab.url, data);
+            await applyLectureToTab(data);
           }
         }
       }
@@ -485,17 +521,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       const segCount = (data.segments || []).length;
       statusText.innerText = `Hoàn tất! (${segCount} câu phụ đề đồng bộ)`;
 
-      renderResult(data);
-
-      // Gửi sang content.js trên trang để bật hiển thị overlay
-      await safeSendMessage(currentTab.id, {
-        action: "LOAD_SUBTITLES",
-        subtitles: data.segments,
-        isBilingual: bilingualCheck.checked,
-        targetLanguage: targetLang.value,
-        sourceLanguage: data.detected_language || "en",
-        serverUrl: activeBackendUrl,
-      });
+      await writeLectureCache(currentTab.url, data);
+      await applyLectureToTab(data);
     } catch (err) {
       console.error(err);
       if (err.name === 'AbortError') {
@@ -601,16 +628,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       const data = await response.json();
       statusText.innerText = `Đã nạp ${data.segments.length} dòng phụ đề!`;
 
-      renderResult(data);
-
-      await safeSendMessage(currentTab.id, {
-        action: "LOAD_SUBTITLES",
-        subtitles: data.segments,
-        isBilingual: bilingualCheck.checked,
-        targetLanguage: targetLang.value,
-        sourceLanguage: data.detected_language || "en",
-        serverUrl: activeBackendUrl,
-      });
+      await writeLectureCache(currentTab.url, data);
+      await applyLectureToTab(data);
     } catch (err) {
       statusText.innerText = `Lỗi nạp phụ đề: ${err.message}`;
     } finally {
@@ -629,14 +648,24 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
       try {
         statusText.innerText = "Đang tạo tài liệu...";
-        const token = await getAuthToken();
-        const res = await fetch(`${activeBackendUrl}/api/export/${encodeURIComponent(currentTab.url)}?format=${exportFormat.value}&token=${encodeURIComponent(token || "")}`);
-        if (!res.ok) throw new Error(`Lỗi HTTP ${res.status}`);
+        const fmt = exportFormat.value;
+        const headers = await getAuthHeaders();
+        const res = await fetch(
+          `${activeBackendUrl}/api/export?video_url=${encodeURIComponent(currentTab.url)}&format=${encodeURIComponent(fmt)}`,
+          { method: "GET", headers }
+        );
+        if (!res.ok) {
+          let detail = `Lỗi HTTP ${res.status}`;
+          try {
+            const errData = await res.json();
+            if (errData && errData.detail) detail = errData.detail;
+          } catch (_) {}
+          throw new Error(detail);
+        }
         const blob = await res.blob();
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        const ext = exportFormat.value === "pdf" ? "pdf" : exportFormat.value === "docx" ? "docx" : "md";
-        a.download = `lecture_ai_${Date.now()}.${ext}`;
+        a.download = `lecture_ai_${Date.now()}.${fmt}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

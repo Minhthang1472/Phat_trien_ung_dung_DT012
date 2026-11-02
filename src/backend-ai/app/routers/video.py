@@ -1168,6 +1168,7 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
         "segments": fast_segments,
         "language": target_lang,
         "owner_id": user["id"],
+        "created_at": time.time(),
     }
 
     # Kích hoạt worker chạy ngầm song song

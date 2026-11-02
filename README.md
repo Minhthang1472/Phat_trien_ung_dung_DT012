@@ -176,8 +176,9 @@ Phát triển ứng dụng/
 ## 🛠️ YÊU CẦU MÔI TRƯỜNG
 
 Trước khi cài đặt, hãy đảm bảo máy tính đã cài đặt các công cụ sau:
-* **Node.js:** Phiên bản `18.x` hoặc `20.x` LTS ([nodejs.org](https://nodejs.org/))
+* **Node.js:** Phiên bản `22.13.x` trở lên (Expo SDK 57 yêu cầu) ([nodejs.org](https://nodejs.org/))
 * **Python:** Phiên bản `3.10` hoặc `3.11` ([python.org](https://www.python.org/))
+* **Docker (tùy chọn):** Docker Desktop + Docker Compose để chạy backend bằng container.
 * **FFmpeg:** Cần thiết cho xử lý âm thanh video ([ffmpeg.org](https://ffmpeg.org/download.html) hoặc cài qua lệnh `winget install Gyan.FFmpeg` trên Windows)
 * **Trình duyệt Web:** Google Chrome, Microsoft Edge, Brave hoặc Cốc Cốc.
 * **Tài khoản Google Colab:** Dùng để chạy máy chủ Backend AI miễn phí trên card GPU Tesla T4.
@@ -238,7 +239,8 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
    WHISPER_COMPUTE_TYPE=int8
    WHISPER_MODEL_SIZE=base
    GEMINI_API_KEY=your_gemini_api_key_here
-   JWT_SECRET_KEY=super_secret_jwt_key_ptud_dt012
+   # JWT_SECRET phải dài >= 32 ký tự, nếu thiếu server sẽ từ chối cấp token
+   JWT_SECRET=replace_with_a_long_random_secret_at_least_32_chars
    FIREBASE_CREDENTIALS_PATH=serviceAccountKey.json
    ```
 5. **Khởi chạy máy chủ:**
@@ -246,6 +248,44 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
    python run_server.py
    ```
    * Swagger Docs kiểm tra API: **`http://127.0.0.1:8000/docs`**
+   * Health check: **`http://127.0.0.1:8000/health`** — Metrics: **`http://127.0.0.1:8000/metrics`**
+
+---
+
+### CÁCH 3: CHẠY BACKEND BẰNG DOCKER (KHUYẾN NGHỊ KHI TRIỂN KHAI)
+
+1. **Đặt khóa Firebase vào thư mục `secrets/`:**
+   ```powershell
+   copy "src/backend-ai/serviceAccountKey.json" "secrets/serviceAccountKey.json"
+   ```
+2. **Tạo file `.env` ở thư mục gốc dự án từ mẫu:**
+   ```powershell
+   copy .env.example .env
+   ```
+   Mở `.env` và điền `JWT_SECRET` (>= 32 ký tự), `GEMINI_API_KEY`,
+   `FIREBASE_PROJECT_ID`.
+3. **Build và chạy:**
+   ```powershell
+   docker compose up --build
+   ```
+   Backend sẽ chạy tại `http://localhost:8000`. Container đã cài sẵn `ffmpeg`,
+   thư viện render PDF và có healthcheck tự động.
+
+> Ghi chú: mặc định container chạy Whisper trên CPU (`int8`). Nếu máy có GPU
+> NVIDIA, có thể đổi `WHISPER_DEVICE=cuda` và cấu hình NVIDIA Container Toolkit.
+
+---
+
+### CHẠY KIỂM THỬ BACKEND
+
+```powershell
+cd "src/backend-ai"
+pip install -r requirements-dev.txt
+pytest
+```
+
+Bộ test bao phủ: băm/giải mã JWT, parser SRT/WebVTT, chuẩn hóa quiz/mindmap,
+xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL và các endpoint health/metrics.
 
 ---
 
@@ -320,12 +360,18 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
 | `GET` | `/api/history` | Lấy danh sách bài giảng đã học theo tài khoản | Bearer Token |
 | `POST` | `/api/subtitles/process` | Dịch & tạo trắc nghiệm từ file phụ đề tải lên (.srt, .vtt) | Bearer Token |
 | `POST` | `/api/video/burn-subtitles`| Nhúng (burn) phụ đề cứng trực tiếp vào video qua FFmpeg | Bearer Token |
+| `GET` | `/api/video/stream-status` | Theo dõi tiến độ job streaming nền | Bearer Token |
+| `POST` | `/api/auth/extension-session` | Cấp phiên riêng cho từng bản cài extension (device-scoped) | Public |
+| `POST` | `/api/auth/ws-token` | Cấp token WebSocket ngắn hạn (1 giờ) | Bearer Token |
+| `GET` | `/api/export` | Xuất tài liệu bài giảng (`?video_url=...&format=pdf\|docx\|md`) | Bearer Token |
+| `GET` | `/health` | Liveness/readiness probe cho Docker/K8s | Public |
+| `GET` | `/metrics` | Số liệu vận hành dạng Prometheus text | Public |
 
 ---
 
 ## 🔒 BẢO MẬT & QUYỀN RIÊNG TƯ
 
-1. **Bảo mật danh tính & Mật khẩu:** Toàn bộ mật khẩu được mã hóa băm một chiều an toàn bằng thuật toán **Bcrypt**. Phiên làm việc duy trì qua **JSON Web Token (JWT)** có thời hạn.
+1. **Bảo mật danh tính & Mật khẩu:** Toàn bộ mật khẩu được mã hóa băm một chiều an toàn bằng **PBKDF2-HMAC-SHA256** (240.000 vòng, salt ngẫu nhiên 16 byte). Phiên làm việc duy trì qua **JSON Web Token (JWT)** có thời hạn.
 2. **Xác thực bảo vệ bằng mã OTP:** Quy trình khôi phục tài khoản sử dụng mã xác thực 6 chữ số ngẫu nhiên được gửi trực tiếp vào hòm thư cá nhân.
 3. **Quyền riêng tư dữ liệu:** Dữ liệu phụ đề và ghi chú cá nhân của từng học viên được phân tách độc lập theo `owner_id` trên Google Cloud Firestore.
 4. **Bản quyền phương tiện:** Hệ thống tôn trọng quyền sở hữu trí tuệ của tác giả video; toàn bộ quá trình trích xuất âm thanh và bóc tách nội dung phục vụ thuần túy cho mục đích nghiên cứu học thuật phi thương mại.

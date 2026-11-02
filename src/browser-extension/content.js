@@ -82,31 +82,35 @@
     if (overlayBox) {
       overlayBox.classList.add("lecture-ai-speaking");
     }
-    // Encryption utility for extension_token
+    // Mã hoá token bằng AES-GCM với khoá suy ra từ device_id của chính máy này.
 const cryptoUtil = {
-  async encrypt(text, key) {
+  async deriveKey(keyText, usages) {
     const encoder = new TextEncoder();
-    const data = encoder.encode(text);
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const hash = await crypto.subtle.digest('SHA-256', encoder.encode(key));
-    const salt = crypto.getRandomValues(new Uint8Array(16));
-    const ivWithSalt = new Uint8Array(iv.length + salt.length);
-    ivWithSalt.set(iv, 0);
-    ivWithSalt.set(salt, iv.length);
-    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: ivWithSalt }, hash, data);
-    return btoa(String.fromCharCode(...new Uint8Array(ciphertext)));
+    const digest = await crypto.subtle.digest('SHA-256', encoder.encode(keyText));
+    return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, usages);
   },
-  async decrypt(text, key) {
-    const decoder = new TextDecoder();
-    const data = Uint8Array.from(atob(text), c => c.charCodeAt(0));
-    const iv = data.slice(0, 12);
-    const salt = data.slice(12, 12 + 16);
-    const hash = await crypto.subtle.digest('SHA-256', encoder.encode(key));
-    const ivWithSalt = new Uint8Array(iv.length + salt.length);
-    ivWithSalt.set(iv, 0);
-    ivWithSalt.set(salt, iv.length);
-    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: ivWithSalt }, hash, data);
-    return decoder.decode(plaintext);
+  async encrypt(text, keyText) {
+    const key = await this.deriveKey(keyText, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      new TextEncoder().encode(text)
+    );
+    const combined = new Uint8Array(iv.length + ciphertext.byteLength);
+    combined.set(iv, 0);
+    combined.set(new Uint8Array(ciphertext), iv.length);
+    let binary = '';
+    for (const byte of combined) binary += String.fromCharCode(byte);
+    return btoa(binary);
+  },
+  async decrypt(text, keyText) {
+    const key = await this.deriveKey(keyText, ['decrypt']);
+    const combined = Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+    return new TextDecoder().decode(plaintext);
   }
 };
 
@@ -119,16 +123,17 @@ const stopSpeakingEffect = () => {
     try {
       let headers = {};
       try {
-        const stored = await chrome.storage?.local?.get(["extension_token"]);
+        const stored = await chrome.storage?.local?.get(["extension_token", "extension_device_id"]);
         if (stored && stored.extension_token) {
-          const ENCRYPTION_KEY = "LectureAI_Extension_Secret_Key_2026";
-          try {
-            const decrypted = await cryptoUtil.decrypt(stored.extension_token, ENCRYPTION_KEY);
-            headers["Authorization"] = `Bearer ${decrypted}`;
-          } catch (_) {
-            // Fallback to raw token if decryption fails
-            headers["Authorization"] = `Bearer ${stored.extension_token}`;
+          let token = stored.extension_token;
+          if (stored.extension_device_id) {
+            try {
+              token = await cryptoUtil.decrypt(stored.extension_token, stored.extension_device_id);
+            } catch (_) {
+              // Token legacy/không giải mã được -> dùng nguyên giá trị đã lưu
+            }
           }
+          headers["Authorization"] = `Bearer ${token}`;
         }
       } catch (_) { }
 

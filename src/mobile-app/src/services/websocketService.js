@@ -13,10 +13,28 @@ class WebSocketService {
     this.simInterval = null;
   }
 
+  async getStreamToken(baseUrl) {
+    // Ưu tiên token WebSocket ngắn hạn (1 giờ) thay vì JWT dài hạn trong URL
+    try {
+      const authToken = await apiService.getAuthToken();
+      if (authToken) {
+        const res = await fetch(`${baseUrl}/api/auth/ws-token`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${authToken}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.token) return data.token;
+        }
+      }
+    } catch (_) {}
+    return apiService.getAuthToken();
+  }
+
   async connect(callbacks = {}) {
     this.callbacks = { ...this.callbacks, ...callbacks };
     const baseUrl = await apiService.getBaseUrl();
-    const token = await apiService.getAuthToken();
+    const token = await this.getStreamToken(baseUrl);
     const wsUrl = `${baseUrl.replace(/^http/, 'ws')}/api/live/stream?token=${encodeURIComponent(token || '')}`;
 
     try {

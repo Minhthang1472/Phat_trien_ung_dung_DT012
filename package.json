@@ -6,6 +6,8 @@
   "scripts": {
     "backend": "python src/backend-ai/run_server.py",
     "mobile": "npm --prefix src/mobile-app start",
-    "mobile:web": "npm --prefix src/mobile-app run web"
+    "mobile:web": "npm --prefix src/mobile-app run web",
+    "test:backend": "cd src/backend-ai && python -m pytest -q",
+    "docker:up": "docker compose up --build"
   }
 }

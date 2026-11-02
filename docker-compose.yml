@@ -1,0 +1,47 @@
+# Docker Compose cho backend FastAPI.
+#
+# Chuẩn bị:
+#   1. Tạo file .env ở thư mục gốc (hoặc export biến môi trường) với JWT_SECRET dài >= 32 ký tự.
+#   2. Đặt serviceAccountKey.json vào ./secrets/ (đã được .gitignore bảo vệ).
+#   3. docker compose up --build
+#
+# Endpoint: http://localhost:8000  (Swagger: /docs, health: /health, metrics: /metrics)
+
+services:
+  api:
+    build:
+      context: ./src/backend-ai
+      dockerfile: Dockerfile
+    image: lecture-ai-api:latest
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      FIREBASE_CREDENTIALS_PATH: /app/secrets/serviceAccountKey.json
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET phải được đặt và dài ít nhất 32 ký tự}
+      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-168}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-small}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
+      UPLOAD_TTL_HOURS: ${UPLOAD_TTL_HOURS:-24}
+      STREAM_JOB_TTL_MINUTES: ${STREAM_JOB_TTL_MINUTES:-120}
+      CLEANUP_INTERVAL_MINUTES: ${CLEANUP_INTERVAL_MINUTES:-30}
+    volumes:
+      - lecture_uploads:/app/uploads
+      - ./secrets:/app/secrets:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  lecture_uploads:

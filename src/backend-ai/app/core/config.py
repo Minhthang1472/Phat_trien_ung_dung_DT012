@@ -36,8 +36,15 @@ class Settings:
         ).split(",") if host.strip()
     ]
     CORS_ORIGINS: list[str] = [
-        origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8081").split(",") if origin.strip()
+        origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8081,http://localhost:19006").split(",") if origin.strip()
     ]
     REDIS_URL: str = os.getenv("REDIS_URL", "")
+
+    # Vận hành & dọn dẹp tài nguyên tạm
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    UPLOAD_TTL_HOURS: int = int(os.getenv("UPLOAD_TTL_HOURS", "24"))
+    STREAM_JOB_TTL_MINUTES: int = int(os.getenv("STREAM_JOB_TTL_MINUTES", "120"))
+    CLEANUP_INTERVAL_MINUTES: int = int(os.getenv("CLEANUP_INTERVAL_MINUTES", "30"))
 
 settings = Settings()
