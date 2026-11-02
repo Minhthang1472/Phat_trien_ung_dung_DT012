@@ -35,7 +35,7 @@ class Settings:
     ALLOWED_VIDEO_HOSTS: list[str] = [
         host.strip().lower() for host in os.getenv(
             "ALLOWED_VIDEO_HOSTS", 
-            "youtube.com,youtu.be,drive.google.com,docs.google.com,dropbox.com"
+            "youtube.com,youtu.be,drive.google.com,drive.usercontent.google.com,docs.google.com,dropbox.com"
         ).split(",") if host.strip()
     ]
     CORS_ORIGINS: list[str] = [

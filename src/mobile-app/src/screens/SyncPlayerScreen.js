@@ -34,9 +34,10 @@ import {
   SubtitleListSection,
 } from '../components/player';
 
-// Gắn/thay media token trong URL /uploads/... mà không tạo query trùng lặp.
+// Gắn/thay media token trong URL /uploads/... hoặc proxy stream mà không tạo query trùng lặp.
 function withMediaToken(src, token) {
-  if (!src || !token || !src.includes('/uploads/')) return src;
+  const needsToken = src && (src.includes('/uploads/') || src.includes('/api/video/stream-media'));
+  if (!needsToken || !token) return src;
   const [base, query = ''] = src.split('?');
   const params = query
     .split('&')
@@ -123,8 +124,18 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
   // Media token sống ngắn hạn: xin mới khi mở player và tự gia hạn trước khi hết hạn.
   useEffect(() => {
     const source = burnedMediaUrl || lecture?.media_stream_url || lecture?.media_url || '';
-    if (!source || !source.includes('/uploads/')) {
+    const isUploadSource = source.includes('/uploads/');
+    const isProxySource = source.includes('/api/video/stream-media');
+    if (!source || (!isUploadSource && !isProxySource)) {
       setMediaToken(lecture?.media_access_token || null);
+      return undefined;
+    }
+
+    const tokenTarget = isUploadSource
+      ? `/uploads/${source.split('/uploads/')[1].split('?')[0]}`
+      : (lecture?.video_url || '');
+    if (!tokenTarget) {
+      setMediaToken(null);
       return undefined;
     }
 
@@ -133,8 +144,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
 
     const refresh = async () => {
       try {
-        const uploadPath = `/uploads/${source.split('/uploads/')[1].split('?')[0]}`;
-        const data = await apiService.getMediaAccessToken(uploadPath);
+        const data = await apiService.getMediaAccessToken(tokenTarget);
         if (cancelled || !data?.token) return;
         setMediaToken(data.token);
         const ttlSeconds = Number(data.expires_in) || 3600;
@@ -157,7 +167,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [burnedMediaUrl, lecture?.media_access_token, lecture?.media_stream_url, lecture?.media_url]);
+  }, [burnedMediaUrl, lecture?.media_access_token, lecture?.media_stream_url, lecture?.media_url, lecture?.video_url]);
 
   // Lắng nghe cập nhật phụ đề song song ngầm (Task 7)
   useEffect(() => {

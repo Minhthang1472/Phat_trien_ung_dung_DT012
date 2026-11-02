@@ -183,13 +183,25 @@ async def issue_media_token(
     user=Depends(get_current_user),
     _limit=Depends(heavy_rate_limit),
 ):
-    """Cấp media token mới cho file upload thuộc sở hữu của người dùng."""
-    media_url = _normalize_media_url(request.media_url)
-    _resolve_upload_path(media_url)
-    _ensure_media_owner(user["id"], media_url)
+    """Cấp media token mới cho file upload hoặc URL stream hợp lệ.
+
+    - ``/uploads/...``: kiểm tra file tồn tại và thuộc sở hữu người dùng.
+    - ``http(s)://...``: chạy kiểm tra SSRF/allowlist, không cần quyền sở hữu.
+    """
+    raw = (request.media_url or "").strip()
+    if raw.startswith("/uploads/"):
+        media_url = _normalize_media_url(raw)
+        _resolve_upload_path(media_url)
+        _ensure_media_owner(user["id"], media_url)
+        kind = "upload"
+    else:
+        media_url = audio_service.validate_source_url(raw)
+        kind = "stream"
+
     token = auth_service.create_media_token(user["id"], media_url)
     return {
         "media_url": media_url,
+        "kind": kind,
         "token": token,
         "expires_in": settings.MEDIA_TOKEN_TTL_MINUTES * 60,
     }
@@ -211,19 +223,54 @@ async def serve_uploaded_media(filename: str, access_token: Optional[str] = Quer
     return FileResponse(file_path)
 
 
+def _get_streaming_response(url: str, headers: dict, max_redirects: int = 4):
+    """GET có kiểm tra SSRF ở từng bước redirect trước khi kết nối."""
+    current = url
+    for _ in range(max_redirects + 1):
+        audio_service.validate_source_url(current)
+        response = requests.get(
+            current,
+            headers=headers,
+            stream=True,
+            timeout=15,
+            allow_redirects=False,
+        )
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("location")
+            response.close()
+            if not location:
+                raise HTTPException(status_code=502, detail="Nguồn media chuyển hướng không hợp lệ.")
+            current = urllib.parse.urljoin(current, location)
+            continue
+        return response
+    raise HTTPException(status_code=502, detail="Nguồn media chuyển hướng quá nhiều lần.")
+
+
 @router.get("/api/video/stream-media")
 async def stream_media_endpoint(
     video_url: str = Query(..., description="URL video bài giảng (Google Drive, LMS, direct URL)"),
-    range: Optional[str] = Header(None)
+    range: Optional[str] = Header(None),
+    access_token: Optional[str] = Query(None, description="Media token cấp bởi /api/media/token"),
+    user=Depends(get_optional_user),
 ):
     """
     Media Proxy Stream: Chuyển tiếp luồng video MP4 từ Google Drive / LMS về App.
     Hỗ trợ Range Request (HTTP 206) để phát trực tiếp trong thẻ <video> mà không bị chặn CORS,
     giúp đồng bộ 100% các nút điều khiển Phát, Tạm dừng và Tua thời gian.
+
+    Yêu cầu Bearer Token hoặc ``access_token`` (media token) để tránh proxy công khai.
     """
     url = video_url.strip()
     if not url:
         raise HTTPException(status_code=400, detail="Vui lòng cung cấp URL video.")
+
+    # Xác thực trước để không cho phép dò URL nội bộ khi chưa đăng nhập.
+    if access_token:
+        claims = auth_service.decode_media_token(access_token)
+        if claims.get("media_url") != url:
+            raise HTTPException(status_code=403, detail="Media token không khớp URL stream.")
+    elif not user:
+        raise HTTPException(status_code=401, detail="Vui lòng đăng nhập để phát video qua máy chủ.")
 
     # Kiểm tra tính hợp lệ domain & bảo mật SSRF
     audio_service.validate_source_url(url)
@@ -242,7 +289,9 @@ async def stream_media_endpoint(
         req_headers["Range"] = range
 
     try:
-        r = requests.get(target_url, headers=req_headers, stream=True, timeout=15)
+        r = _get_streaming_response(target_url, req_headers)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Lỗi kết nối nguồn media {target_url}: {e}")
         raise HTTPException(status_code=502, detail=f"Không thể kết nối đến máy chủ chứa video: {e}")
@@ -292,7 +341,7 @@ class UpdateLectureMetaRequest(BaseModel):
 @router.post("/api/lecture/meta")
 async def update_lecture_meta(req: UpdateLectureMetaRequest, user=Depends(get_current_user)):
     """Cập nhật thư mục và gắn nhãn phân loại bài giảng (Yêu cầu 8)."""
-    cached = firebase_service.get_lecture_cache(req.video_url)
+    cached = firebase_service.get_lecture_cache(req.video_url, owner_id=user["id"])
     if cached and cached.get("owner_id") == user["id"]:
         if req.folder is not None:
             cached["folder"] = req.folder
@@ -902,8 +951,8 @@ async def export_subtitles(
     """
     Xuất file phụ đề chuẩn quốc tế (.srt hoặc .vtt) để tải về máy hoặc phát trên web
     """
-    # Tra cứu dữ liệu phụ đề từ Firebase Firestore
-    record = firebase_service.get_lecture_cache(video_url)
+    # Tra cứu dữ liệu phụ đề từ Firebase Firestore (chỉ tài liệu của chính user)
+    record = firebase_service.get_lecture_cache(video_url, owner_id=user["id"])
 
     if not record or record.get("owner_id") != user["id"] or "segments" not in record:
         raise HTTPException(status_code=404, detail="Không tìm thấy dữ liệu phụ đề cho video này trên Cloud. Hãy xử lý video trước.")
@@ -1257,8 +1306,8 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
     url = request.video_url.strip()
     target_lang = (request.target_language or "vi").lower().strip()
 
-    # Kiểm tra Firestore Cache nếu đã từng xử lý
-    cached = firebase_service.get_lecture_cache(url)
+    # Kiểm tra Firestore Cache nếu đã từng xử lý (chỉ tài liệu của chính user)
+    cached = firebase_service.get_lecture_cache(url, owner_id=user["id"])
     if cached and cached.get("owner_id") == user["id"]:
         cached["is_streaming"] = False
         cached["sections"] = normalize_sections(

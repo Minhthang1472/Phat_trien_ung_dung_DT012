@@ -1,6 +1,8 @@
 import os
 import glob
 import tempfile
+import ipaddress
+import socket
 import yt_dlp
 import logging
 from urllib.parse import urlparse
@@ -8,6 +10,15 @@ from fastapi import HTTPException
 from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
+
+# Hostname tuyệt đối không được phép truy cập, kể cả khi resolve ra IP công khai.
+BLOCKED_HOSTNAMES = {
+    "localhost",
+    "metadata",
+    "metadata.google.internal",
+    "instance-data",
+    "instance-data.ec2.internal",
+}
 
 class AudioService:
     @staticmethod
@@ -30,32 +41,68 @@ class AudioService:
         return ""
 
     @staticmethod
+    def _resolves_to_public_ip(host: str) -> bool:
+        """Phân giải hostname và từ chối nếu bất kỳ IP nào là nội bộ/đặc biệt.
+
+        Kiểm tra cả IPv4 lẫn IPv6 để chặn các dạng ``::1``, ``fc00::/7``,
+        ``169.254.169.254`` hoặc hostname trỏ về mạng LAN.
+        """
+        try:
+            addrinfo = socket.getaddrinfo(host, None)
+        except (socket.gaierror, UnicodeError, ValueError):
+            return False
+        if not addrinfo:
+            return False
+        for item in addrinfo:
+            ip_text = str(item[4][0]).split("%", 1)[0]
+            try:
+                ip = ipaddress.ip_address(ip_text)
+            except ValueError:
+                return False
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_reserved
+                or ip.is_multicast
+                or ip.is_unspecified
+            ):
+                return False
+        return True
+
+    @staticmethod
     def validate_source_url(video_url: str) -> str:
         raw_url = video_url.strip()
         parsed = urlparse(raw_url)
         host = (parsed.hostname or "").lower().rstrip(".")
         if parsed.scheme not in ("http", "https") or not host:
             raise HTTPException(status_code=400, detail="URL không hợp lệ. Vui lòng cung cấp liên kết bắt đầu bằng http:// hoặc https://.")
+        if parsed.username or parsed.password:
+            raise HTTPException(status_code=400, detail="URL không được chứa thông tin đăng nhập.")
 
-        # SSRF Protection: Ngăn chặn truy cập vào dải IP nội bộ hoặc metadata cục bộ
-        blocked_prefixes = ("127.", "10.", "192.168.", "169.254.", "0.", "localhost")
-        if host in blocked_prefixes or any(host.startswith(p) for p in blocked_prefixes) or "metadata.google" in host:
+        # SSRF Protection: chặn hostname nội bộ và kiểm tra IP sau khi resolve DNS.
+        if (
+            host in BLOCKED_HOSTNAMES
+            or host.endswith(".localhost")
+            or host.endswith(".local")
+            or "metadata.google" in host
+        ):
             raise HTTPException(status_code=400, detail="Không cho phép truy cập địa chỉ IP nội bộ.")
-        if host.startswith("172."):
-            parts = host.split(".")
-            if len(parts) >= 2 and parts[1].isdigit() and 16 <= int(parts[1]) <= 31:
-                raise HTTPException(status_code=400, detail="Không cho phép truy cập địa chỉ IP nội bộ.")
+        if not AudioService._resolves_to_public_ip(host):
+            raise HTTPException(
+                status_code=400,
+                detail="Không thể xác minh địa chỉ máy chủ video hoặc máy chủ trỏ về mạng nội bộ.",
+            )
 
         # Kiểm tra danh sách domain cho phép (YouTube, Drive, Dropbox, LMS...)
         allowed = any(host == item or host.endswith(f".{item}") for item in settings.ALLOWED_VIDEO_HOSTS)
         is_edu_or_lms = (
             host.endswith(".edu") or host.endswith(".edu.vn") or host.endswith(".ac.uk") or host.endswith(".edu.au") or
-            any(k in host for k in ["canvas", "moodle", "blackboard", "coursera", "edx", "udemy", "drive", "dropbox"])
+            any(k in host for k in ["canvas", "moodle", "blackboard", "coursera", "edx", "udemy"])
         )
-        path_lower = parsed.path.lower()
-        is_direct_media = any(path_lower.endswith(ext) for ext in [".mp4", ".m3u8", ".webm", ".mov", ".m4a", ".mp3", ".wav"])
 
-        if not (allowed or is_edu_or_lms or is_direct_media):
+        # Không còn bypass theo đuôi file: host lạ không được phép dù URL kết thúc .mp4.
+        if not (allowed or is_edu_or_lms):
             raise HTTPException(
                 status_code=400,
                 detail="URL không thuộc domain video hoặc hệ thống đào tạo (YouTube, Google Drive, LMS trường học) được hệ thống hỗ trợ."

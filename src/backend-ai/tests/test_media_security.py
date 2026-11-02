@@ -34,7 +34,7 @@ def test_media_token_returns_short_lived_token(client, upload_dir, monkeypatch):
 
     response = client.post(
         "/api/media/token",
-        json={"media_url": "https://api.example.com/uploads/clip.mp4?old_token=1"},
+        json={"media_url": "/uploads/clip.mp4?old_token=1"},
     )
 
     assert response.status_code == 200
@@ -67,6 +67,41 @@ def test_media_token_missing_file_returns_404(client, upload_dir):
 def test_media_token_rejects_path_traversal(client, upload_dir):
     response = client.post("/api/media/token", json={"media_url": "/uploads/../secret.mp4"})
     assert response.status_code == 400
+
+
+def test_media_token_for_stream_url(client, monkeypatch):
+    url = "https://www.youtube.com/watch?v=abc123"
+    monkeypatch.setattr(video_router.audio_service, "validate_source_url", lambda raw: raw)
+
+    response = client.post("/api/media/token", json={"media_url": url})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "stream"
+    claims = auth_service.decode_media_token(payload["token"])
+    assert claims["media_url"] == url
+
+
+def test_stream_proxy_requires_auth_or_token(client):
+    response = client.get(
+        "/api/video/stream-media",
+        params={"video_url": "https://www.youtube.com/watch?v=abc123"},
+    )
+    assert response.status_code == 401
+
+
+def test_stream_proxy_rejects_mismatched_token(client):
+    token = auth_service.create_media_token(
+        "user-1", "https://www.youtube.com/watch?v=allowed"
+    )
+    response = client.get(
+        "/api/video/stream-media",
+        params={
+            "video_url": "https://www.youtube.com/watch?v=other",
+            "access_token": token,
+        },
+    )
+    assert response.status_code == 403
 
 
 def test_subtitle_upload_is_rejected_before_reading_unbounded(client, monkeypatch):

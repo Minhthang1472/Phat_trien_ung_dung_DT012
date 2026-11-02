@@ -5,7 +5,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
@@ -133,11 +133,31 @@ app.include_router(export_router)
 
 @app.get("/health")
 def health_check():
-    """Liveness/readiness probe cho Docker/K8s."""
+    """Liveness probe: tiến trình API còn sống."""
     return {
         "status": "ok",
         "environment": settings.ENVIRONMENT,
         "firebase": bool(firebase_service.db),
+        "uptime_seconds": round(metrics_registry.uptime_seconds(), 3),
+    }
+
+
+@app.get("/health/ready")
+def readiness_check(response: Response):
+    """Readiness probe: chỉ 200 khi các phụ thuộc bắt buộc đã sẵn sàng."""
+    from app.core.dependencies import UPLOAD_DIR
+
+    checks = {
+        "firebase": bool(firebase_service.db),
+        "upload_dir": os.path.isdir(UPLOAD_DIR) and os.access(UPLOAD_DIR, os.W_OK),
+        "jwt_secret": len(settings.JWT_SECRET) >= 32,
+    }
+    ready = all(checks.values())
+    response.status_code = 200 if ready else 503
+    return {
+        "status": "ready" if ready else "not_ready",
+        "checks": checks,
+        "environment": settings.ENVIRONMENT,
         "uptime_seconds": round(metrics_registry.uptime_seconds(), 3),
     }
 

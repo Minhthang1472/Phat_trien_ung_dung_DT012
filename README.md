@@ -363,11 +363,13 @@ xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL và các endpoint health/m
 | `POST` | `/api/subtitles/process` | Dịch & tạo trắc nghiệm từ file phụ đề tải lên (.srt, .vtt) | Bearer Token |
 | `POST` | `/api/video/burn-subtitles`| Nhúng (burn) phụ đề cứng trực tiếp vào video qua FFmpeg | Bearer Token |
 | `GET` | `/api/video/stream-status` | Theo dõi tiến độ job streaming nền | Bearer Token |
-| `POST` | `/api/media/token` | Cấp token ngắn hạn mới cho file `/uploads/...` thuộc sở hữu | Bearer Token |
+| `POST` | `/api/media/token` | Cấp token ngắn hạn cho file `/uploads/...` hoặc URL stream hợp lệ | Bearer Token |
+| `GET` | `/api/video/stream-media` | Proxy phát video (Range Request) cho Drive/LMS | Bearer Token hoặc media token |
 | `POST` | `/api/auth/extension-session` | Cấp phiên riêng cho từng bản cài extension (device-scoped) | Public |
 | `POST` | `/api/auth/ws-token` | Cấp token WebSocket ngắn hạn (1 giờ) | Bearer Token |
 | `GET` | `/api/export` | Xuất tài liệu bài giảng (`?video_url=...&format=pdf\|docx\|md`) | Bearer Token |
-| `GET` | `/health` | Liveness/readiness probe cho Docker/K8s | Public |
+| `GET` | `/health` | Liveness probe (tiến trình còn sống) | Public |
+| `GET` | `/health/ready` | Readiness probe (Firebase, thư mục upload, JWT secret) | Public |
 | `GET` | `/metrics` | Số liệu vận hành dạng Prometheus text | Public |
 
 ---
@@ -376,8 +378,9 @@ xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL và các endpoint health/m
 
 1. **Bảo mật danh tính & Mật khẩu:** Toàn bộ mật khẩu được mã hóa băm một chiều an toàn bằng **PBKDF2-HMAC-SHA256** (240.000 vòng, salt ngẫu nhiên 16 byte). Phiên làm việc duy trì qua **JSON Web Token (JWT)** có thời hạn.
 2. **Xác thực bảo vệ bằng mã OTP:** Quy trình khôi phục tài khoản sử dụng mã xác thực 6 chữ số ngẫu nhiên được gửi trực tiếp vào hòm thư cá nhân.
-3. **Quyền riêng tư dữ liệu:** Dữ liệu phụ đề và ghi chú cá nhân của từng học viên được phân tách độc lập theo `owner_id` trên Google Cloud Firestore.
-4. **Bản quyền phương tiện:** Hệ thống tôn trọng quyền sở hữu trí tuệ của tác giả video; toàn bộ quá trình trích xuất âm thanh và bóc tách nội dung phục vụ thuần túy cho mục đích nghiên cứu học thuật phi thương mại.
+3. **Quyền riêng tư dữ liệu:** Dữ liệu phụ đề và ghi chú cá nhân của từng học viên được phân tách độc lập theo `owner_id` trên Google Cloud Firestore. Cache đọc theo `owner_id` không fallback sang bản toàn cục; bản toàn cục chỉ giữ nội dung suy ra từ video công khai.
+4. **Chống SSRF:** URL video được kiểm tra allowlist và phân giải DNS; mọi địa chỉ loopback, private, link-local hoặc metadata cloud đều bị từ chối. Proxy stream yêu cầu Bearer Token hoặc media token và kiểm tra lại từng bước redirect.
+5. **Bản quyền phương tiện:** Hệ thống tôn trọng quyền sở hữu trí tuệ của tác giả video; toàn bộ quá trình trích xuất âm thanh và bóc tách nội dung phục vụ thuần túy cho mục đích nghiên cứu học thuật phi thương mại.
 
 ---
 

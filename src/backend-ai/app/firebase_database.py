@@ -108,10 +108,29 @@ class FirebaseService:
             logger.error("Không kiểm tra được quyền sở hữu media: %s", exc)
             return False
 
+    # Các trường chỉ thuộc về một người dùng, không được trả ra từ cache toàn cục.
+    PRIVATE_CACHE_FIELDS = {
+        "owner_id",
+        "folder",
+        "tags",
+        "media_url",
+        "media_stream_url",
+        "media_access_token",
+        "preview_url",
+    }
+
+    @classmethod
+    def _public_cache_view(cls, data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not data:
+            return None
+        return {key: value for key, value in data.items() if key not in cls.PRIVATE_CACHE_FIELDS}
+
     def get_lecture_cache(self, video_url: str, owner_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Tra cứu bài giảng trong Firebase Firestore Cache (0.01s).
-        Nếu đã có -> trả về kết quả ngay, TIẾT KIỆM 100% TOKEN GEMINI!
+
+        Khi có ``owner_id``, chỉ đọc tài liệu của chính người dùng đó — không
+        fallback sang bản cache toàn cục để tránh lộ dữ liệu giữa các tài khoản.
         """
         if not self.db:
             self.init_firebase()
@@ -120,22 +139,19 @@ class FirebaseService:
 
         try:
             base_doc_id = self.get_document_id(video_url)
-            # 1. Thử tìm với doc_id có gắn owner_id
             if owner_id:
                 doc = self.db.collection("lectures").document(f"{owner_id}_{base_doc_id}").get()
                 if doc.exists:
                     data = doc.to_dict()
                     logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE (Owner: {owner_id}): {video_url}")
                     return data
+            else:
+                doc = self.db.collection("lectures").document(base_doc_id).get()
+                if doc.exists:
+                    logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE: {video_url}")
+                    return self._public_cache_view(doc.to_dict())
 
-            # 2. Thử tìm với doc_id gốc
-            doc = self.db.collection("lectures").document(base_doc_id).get()
-            if doc.exists:
-                data = doc.to_dict()
-                logger.info(f"Tìm thấy bài giảng trong FIREBASE CACHE: {video_url}")
-                return data
-
-            # 3. Query theo video_url nếu doc_id có định dạng khác
+            # Query theo video_url nếu doc_id có định dạng khác (dữ liệu cũ).
             try:
                 from google.cloud.firestore_v1.base_query import FieldFilter
                 query = self.db.collection("lectures").where(filter=FieldFilter("video_url", "==", video_url))
@@ -149,7 +165,7 @@ class FirebaseService:
             if docs:
                 data = docs[0].to_dict()
                 logger.info(f"Tìm thấy bài giảng qua Query FIREBASE CACHE: {video_url}")
-                return data
+                return data if owner_id else self._public_cache_view(data)
         except Exception as e:
             logger.warning(f"Lỗi tra cứu Firebase Cache: {e}")
 
@@ -175,11 +191,14 @@ class FirebaseService:
             save_payload["cached_at"] = firestore.SERVER_TIMESTAMP
 
             doc_ref.set(save_payload, merge=True)
-            # Đồng thời lưu bản cache theo base_doc_id để các truy vấn nhanh đều trúng cache 100%
+            # Bản cache toàn cục chỉ giữ nội dung suy ra từ video công khai,
+            # không chứa owner/folder/tags hay URL media riêng của người dùng.
             if owner_id:
                 try:
-                    global_cache_payload = dict(save_payload)
-                    global_cache_payload.pop("owner_id", None)  # Không gán owner_id cho bản cache toàn cục
+                    global_cache_payload = {
+                        key: value for key, value in save_payload.items()
+                        if key not in self.PRIVATE_CACHE_FIELDS
+                    }
                     self.db.collection("lectures").document(base_doc_id).set(global_cache_payload, merge=True)
                 except Exception:
                     pass
