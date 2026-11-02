@@ -1,7 +1,8 @@
 import os
 import time
+from collections import deque
 
-from app.services.cleanup_service import cleanup_uploads, prune_jobs
+from app.services.cleanup_service import cleanup_uploads, prune_jobs, prune_rate_buckets
 
 
 def _touch(path, age_seconds, now=None):
@@ -47,3 +48,17 @@ def test_prune_jobs_removes_stale_and_timestampless_jobs():
 def test_prune_jobs_empty():
     assert prune_jobs({}, 3600) == 0
     assert prune_jobs({"a": {"created_at": time.time()}}, 0) == 0
+
+
+def test_prune_rate_buckets_drops_idle_and_empty_buckets():
+    buckets = {
+        "active": deque([1000.0, 1005.0]),
+        "idle": deque([10.0]),
+        "empty": deque(),
+    }
+
+    removed = prune_rate_buckets(buckets, max_idle_seconds=60, now=1010.0)
+
+    assert removed == 2
+    assert set(buckets) == {"active"}
+    assert list(buckets["active"]) == [1000.0, 1005.0]

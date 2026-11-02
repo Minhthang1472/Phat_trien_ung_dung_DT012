@@ -1,7 +1,6 @@
 import os
 import uuid
 import shutil
-import tempfile
 import time
 import subprocess
 import urllib.parse
@@ -33,7 +32,7 @@ from app.models.schemas import (
     BurnSubtitlesRequest,
     MediaTokenRequest,
 )
-from app.services.audio_service import audio_service
+from app.services.audio_service import audio_service, AUDIO_TEMP_DIR
 from app.services.whisper_service import whisper_service
 from app.services.summary_service import (
     summary_service,
@@ -1330,7 +1329,7 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
 
     # Lookahead cực nhanh 30s đầu từ file audio_path cục bộ (chỉ mất 0.05 giây!)
     fast_segments = []
-    fast_wav = os.path.join(tempfile.gettempdir(), f"fast_{job_id}.wav")
+    fast_wav = os.path.join(AUDIO_TEMP_DIR, f"fast_{job_id}.wav")
     try:
         import subprocess
         cmd = ["ffmpeg", "-y", "-i", audio_path, "-t", "30", "-ar", "16000", "-ac", "1", fast_wav]

@@ -1,0 +1,198 @@
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.core.dependencies import get_current_user
+from app.firebase_database import firebase_service
+from app.main import app
+from app.services.auth_service import auth_service
+
+USER = {
+    "id": "user-1",
+    "username": "hocvien",
+    "email": "hocvien@example.com",
+    "display_name": "Học viên",
+    "password_hash": auth_service.hash_password("secret123"),
+}
+
+
+class FakeRef:
+    def __init__(self, store, doc_id):
+        self._store = store
+        self.id = doc_id
+        self.reference = self
+
+    @property
+    def exists(self):
+        return self.id in self._store
+
+    def to_dict(self):
+        return dict(self._store.get(self.id) or {})
+
+    def set(self, payload, merge=False):
+        if merge and self.id in self._store:
+            merged = dict(self._store[self.id])
+            merged.update(payload)
+            self._store[self.id] = merged
+        else:
+            self._store[self.id] = dict(payload)
+
+    def delete(self):
+        self._store.pop(self.id, None)
+
+
+class FakeQuery:
+    def __init__(self, store):
+        self._store = store
+        self._field = None
+        self._value = None
+        self._limit = None
+
+    def where(self, *args, **kwargs):
+        if len(args) >= 3 and args[1] == "==":
+            self._field = args[0]
+            self._value = args[2]
+        return self
+
+    def limit(self, count):
+        self._limit = count
+        return self
+
+    def stream(self):
+        refs = [
+            FakeRef(self._store, doc_id)
+            for doc_id, data in self._store.items()
+            if self._field is None or data.get(self._field) == self._value
+        ]
+        return iter(refs[: self._limit] if self._limit else refs)
+
+
+class FakeCollection:
+    def __init__(self, store):
+        self._store = store
+
+    def document(self, doc_id):
+        return FakeRef(self._store, doc_id)
+
+    def where(self, *args, **kwargs):
+        return FakeQuery(self._store).where(*args, **kwargs)
+
+
+class FakeBatch:
+    def __init__(self):
+        self._pending = []
+
+    def delete(self, ref):
+        self._pending.append(ref)
+
+    def commit(self):
+        for ref in self._pending:
+            ref.delete()
+        self._pending.clear()
+
+
+class FakeDB:
+    def __init__(self):
+        self.collections = {}
+
+    def collection(self, name):
+        return FakeCollection(self.collections.setdefault(name, {}))
+
+    def batch(self):
+        return FakeBatch()
+
+
+def _seed(db):
+    db.collection("users").document("user-1").set(USER)
+    db.collection("users").document("user-2").set({"id": "user-2", "email": "other@example.com"})
+
+    lectures = db.collection("lectures")
+    lectures.document("lecture-1").set({
+        "owner_id": "user-1",
+        "video_url": "https://youtu.be/abc",
+        "title": "Bài của tôi",
+        "media_url": "/uploads/a.mp4",
+    })
+    lectures.document("lecture-2").set({
+        "owner_id": "user-2",
+        "video_url": "https://youtu.be/xyz",
+        "title": "Bài người khác",
+        "media_url": "/uploads/b.mp4",
+    })
+
+    media = db.collection("media_owners")
+    media.document("m-1").set({"owner_id": "user-1", "media_url": "/uploads/a.mp4"})
+    media.document("m-2").set({"owner_id": "user-2", "media_url": "/uploads/b.mp4"})
+
+
+@pytest.fixture
+def account_client(monkeypatch, tmp_path):
+    from app.routers import auth as auth_router
+
+    db = FakeDB()
+    _seed(db)
+    monkeypatch.setattr(firebase_service, "db", db)
+    monkeypatch.setattr(auth_router, "UPLOAD_DIR", str(tmp_path))
+    app.dependency_overrides[get_current_user] = lambda: dict(USER)
+    try:
+        yield TestClient(app), db, tmp_path
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_export_data_returns_owner_documents_without_password(account_client):
+    client, _db, _tmp = account_client
+
+    response = client.get("/api/auth/export-data")
+
+    assert response.status_code == 200
+    assert "attachment" in response.headers["content-disposition"]
+    payload = json.loads(response.text)
+    assert payload["user"]["id"] == "user-1"
+    assert len(payload["lectures"]) == 1
+    assert payload["lectures"][0]["title"] == "Bài của tôi"
+    assert len(payload["media_owners"]) == 1
+    assert "password_hash" not in payload["user"]
+
+
+def test_delete_account_rejects_wrong_password(account_client):
+    client, db, _tmp = account_client
+
+    response = client.request(
+        "DELETE", "/api/auth/account", json={"password": "sai-mat-khau"}
+    )
+
+    assert response.status_code == 400
+    assert db.collection("users").document("user-1").exists
+    assert db.collection("lectures").document("lecture-1").exists
+
+
+def test_delete_account_removes_owner_data_and_uploaded_file(account_client):
+    client, db, tmp_path = account_client
+    upload = tmp_path / "a.mp4"
+    upload.write_bytes(b"video")
+
+    response = client.request(
+        "DELETE", "/api/auth/account", json={"password": "secret123"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["removed"] == {
+        "lectures": 1,
+        "media_owners": 1,
+        "files": 1,
+    }
+    assert not upload.exists()
+    assert not db.collection("users").document("user-1").exists
+    assert not db.collection("lectures").document("lecture-1").exists
+    assert not db.collection("media_owners").document("m-1").exists
+    assert db.collection("lectures").document("lecture-2").exists
+    assert db.collection("lectures").document("lecture-2").to_dict()["owner_id"] == "user-2"
+
+
+def test_remove_uploaded_media_blocks_path_traversal():
+    from app.routers.auth import _remove_uploaded_media
+
+    assert _remove_uploaded_media(["/uploads/../secret.mp4"]) == 0
+    assert _remove_uploaded_media(["https://example.com/uploads/a.mp4"]) == 0

@@ -58,3 +58,21 @@ def test_readiness_is_200_when_dependencies_ready(monkeypatch):
     body = response.json()
     assert body["status"] == "ready"
     assert all(body["checks"].values())
+
+
+def test_api_v1_alias_keeps_version_header():
+    response = TestClient(app).get("/api/v1/history")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.headers["X-API-Version"] == "1"
+
+
+def test_openapi_json_is_gzipped_when_requested():
+    response = TestClient(app).get(
+        "/openapi.json",
+        headers={"Accept-Encoding": "gzip"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("content-encoding") == "gzip"

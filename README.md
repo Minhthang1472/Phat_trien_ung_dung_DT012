@@ -286,7 +286,7 @@ pytest
 
 Bộ test bao phủ: băm/giải mã JWT, parser SRT/WebVTT, chuẩn hóa quiz/mindmap,
 xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL, health/readiness, SSRF, phân
-quyền cache theo `owner_id`, media token và giới hạn upload (70 test).
+quyền cache theo `owner_id`, media token và giới hạn upload (77 test).
 
 GitHub Actions chạy thêm kiểm tra manifest extension, `expo-doctor`,
 `expo export --platform web` và build Docker image.
@@ -404,7 +404,7 @@ Rules Admin).
 | `POST` | `/api/video/lookahead` | Tải phụ đề trước 15s cho video dài (Streaming) | Public / Token |
 | `POST` | `/api/video/cancel/{job_id}`| Hủy tiến trình xử lý đang chạy ngầm | Bearer Token |
 | `GET` | `/api/tts` | Phát âm chuẩn Google Translate TTS đa ngôn ngữ | Public / Optional |
-| `GET` | `/api/history` | Lấy danh sách bài giảng đã học theo tài khoản | Bearer Token |
+| `GET` | `/api/history` | Lấy danh sách bài giảng đã học theo tài khoản (`?limit=25&offset=0`) | Bearer Token |
 | `POST` | `/api/subtitles/process` | Dịch & tạo trắc nghiệm từ file phụ đề tải lên (.srt, .vtt) | Bearer Token |
 | `POST` | `/api/video/burn-subtitles`| Nhúng (burn) phụ đề cứng trực tiếp vào video qua FFmpeg | Bearer Token |
 | `GET` | `/api/video/stream-status` | Theo dõi tiến độ job streaming nền | Bearer Token |
@@ -412,10 +412,16 @@ Rules Admin).
 | `GET` | `/api/video/stream-media` | Proxy phát video (Range Request) cho Drive/LMS | Bearer Token hoặc media token |
 | `POST` | `/api/auth/extension-session` | Cấp phiên riêng cho từng bản cài extension (device-scoped) | Public |
 | `POST` | `/api/auth/ws-token` | Cấp token WebSocket ngắn hạn (1 giờ) | Bearer Token |
+| `GET` | `/api/auth/export-data` | Xuất toàn bộ dữ liệu cá nhân dạng JSON | Bearer Token |
+| `DELETE` | `/api/auth/account` | Xoá tài khoản, bài giảng và media (xác nhận mật khẩu) | Bearer Token |
 | `GET` | `/api/export` | Xuất tài liệu bài giảng (`?video_url=...&format=pdf\|docx\|md`) | Bearer Token |
 | `GET` | `/health` | Liveness probe (tiến trình còn sống) | Public |
 | `GET` | `/health/ready` | Readiness probe (Firebase, thư mục upload, JWT secret) | Public |
 | `GET` | `/metrics` | Số liệu vận hành dạng Prometheus text | Public |
+
+> Mọi endpoint `/api/...` có thêm alias `/api/v1/...`; response mang header
+> `X-API-Version: 1`. Response JSON/text lớn hơn 1KB được nén gzip, còn luồng
+> `audio/*` và `video/*` được giữ nguyên để không phá Range Request.
 
 ---
 

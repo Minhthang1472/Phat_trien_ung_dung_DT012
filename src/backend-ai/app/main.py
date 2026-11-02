@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from starlette.middleware.gzip import GZipMiddleware
 
 # Tự động vá (patch) PyAV nếu đang dùng phiên bản mới (av >= 19.0) không còn hỗ trợ tham số metadata_errors
 try:
@@ -29,7 +30,7 @@ from app.core.metrics import metrics_registry
 from app.firebase_database import firebase_service
 from app.api.websocket_router import ws_router
 from app.routers import auth_router, export_router, history_router, video_router
-from app.services.cleanup_service import cleanup_uploads, prune_jobs
+from app.services.cleanup_service import cleanup_uploads, prune_jobs, prune_rate_buckets
 
 logger = logging.getLogger("uvicorn")
 
@@ -38,16 +39,20 @@ async def _cleanup_loop() -> None:
     """Định kỳ dọn file upload và job streaming cũ để tránh đầy đĩa/RAM."""
     interval = max(60, settings.CLEANUP_INTERVAL_MINUTES * 60)
     upload_ttl = max(3600, settings.UPLOAD_TTL_HOURS * 3600)
+    audio_ttl = max(3600, settings.AUDIO_TEMP_TTL_HOURS * 3600)
     job_ttl = max(600, settings.STREAM_JOB_TTL_MINUTES * 60)
 
     while True:
         try:
             # Import muộn để tránh vòng lặp import khi khởi động
-            from app.core.dependencies import UPLOAD_DIR
+            from app.core.dependencies import UPLOAD_DIR, _rate_buckets
             from app.routers import video as video_module
+            from app.services.audio_service import AUDIO_TEMP_DIR
 
             cleanup_uploads(UPLOAD_DIR, upload_ttl)
+            cleanup_uploads(AUDIO_TEMP_DIR, audio_ttl)
             prune_jobs(video_module.streaming_jobs, job_ttl)
+            prune_rate_buckets(_rate_buckets, max(3600, job_ttl))
         except Exception as exc:  # pragma: no cover - phòng thủ
             logger.warning("Vòng lặp dọn dẹp gặp lỗi: %s", exc)
         await asyncio.sleep(interval)
@@ -83,6 +88,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Nén JSON/text lớn; Starlette tự bỏ qua audio/* và video/* để không phá stream.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
 # Cấu hình CORS để Mobile App (React Native) và Browser Extension có thể kết nối không bị chặn
 app.add_middleware(
     CORSMiddleware,
@@ -90,8 +98,19 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
-    expose_headers=["X-Request-ID", "Content-Disposition"],
+    expose_headers=["X-Request-ID", "X-API-Version", "Content-Disposition"],
 )
+
+
+@app.middleware("http")
+async def api_version_middleware(request: Request, call_next):
+    """Cho phép gọi song song ``/api/v1/...`` và ``/api/...`` (alias v1)."""
+    path = request.scope.get("path", "")
+    if path.startswith("/api/v1/"):
+        request.scope["path"] = "/api/" + path[len("/api/v1/"):]
+    response = await call_next(request)
+    response.headers.setdefault("X-API-Version", "1")
+    return response
 
 
 @app.middleware("http")

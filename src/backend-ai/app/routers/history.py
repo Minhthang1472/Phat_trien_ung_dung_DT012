@@ -7,7 +7,11 @@ router = APIRouter(prefix="/api/history", tags=["history"])
 
 @router.get("")
 @router.get("/")
-async def get_lecture_history(limit: int = 25, user=Depends(get_optional_user)):
+async def get_lecture_history(
+    limit: int = Query(25, ge=1, le=100, description="Số bài giảng mỗi trang"),
+    offset: int = Query(0, ge=0, description="Số bài giảng bỏ qua"),
+    user=Depends(get_optional_user),
+):
     """
     Lấy danh sách các bài giảng của riêng người dùng từ Google Firebase Firestore Cloud
     """
@@ -15,13 +19,25 @@ async def get_lecture_history(limit: int = 25, user=Depends(get_optional_user)):
         return {
             "items": [],
             "total": 0,
+            "limit": limit,
+            "offset": offset,
+            "has_more": False,
+            "next_offset": None,
             "storage": "Google Firebase Firestore Cloud"
         }
-    items = firebase_service.get_history(limit=limit, owner_id=user["id"])
+    items, has_more = firebase_service.get_history(
+        limit=limit,
+        offset=offset,
+        owner_id=user["id"],
+    )
 
     return {
         "items": items,
         "total": len(items),
+        "limit": limit,
+        "offset": offset,
+        "has_more": has_more,
+        "next_offset": offset + len(items) if has_more else None,
         "storage": "Google Firebase Firestore Cloud",
         "owner_id": user["id"]
     }

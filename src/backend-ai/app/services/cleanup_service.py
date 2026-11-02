@@ -78,3 +78,30 @@ def prune_jobs(
     if removed:
         logger.info("Đã dọn %s job streaming cũ khỏi bộ nhớ", removed)
     return removed
+
+
+def prune_rate_buckets(
+    buckets: Dict[str, "deque"],
+    max_idle_seconds: int,
+    now: Optional[float] = None,
+) -> int:
+    """Loại bỏ bucket rate-limit không còn request trong ``max_idle_seconds``.
+
+    ``buckets`` dùng timestamp ``time.monotonic()``. Hàm trả về số key đã xoá
+    để tránh dictionary phình to khi có nhiều IP truy cập trong thời gian dài.
+    """
+    if not buckets or max_idle_seconds <= 0:
+        return 0
+
+    current = time.monotonic() if now is None else now
+    removed = 0
+    for key, bucket in list(buckets.items()):
+        while bucket and current - bucket[0] > max_idle_seconds:
+            bucket.popleft()
+        if not bucket:
+            buckets.pop(key, None)
+            removed += 1
+
+    if removed:
+        logger.info("Đã dọn %s bucket rate-limit không hoạt động", removed)
+    return removed

@@ -208,22 +208,36 @@ class FirebaseService:
             logger.warning(f"Lỗi ghi dữ liệu vào Firebase Firestore: {e}")
             return False
 
-    def get_history(self, limit: int = 25, owner_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Lấy danh sách các bài giảng gần đây từ Firebase Firestore theo riêng từng user"""
+    def get_history(
+        self,
+        limit: int = 25,
+        owner_id: Optional[str] = None,
+        offset: int = 0,
+    ) -> tuple[List[Dict[str, Any]], bool]:
+        """Lấy một trang lịch sử bài giảng của user, mới nhất trước.
+
+        Firestore không sắp xếp theo ``cached_at`` nếu thiếu composite index,
+        nên lấy thêm ``offset + limit + 1`` bản ghi rồi sắp xếp/khử trùng lặp
+        trong bộ nhớ. Trả về ``(items, has_more)``.
+        """
         if not self.db:
             self.init_firebase()
         if not self.db:
-            return []
+            return [], False
 
         try:
+            limit = max(1, min(int(limit or 25), 100))
+            offset = max(0, int(offset or 0))
+
             query = self.db.collection("lectures")
             if owner_id:
                 query = query.where("owner_id", "==", owner_id)
             else:
-                return []
+                return [], False
 
-            # Lấy danh sách bài giảng theo owner_id và sắp xếp trong bộ nhớ Python (Tránh lỗi 400 Composite Index)
-            docs = list(query.limit(limit * 2).stream())
+            # Lấy dư để bù các bản ghi trùng URL và biết còn trang sau hay không.
+            fetch_limit = min(1000, (offset + limit + 1) * 2)
+            docs = list(query.limit(fetch_limit).stream())
             def _sort_key(d):
                 data = d.to_dict()
                 return str(data.get("cached_at") or data.get("created_at") or "")
@@ -268,12 +282,14 @@ class FirebaseService:
                     "tags": data.get("tags") or ["Bài giảng"],
                     "owner_id": data.get("owner_id"),
                 })
-                if len(history) >= limit:
+                if len(history) >= offset + limit + 1:
                     break
-            return history
+
+            has_more = len(history) > offset + limit
+            return history[offset:offset + limit], has_more
         except Exception as e:
             logger.warning(f"Lỗi lấy lịch sử Firebase: {e}")
-            return []
+            return [], False
 
     def delete_lecture(self, video_url: str, owner_id: Optional[str] = None) -> bool:
         """Xóa bài giảng của user khỏi Firebase Firestore"""
@@ -310,6 +326,79 @@ class FirebaseService:
         except Exception as e:
             logger.warning(f"Lỗi khi xóa bài giảng khỏi Firebase Firestore: {e}")
             return False
+
+    def export_user_data(self, user_id: str) -> Dict[str, Any]:
+        """Xuất toàn bộ bài giảng và quyền media thuộc về một người dùng."""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return {"lectures": [], "media_owners": []}
+
+        lectures: List[Dict[str, Any]] = []
+        media_owners: List[Dict[str, Any]] = []
+        try:
+            for doc in self.db.collection("lectures").where("owner_id", "==", user_id).stream():
+                data = doc.to_dict()
+                data.pop("password_hash", None)
+                lectures.append(data)
+        except Exception as exc:
+            logger.warning("Không xuất được danh sách bài giảng: %s", exc)
+        try:
+            for doc in self.db.collection("media_owners").where("owner_id", "==", user_id).stream():
+                media_owners.append(doc.to_dict())
+        except Exception as exc:
+            logger.warning("Không xuất được danh sách media: %s", exc)
+
+        return {"lectures": lectures, "media_owners": media_owners}
+
+    def delete_user_data(self, user_id: str) -> Dict[str, Any]:
+        """Xoá tài khoản cùng toàn bộ bài giảng và quyền media của người dùng."""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return {"deleted": False, "lectures": 0, "media_owners": 0, "media_urls": []}
+
+        media_urls = set()
+        deleted_counts = {"lectures": 0, "media_owners": 0}
+
+        for collection_name in ("lectures", "media_owners"):
+            try:
+                docs = list(
+                    self.db.collection(collection_name)
+                    .where("owner_id", "==", user_id)
+                    .stream()
+                )
+            except Exception as exc:
+                logger.warning("Không đọc được %s để xoá: %s", collection_name, exc)
+                continue
+
+            for doc in docs:
+                data = doc.to_dict() or {}
+                if data.get("media_url"):
+                    media_urls.add(data["media_url"])
+                if data.get("media_stream_url"):
+                    media_urls.add(data["media_stream_url"])
+
+            for start in range(0, len(docs), 400):
+                batch = self.db.batch()
+                for doc in docs[start:start + 400]:
+                    batch.delete(doc.reference)
+                batch.commit()
+                deleted_counts[collection_name] += len(docs[start:start + 400])
+
+        try:
+            self.db.collection("users").document(user_id).delete()
+        except Exception as exc:
+            logger.warning("Không xoá được tài khoản %s: %s", user_id, exc)
+            return {"deleted": False, **deleted_counts, "media_urls": sorted(media_urls)}
+
+        logger.info(
+            "Đã xoá tài khoản %s (%s bài giảng, %s media)",
+            user_id,
+            deleted_counts["lectures"],
+            deleted_counts["media_owners"],
+        )
+        return {"deleted": True, **deleted_counts, "media_urls": sorted(media_urls)}
 
 firebase_service = FirebaseService()
 

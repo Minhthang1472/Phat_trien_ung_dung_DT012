@@ -1,10 +1,13 @@
 import hashlib
+import json
+import os
 import random
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, Security
 from fastapi.concurrency import run_in_threadpool
 
 from app.firebase_database import firebase_service
@@ -20,17 +23,39 @@ from app.models.schemas import (
     ResetPasswordOtpRequest,
     ChangePasswordRequest,
     UpdateProfileRequest,
+    DeleteAccountRequest,
 )
 from app.services.auth_service import auth_service
 from app.services.email_service import email_service, render_otp_email
 from app.core.dependencies import (
+    UPLOAD_DIR,
     auth_rate_limit,
     get_current_user,
+    heavy_rate_limit,
     user_public_data,
     logger,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _remove_uploaded_media(media_urls) -> int:
+    """Xoá file upload thuộc tài khoản, chặn mọi đường dẫn thoát khỏi UPLOAD_DIR."""
+    removed = 0
+    for media_url in media_urls or []:
+        if not isinstance(media_url, str) or not media_url.startswith("/uploads/"):
+            continue
+        name = unquote(media_url.split("?", 1)[0][len("/uploads/"):])
+        if not name or os.path.basename(name) != name:
+            continue
+        path = os.path.join(UPLOAD_DIR, name)
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+                removed += 1
+        except OSError as exc:
+            logger.warning("Không xoá được file media %s: %s", path, exc)
+    return removed
 
 
 @router.post("/register")
@@ -549,5 +574,63 @@ async def get_profile(user=Depends(get_current_user)):
             "processed_lectures": len(lectures),
             "total_minutes": round(sum((doc.to_dict().get("duration_seconds") or 0) for doc in lectures) / 60),
             "saved_quizzes": sum(len(doc.to_dict().get("quiz") or []) for doc in lectures),
+        },
+    }
+
+
+@router.get("/export-data")
+async def export_account_data(
+    user=Depends(get_current_user),
+    _limit=Depends(heavy_rate_limit),
+):
+    """Xuất toàn bộ dữ liệu cá nhân dưới dạng JSON để người dùng lưu trữ."""
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+
+    payload = firebase_service.export_user_data(user["id"])
+    document = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "user": user_public_data(user),
+        "lectures": payload.get("lectures", []),
+        "media_owners": payload.get("media_owners", []),
+    }
+    body = json.dumps(document, ensure_ascii=False, indent=2, default=str)
+    filename = f"lecture-ai-data-{user['id'][:8]}.json"
+    return Response(
+        content=body,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete("/account")
+async def delete_account(
+    request: DeleteAccountRequest,
+    user=Depends(get_current_user),
+    _limit=Depends(heavy_rate_limit),
+):
+    """Xoá tài khoản sau khi xác nhận mật khẩu, kèm toàn bộ dữ liệu liên quan."""
+    if not firebase_service.db:
+        firebase_service.init_firebase()
+    if not firebase_service.db:
+        raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng.")
+
+    if not auth_service.verify_password(request.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=400, detail="Mật khẩu xác nhận không đúng.")
+
+    result = firebase_service.delete_user_data(user["id"])
+    if not result.get("deleted"):
+        raise HTTPException(status_code=500, detail="Không thể xoá tài khoản. Vui lòng thử lại.")
+
+    removed_files = _remove_uploaded_media(result.get("media_urls"))
+    return {
+        "deleted": True,
+        "message": "Đã xoá tài khoản và toàn bộ dữ liệu liên quan.",
+        "removed": {
+            "lectures": result.get("lectures", 0),
+            "media_owners": result.get("media_owners", 0),
+            "files": removed_files,
         },
     }

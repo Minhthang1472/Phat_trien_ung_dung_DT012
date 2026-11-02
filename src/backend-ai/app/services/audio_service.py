@@ -11,6 +11,10 @@ from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
 
+# Thư mục tạm riêng cho audio để vòng dọn dẹp chỉ xoá file do ứng dụng tạo ra.
+AUDIO_TEMP_DIR = os.path.join(tempfile.gettempdir(), "lecture-ai-audio")
+os.makedirs(AUDIO_TEMP_DIR, exist_ok=True)
+
 # Hostname tuyệt đối không được phép truy cập, kể cả khi resolve ra IP công khai.
 BLOCKED_HOSTNAMES = {
     "localhost",
@@ -288,7 +292,7 @@ class AudioService:
         - Cắt đoạn theo mốc thời gian bắt đầu & kết thúc (Yêu cầu 4)
         """
         video_url = AudioService.validate_source_url(video_url)
-        temp_dir = tempfile.gettempdir()
+        temp_dir = AUDIO_TEMP_DIR
         out_template = os.path.join(temp_dir, "%(id)s.%(ext)s")
 
         # 1. Trích xuất metadata nhanh để kiểm tra bản quyền & DRM
@@ -430,7 +434,7 @@ class AudioService:
         import subprocess
         import uuid
 
-        temp_dir = tempfile.gettempdir()
+        temp_dir = AUDIO_TEMP_DIR
         file_ext = os.path.splitext(filename)[1] or ".mp4"
         out_wav_path = os.path.join(temp_dir, f"proc_{uuid.uuid4().hex[:8]}.wav")
 

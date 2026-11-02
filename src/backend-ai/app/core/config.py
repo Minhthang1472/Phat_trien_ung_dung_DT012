@@ -47,6 +47,7 @@ class Settings:
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     UPLOAD_TTL_HOURS: int = int(os.getenv("UPLOAD_TTL_HOURS", "24"))
+    AUDIO_TEMP_TTL_HOURS: int = int(os.getenv("AUDIO_TEMP_TTL_HOURS", "6"))
     STREAM_JOB_TTL_MINUTES: int = int(os.getenv("STREAM_JOB_TTL_MINUTES", "120"))
     CLEANUP_INTERVAL_MINUTES: int = int(os.getenv("CLEANUP_INTERVAL_MINUTES", "30"))
 

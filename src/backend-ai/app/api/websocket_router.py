@@ -1,11 +1,11 @@
 import os
 import asyncio
-import tempfile
 import uuid
 import json
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
+from app.services.audio_service import AUDIO_TEMP_DIR
 from app.services.whisper_service import whisper_service
 from app.services.auth_service import auth_service
 
@@ -40,7 +40,7 @@ async def websocket_live_caption(websocket: WebSocket):
     logger.info("Client kết nối thành công tới WebSocket Live-Caption.")
     
     buffer_bytes = bytearray()
-    temp_dir = tempfile.gettempdir()
+    temp_dir = AUDIO_TEMP_DIR
     
     try:
         await websocket.send_json({

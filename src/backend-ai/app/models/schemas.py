@@ -96,6 +96,10 @@ class UpdateProfileRequest(BaseModel):
     email_otp: Optional[str] = None
 
 
+class DeleteAccountRequest(BaseModel):
+    password: str = Field(..., min_length=1, description="Mật khẩu xác nhận xoá tài khoản")
+
+
 class MediaTokenRequest(BaseModel):
     media_url: str = Field(..., description="Đường dẫn file media (/uploads/... hoặc URL đầy đủ)")
 
