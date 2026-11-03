@@ -117,10 +117,27 @@ export default function SettingsScreen({ onNavigate, onLogout, currentUser }) {
       setOldPassword('');
       setChangeNewPass('');
       setChangeConfirmPass('');
-      setTimeout(() => {
-        setModalVisible(false);
-        setChangeMsg('');
-      }, 1500);
+      // Backend thu hồi mọi phiên sau khi đổi mật khẩu -> buộc đăng nhập lại.
+      Alert.alert(
+        'Đổi mật khẩu thành công',
+        'Vì lý do bảo mật, bạn cần đăng nhập lại bằng mật khẩu mới.',
+        [
+          {
+            text: 'Đăng nhập lại',
+            onPress: () => {
+              setModalVisible(false);
+              setChangeMsg('');
+              setUser(null);
+              if (onLogout) {
+                onLogout();
+              } else if (onNavigate) {
+                onNavigate('Auth');
+              }
+            },
+          },
+        ],
+        { cancelable: false }
+      );
     } catch (err) {
       setChangeError(err.message || 'Đổi mật khẩu thất bại.');
     } finally {

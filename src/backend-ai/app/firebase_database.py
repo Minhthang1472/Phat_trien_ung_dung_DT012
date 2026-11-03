@@ -3,6 +3,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
+from urllib.parse import urlsplit
 
 try:
     import firebase_admin
@@ -24,12 +25,25 @@ class FirebaseService:
         if self.initialized and self.db is not None:
             return
 
-        # Tìm file serviceAccountKey.json ở thư mục làm việc hoặc trong src/backend-ai
-        possible_paths = [
-            os.path.join(os.getcwd(), "serviceAccountKey.json"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "serviceAccountKey.json"),
-            os.path.join(os.path.dirname(__file__), "serviceAccountKey.json"),
-        ]
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        possible_paths = []
+
+        # Ưu tiên đường dẫn cấu hình tường minh (Docker mount file vào /app/secrets).
+        env_path = os.getenv("FIREBASE_CREDENTIALS_PATH", "").strip()
+        if env_path:
+            possible_paths.append(env_path)
+            if not os.path.isabs(env_path):
+                possible_paths.append(os.path.join(base_dir, env_path))
+                possible_paths.append(os.path.join(os.getcwd(), env_path))
+
+        # Fallback: tìm serviceAccountKey.json ở thư mục làm việc hoặc src/backend-ai
+        possible_paths.extend(
+            [
+                os.path.join(os.getcwd(), "serviceAccountKey.json"),
+                os.path.join(base_dir, "serviceAccountKey.json"),
+                os.path.join(os.path.dirname(__file__), "serviceAccountKey.json"),
+            ]
+        )
 
         key_path = None
         for p in possible_paths:
@@ -82,6 +96,36 @@ class FirebaseService:
         except Exception as exc:
             logger.warning("Không lưu được quyền sở hữu media: %s", exc)
             return False
+
+    def get_referenced_media_filenames(self) -> Optional[set]:
+        """Trả về tên các file upload còn được bài giảng/media_owners tham chiếu.
+
+        ``None`` nghĩa là không đọc được Firestore; khi đó vòng dọn dẹp phải bỏ
+        qua uploads để tránh xoá nhầm file đang dùng.
+        """
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return None
+        try:
+            names = set()
+            for collection_name in ("lectures", "media_owners"):
+                for doc in self.db.collection(collection_name).stream():
+                    data = doc.to_dict() or {}
+                    for field in ("media_url", "media_stream_url"):
+                        value = data.get(field)
+                        if not value:
+                            continue
+                        path = urlsplit(str(value)).path
+                        if "/uploads/" not in path:
+                            continue
+                        name = os.path.basename(path)
+                        if name:
+                            names.add(name)
+            return names
+        except Exception as exc:
+            logger.warning("Không đọc được danh sách media đang dùng: %s", exc)
+            return None
 
     def user_owns_media(self, user_id: str, media_url: str) -> bool:
         """Kiểm tra file media thuộc sở hữu người dùng (bảng media_owners hoặc lectures)."""
@@ -352,6 +396,81 @@ class FirebaseService:
 
         return {"lectures": lectures, "media_owners": media_owners}
 
+    def list_deleted_users(self, limit: int = 50) -> list:
+        """Trả về danh sách rút gọn các tài khoản đang bị xoá mềm."""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return []
+
+        cap = max(1, min(int(limit or 50), 200))
+        users = {}
+        try:
+            # Truy vấn cả hai dấu hiệu để không bỏ sót dữ liệu cũ chỉ có
+            # account_status="deleted" (trước khi thêm trường deleted).
+            queries = [
+                self.db.collection("users").where("deleted", "==", True),
+                self.db.collection("users").where("account_status", "==", "deleted"),
+            ]
+            for query in queries:
+                for doc in query.limit(cap).stream():
+                    data = doc.to_dict() or {}
+                    users[doc.id] = {
+                        "id": doc.id,
+                        "email": data.get("email"),
+                        "display_name": data.get("display_name"),
+                        "auth_provider": data.get("auth_provider") or "password",
+                        "deleted_at": data.get("deleted_at"),
+                        "account_status": data.get("account_status") or "deleted",
+                    }
+                    if len(users) >= cap:
+                        break
+                if len(users) >= cap:
+                    break
+        except Exception as exc:
+            logger.warning("Không đọc được danh sách tài khoản đã xoá: %s", exc)
+            return []
+        return list(users.values())[:cap]
+
+    def restore_user_account(self, user_id: str) -> Dict[str, Any]:
+        """Khôi phục tài khoản xoá mềm bằng cách xoá các dấu hiệu vô hiệu hoá."""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return {"restored": False, "reason": "firebase_unavailable"}
+
+        user_ref = self.db.collection("users").document(user_id)
+        snapshot = user_ref.get()
+        if not snapshot.exists:
+            return {"restored": False, "reason": "not_found"}
+
+        data = snapshot.to_dict() or {}
+        if not (data.get("deleted") or data.get("deleted_at") or data.get("account_status") == "deleted"):
+            return {"restored": False, "reason": "not_deleted"}
+
+        try:
+            user_ref.update(
+                {
+                    "deleted": False,
+                    "deleted_at": None,
+                    "account_status": "active",
+                }
+            )
+        except Exception as exc:
+            logger.warning("Không khôi phục được tài khoản %s: %s", user_id, exc)
+            return {"restored": False, "reason": "update_failed"}
+
+        logger.info("Đã khôi phục tài khoản %s", user_id)
+        return {
+            "restored": True,
+            "user": {
+                "id": user_id,
+                "email": data.get("email"),
+                "display_name": data.get("display_name"),
+                "auth_provider": data.get("auth_provider") or "password",
+            },
+        }
+
     def soft_delete_user_data(self, user_id: str) -> Dict[str, Any]:
         """Vô hiệu hoá tài khoản (xoá mềm), giữ nguyên toàn bộ dữ liệu.
 
@@ -405,6 +524,8 @@ class FirebaseService:
                     "deleted": True,
                     "deleted_at": deleted_at,
                     "account_status": "deleted",
+                    "token_version": int(user.get("token_version") or 0) + 1,
+                    "refresh_sessions": [],
                 }
             )
         except Exception as exc:

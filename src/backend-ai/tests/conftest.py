@@ -9,4 +9,5 @@ if BACKEND_ROOT not in sys.path:
 # Cấu hình tối thiểu để các service bảo mật hoạt động trong môi trường test.
 os.environ.setdefault("JWT_SECRET", "test-secret-" + "x" * 48)
 os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("ALLOWED_HOSTS", "testserver")
 os.environ.setdefault("FIREBASE_CREDENTIALS_PATH", "serviceAccountKey.test-missing.json")

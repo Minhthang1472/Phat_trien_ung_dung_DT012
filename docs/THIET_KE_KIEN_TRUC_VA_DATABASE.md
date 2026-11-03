@@ -120,10 +120,14 @@ Mỗi tài khoản là một document. ID là SHA-256 của email; tài khoản 
 | `username` | String | Required, duy nhất | Tên đăng nhập (chữ thường) |
 | `email` | String | Required | Email đăng nhập |
 | `display_name` | String | Required | Tên hiển thị |
-| `password_hash` | String | Optional | Mật khẩu băm Bcrypt; rỗng với tài khoản Google |
+| `password_hash` | String | Optional | Mật khẩu băm PBKDF2-SHA256 (240.000 vòng); rỗng với tài khoản Google |
 | `auth_provider` | String | Enum: `password`, `google`, `extension` | Nguồn xác thực |
 | `avatar_url` / `avatar` | String | Optional | Ảnh đại diện |
 | `email_verified` | Boolean | Default: `false` | Đã xác minh OTP hay chưa |
+| `verification_otp_hash`, `reset_otp_hash`, `email_change_otp_hash` | String | Optional | OTP băm HMAC-SHA256 (không lưu plaintext) |
+| `*_otp_attempts` | Number | Default: 0 | Số lần nhập sai; vượt ngưỡng sẽ vô hiệu hoá OTP |
+| `token_version` | Number | Default: 0 | Tăng khi thu hồi toàn bộ phiên đăng nhập |
+| `refresh_sessions` | Array of Objects | Optional | Phiên refresh gồm `id`, `hash`, `created_at`, `expires_at`; tối đa 5 phiên |
 | `created_at` | String (ISO-8601) | Required | Thời điểm tạo tài khoản |
 | `deleted` | Boolean | Default: `false` | Đánh dấu xoá mềm |
 | `deleted_at` | String (ISO-8601) | Optional | Thời điểm vô hiệu hoá |

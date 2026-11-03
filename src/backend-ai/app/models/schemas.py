@@ -36,14 +36,23 @@ class BurnSubtitlesRequest(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    display_name: Optional[str] = None
+    email: str = Field(..., max_length=254)
+    password: str = Field(..., min_length=8, max_length=128)
+    display_name: Optional[str] = Field(default=None, max_length=80)
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: str = Field(..., max_length=254)
+    password: str = Field(..., min_length=1, max_length=128)
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=20)
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: Optional[str] = Field(default=None, max_length=4096)
+    revoke_all: bool = False
 
 
 class ExtensionSessionRequest(BaseModel):
@@ -61,32 +70,32 @@ class GoogleLoginRequest(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: str
+    email: str = Field(..., max_length=254)
 
 
 class ResetPasswordRequest(BaseModel):
-    token: str = Field(..., min_length=20)
-    password: str
+    token: str = Field(..., min_length=20, max_length=4096)
+    password: str = Field(..., min_length=8, max_length=128)
 
 
 class VerifyOtpRequest(BaseModel):
-    email: str
+    email: str = Field(..., max_length=254)
     otp: str = Field(..., min_length=4, max_length=10)
 
 
 class ResendOtpRequest(BaseModel):
-    email: str
+    email: str = Field(..., max_length=254)
 
 
 class ResetPasswordOtpRequest(BaseModel):
-    email: str
+    email: str = Field(..., max_length=254)
     otp: str = Field(..., min_length=4, max_length=10)
-    new_password: str = Field(..., min_length=8)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class ChangePasswordRequest(BaseModel):
-    old_password: str
-    new_password: str = Field(..., min_length=8)
+    old_password: str = Field(..., max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
 class UpdateProfileRequest(BaseModel):

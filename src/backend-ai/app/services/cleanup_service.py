@@ -18,20 +18,29 @@ def cleanup_uploads(
     directory: str,
     max_age_seconds: int,
     now: Optional[float] = None,
+    protected_names: Optional[set] = None,
 ) -> int:
     """Xoá các file trong ``directory`` có mtime cũ hơn ``max_age_seconds``.
 
-    Trả về số file đã xoá. Lỗi trên từng file được ghi log và bỏ qua để
-    không làm hỏng vòng lặp dọn dẹp.
+    ``protected_names`` chứa tên file (basename) vẫn đang được bài giảng tham
+    chiếu; các file này không bị xoá dù đã quá TTL. Trả về số file đã xoá. Lỗi
+    trên từng file được ghi log và bỏ qua để không làm hỏng vòng lặp dọn dẹp.
     """
     if not directory or not os.path.isdir(directory) or max_age_seconds <= 0:
         return 0
 
+    protected = {
+        os.path.basename(str(name))
+        for name in (protected_names or set())
+        if str(name).strip()
+    }
     current = time.time() if now is None else now
     removed = 0
 
     for root, _dirs, files in os.walk(directory):
         for name in files:
+            if name in protected:
+                continue
             path = os.path.join(root, name)
             try:
                 if current - os.path.getmtime(path) <= max_age_seconds:

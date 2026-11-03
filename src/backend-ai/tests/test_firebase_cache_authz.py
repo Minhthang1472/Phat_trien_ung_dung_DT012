@@ -118,6 +118,52 @@ def test_global_cache_view_strips_private_fields():
     assert "tags" not in data
 
 
+class StreamCollection:
+    def __init__(self, docs):
+        self._docs = docs
+
+    def stream(self):
+        return iter([FakeDoc(doc) for doc in self._docs])
+
+
+class StreamDB:
+    def __init__(self, collections):
+        self._collections = collections
+
+    def collection(self, name):
+        return StreamCollection(self._collections.get(name, []))
+
+
+def test_referenced_media_filenames_collects_upload_basenames():
+    service = FirebaseService()
+    service.db = StreamDB(
+        {
+            "lectures": [
+                {"media_url": "/uploads/lecture.mp4"},
+                {"media_stream_url": "https://api.example.com/uploads/streamed.webm"},
+                {"media_url": "https://cdn.example.com/external.mp4"},
+            ],
+            "media_owners": [{"media_url": "/uploads/owned.mp4"}],
+        }
+    )
+
+    names = service.get_referenced_media_filenames()
+
+    assert names == {"lecture.mp4", "streamed.webm", "owned.mp4"}
+
+
+def test_referenced_media_filenames_returns_none_on_error():
+    service = FirebaseService()
+
+    class BrokenDB:
+        def collection(self, _name):
+            raise RuntimeError("firestore down")
+
+    service.db = BrokenDB()
+
+    assert service.get_referenced_media_filenames() is None
+
+
 def test_saved_global_copy_has_no_private_metadata():
     service = FirebaseService()
     service.db = FakeDB()

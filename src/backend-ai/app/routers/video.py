@@ -116,6 +116,8 @@ def _ensure_media_token_active(claims: dict) -> None:
         raise HTTPException(status_code=403, detail="Không tìm thấy chủ sở hữu media.")
     if auth_service.is_account_deleted(owner):
         raise HTTPException(status_code=403, detail="Tài khoản đã bị vô hiệu hoá.")
+    if int(claims.get("ver") or 0) != auth_service.user_token_version(owner):
+        raise HTTPException(status_code=403, detail="Media token đã bị thu hồi. Vui lòng đăng nhập lại.")
 
 
 async def _read_upload_limited(
@@ -209,7 +211,9 @@ async def issue_media_token(
         media_url = audio_service.validate_source_url(raw)
         kind = "stream"
 
-    token = auth_service.create_media_token(user["id"], media_url)
+    token = auth_service.create_media_token(
+        user["id"], media_url, auth_service.user_token_version(user)
+    )
     return {
         "media_url": media_url,
         "kind": kind,
@@ -307,7 +311,7 @@ async def stream_media_endpoint(
         raise
     except Exception as e:
         logger.error(f"Lỗi kết nối nguồn media {target_url}: {e}")
-        raise HTTPException(status_code=502, detail=f"Không thể kết nối đến máy chủ chứa video: {e}")
+        raise HTTPException(status_code=502, detail="Không thể kết nối đến máy chủ chứa video.")
 
     status_code = r.status_code if r.status_code in (200, 206) else 200
     res_headers = {
@@ -486,7 +490,7 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
             raise
         except Exception as e:
             logger.error(f"Lỗi khi bóc tách âm thanh: {e}")
-            raise HTTPException(status_code=500, detail=f"Không thể bóc tách âm thanh từ URL ({e})")
+            raise HTTPException(status_code=500, detail="Không thể bóc tách âm thanh từ URL.")
 
         if request.job_id and request.job_id in cancelled_jobs:
             if os.path.exists(audio_info.get("audio_path", "")):
@@ -506,7 +510,7 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
             )
         except Exception as e:
             logger.error(f"Lỗi khi chạy mô hình Whisper: {e}")
-            raise HTTPException(status_code=500, detail=f"Lỗi phiên âm giọng nói AI ({e})")
+            raise HTTPException(status_code=500, detail="Lỗi phiên âm giọng nói AI.")
         finally:
             if os.path.exists(audio_path):
                 try: os.remove(audio_path)
@@ -710,7 +714,7 @@ async def upload_video(
         if saved_file_path and os.path.exists(saved_file_path):
             os.remove(saved_file_path)
         logger.error(f"Lỗi khi đọc file upload: {e}")
-        raise HTTPException(status_code=400, detail=f"Không thể xử lý file tải lên: {e}")
+        raise HTTPException(status_code=400, detail="Không thể xử lý file tải lên.")
 
     if job_id and job_id in cancelled_jobs:
         if os.path.exists(audio_info.get("audio_path", "")):
@@ -732,7 +736,7 @@ async def upload_video(
         if saved_file_path and os.path.exists(saved_file_path):
             os.remove(saved_file_path)
         logger.error(f"Lỗi khi nhận diện giọng nói: {e}")
-        raise HTTPException(status_code=500, detail=f"Lỗi phiên âm: {e}")
+        raise HTTPException(status_code=500, detail="Lỗi phiên âm.")
     finally:
         if os.path.exists(audio_path):
             try: os.remove(audio_path)
@@ -778,7 +782,9 @@ async def upload_video(
     result = {
         "video_url": f"local_file://{file.filename}",
         "media_url": media_stream_url,
-        "media_access_token": auth_service.create_media_token(user["id"], media_stream_url),
+        "media_access_token": auth_service.create_media_token(
+            user["id"], media_stream_url, auth_service.user_token_version(user)
+        ),
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],
         "language": target_lang,
@@ -878,7 +884,9 @@ async def burn_subtitles_into_video(request: BurnSubtitlesRequest, user=Depends(
     firebase_service.register_media_owner(user["id"], f"/uploads/{output_name}")
     return {
         "media_url": f"/uploads/{output_name}",
-        "media_access_token": auth_service.create_media_token(user["id"], f"/uploads/{output_name}"),
+        "media_access_token": auth_service.create_media_token(
+            user["id"], f"/uploads/{output_name}", auth_service.user_token_version(user)
+        ),
         "filename": output_name,
         "message": "Da tao MP4 co phu de ghi cung.",
     }
@@ -1121,7 +1129,9 @@ async def pair_video_and_subtitles(
         "video_url": lecture_url,
         "media_url": media_stream_url,
         "media_access_token": (
-            auth_service.create_media_token(user["id"], media_stream_url)
+            auth_service.create_media_token(
+                user["id"], media_stream_url, auth_service.user_token_version(user)
+            )
             if media_stream_url else None
         ),
         "title": final_title,

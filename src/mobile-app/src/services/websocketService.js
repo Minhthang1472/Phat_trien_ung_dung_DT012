@@ -14,28 +14,37 @@ class WebSocketService {
   }
 
   async getStreamToken(baseUrl) {
-    // Ưu tiên token WebSocket ngắn hạn (1 giờ) thay vì JWT dài hạn trong URL
-    try {
-      const authToken = await apiService.getAuthToken();
-      if (authToken) {
-        const res = await fetch(`${baseUrl}/api/auth/ws-token`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${authToken}` },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.token) return data.token;
-        }
-      }
-    } catch (_) {}
-    return apiService.getAuthToken();
+    // Chỉ dùng token WebSocket ngắn hạn; access token thường không được
+    // chấp nhận ở /api/live/stream nên không fallback để tránh lỗi 1008.
+    const authToken = await apiService.getAuthToken();
+    if (!authToken) {
+      throw new Error('Bạn cần đăng nhập để sử dụng Live-Caption.');
+    }
+    const res = await fetch(`${baseUrl}/api/auth/ws-token`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (!res.ok) {
+      throw new Error('Không thể tạo token cho luồng Live-Caption.');
+    }
+    const data = await res.json();
+    if (!data || !data.token) {
+      throw new Error('Máy chủ không trả về token Live-Caption.');
+    }
+    return data.token;
   }
 
   async connect(callbacks = {}) {
     this.callbacks = { ...this.callbacks, ...callbacks };
     const baseUrl = await apiService.getBaseUrl();
-    const token = await this.getStreamToken(baseUrl);
-    const wsUrl = `${baseUrl.replace(/^http/, 'ws')}/api/live/stream?token=${encodeURIComponent(token || '')}`;
+    let token;
+    try {
+      token = await this.getStreamToken(baseUrl);
+    } catch (error) {
+      this.callbacks.onError(error);
+      return;
+    }
+    const wsUrl = `${baseUrl.replace(/^http/, 'ws')}/api/live/stream?token=${encodeURIComponent(token)}`;
 
     try {
       this.ws = new WebSocket(wsUrl);

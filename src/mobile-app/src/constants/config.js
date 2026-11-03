@@ -20,6 +20,8 @@ export const STORAGE_KEYS = {
   DEFAULT_EXPORT_DIR: '@lecture_ai_default_export_dir',
   DEFAULT_EXPORT_DIR_NAME: '@lecture_ai_default_export_dir_name',
   AUTH_TOKEN: 'lecture_ai_auth_token',
+  AUTH_REFRESH_TOKEN: 'lecture_ai_refresh_token',
+  AUTH_EXPIRES_AT: '@lecture_ai_auth_expires_at',
   AUTH_USER: '@lecture_ai_auth_user',
 };
 

@@ -1,7 +1,9 @@
 # Docker Compose cho backend FastAPI.
 #
 # Chuẩn bị:
-#   1. Tạo file .env ở thư mục gốc (hoặc export biến môi trường) với JWT_SECRET dài >= 32 ký tự.
+#   1. Tạo file .env ở thư mục gốc từ .env.example. Với ENVIRONMENT=production
+#      (mặc định) cần JWT_SECRET >= 32 ký tự, SMTP đầy đủ, PUBLIC_API_URL và
+#      CORS_ORIGINS dùng HTTPS, ALLOWED_HOSTS là domain cụ thể.
 #   2. Đặt serviceAccountKey.json vào ./secrets/ (đã được .gitignore bảo vệ).
 #   3. docker compose up --build
 #
@@ -24,7 +26,16 @@ services:
       FIREBASE_CREDENTIALS_PATH: /app/secrets/serviceAccountKey.json
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET phải được đặt và dài ít nhất 32 ký tự}
-      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-168}
+      ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES:-60}
+      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
+      MAX_REFRESH_SESSIONS: ${MAX_REFRESH_SESSIONS:-5}
+      OTP_TTL_MINUTES: ${OTP_TTL_MINUTES:-10}
+      OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-5}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      ENABLE_DOCS: ${ENABLE_DOCS:-false}
+      WS_MAX_CONNECTIONS: ${WS_MAX_CONNECTIONS:-20}
+      WS_MAX_BUFFER_BYTES: ${WS_MAX_BUFFER_BYTES:-5242880}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
@@ -42,7 +53,11 @@ services:
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
       FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
+      # Development dùng '*' cho tiện truy cập LAN; production bắt buộc domain cụ thể
+      # (settings.validate() sẽ từ chối '*').
+      ALLOWED_HOSTS: "${ALLOWED_HOSTS:-*}"
       REDIS_URL: ${REDIS_URL:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       UPLOAD_TTL_HOURS: ${UPLOAD_TTL_HOURS:-24}
       AUDIO_TEMP_TTL_HOURS: ${AUDIO_TEMP_TTL_HOURS:-6}
       STREAM_JOB_TTL_MINUTES: ${STREAM_JOB_TTL_MINUTES:-120}

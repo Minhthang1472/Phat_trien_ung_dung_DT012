@@ -2,6 +2,7 @@ import os
 import time
 import logging
 from collections import defaultdict, deque
+from ipaddress import ip_address, ip_network
 from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -17,9 +18,76 @@ UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
+def _trusted_proxy_networks():
+    networks = []
+    for entry in settings.TRUSTED_PROXIES:
+        try:
+            networks.append(ip_network(entry, strict=False))
+        except ValueError:
+            logger.warning("Bỏ qua TRUSTED_PROXIES không hợp lệ: %s", entry)
+    return networks
+
+
+def _clean_ip(value: str) -> str:
+    """Chuẩn hoá IP từ header, chấp nhận cả dạng ``1.2.3.4:port`` và ``[::1]:port``."""
+    value = (value or "").strip().strip('"')
+    if value.startswith("[") and "]" in value:
+        return value[1:value.index("]")]
+    if value.count(":") == 1:
+        host, _, port = value.rpartition(":")
+        if port.isdigit():
+            return host
+    return value
+
+
+def client_ip_from_request(request: Request) -> str:
+    """Lấy IP người dùng, chỉ tin ``X-Forwarded-For`` khi kết nối đến từ proxy tin cậy.
+
+    Nếu ``TRUSTED_PROXIES`` để trống, luôn dùng IP kết nối trực tiếp để tránh
+    giả mạo header. Khi có proxy, duyệt từ phải sang trái và bỏ qua các IP proxy
+    tin cậy, trả về IP đầu tiên không thuộc danh sách.
+    """
+    peer = request.client.host if request.client else ""
+    if not peer:
+        return "unknown"
+
+    networks = _trusted_proxy_networks()
+    if not networks:
+        return peer
+
+    try:
+        peer_ip = ip_address(_clean_ip(peer))
+    except ValueError:
+        return peer
+    if not any(peer_ip in network for network in networks):
+        return peer
+
+    forwarded = request.headers.get("x-forwarded-for", "")
+    candidates = [_clean_ip(item) for item in forwarded.split(",") if item.strip()]
+    for candidate in reversed(candidates):
+        try:
+            candidate_ip = ip_address(candidate)
+        except ValueError:
+            continue
+        if not any(candidate_ip in network for network in networks):
+            return str(candidate_ip)
+    # Mọi hop đều là proxy tin cậy: dùng hop trái nhất làm client.
+    if candidates:
+        return candidates[0]
+    return str(peer_ip)
+
+
+def _rate_limited(window_seconds: int) -> HTTPException:
+    return HTTPException(
+        status_code=429,
+        detail="Quá nhiều yêu cầu, vui lòng thử lại sau.",
+        headers={"Retry-After": str(max(1, window_seconds))},
+    )
+
+
 def rate_limit(scope: str, max_requests: int, window_seconds: int):
     async def dependency(request: Request):
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = client_ip_from_request(request)
         key = f"{scope}:{client_ip}"
         now = time.monotonic()
         global _redis_client
@@ -33,7 +101,7 @@ def rate_limit(scope: str, max_requests: int, window_seconds: int):
                 if count == 1:
                     await _redis_client.expire(redis_key, window_seconds)
                 if count > max_requests:
-                    raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu, vui lòng thử lại sau.")
+                    raise _rate_limited(window_seconds)
                 return
             except HTTPException:
                 raise
@@ -44,7 +112,7 @@ def rate_limit(scope: str, max_requests: int, window_seconds: int):
         while bucket and now - bucket[0] > window_seconds:
             bucket.popleft()
         if len(bucket) >= max_requests:
-            raise HTTPException(status_code=429, detail="Quá nhiều yêu cầu, vui lòng thử lại sau.")
+            raise _rate_limited(window_seconds)
         bucket.append(now)
     return dependency
 
@@ -63,12 +131,14 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Vui lòng đăng nhập để sử dụng hồ sơ người dùng.",
         )
-    claims = auth_service.decode_token(credentials.credentials)
+    claims = auth_service.decode_access_token(credentials.credentials)
     user = auth_service.get_user(claims.get("sub", ""))
     if not user:
         raise HTTPException(status_code=401, detail="Không tìm thấy tài khoản.")
     if auth_service.is_account_deleted(user):
         raise HTTPException(status_code=403, detail="Tài khoản đã bị vô hiệu hoá.")
+    if auth_service.user_token_version(user) != int(claims.get("ver") or 0):
+        raise HTTPException(status_code=401, detail="Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại.")
     return user
 
 
@@ -78,9 +148,13 @@ def get_optional_user(
     if not credentials:
         return None
     try:
-        claims = auth_service.decode_token(credentials.credentials)
+        claims = auth_service.decode_access_token(credentials.credentials)
         user = auth_service.get_user(claims.get("sub", ""))
+        if not user:
+            return None
         if auth_service.is_account_deleted(user):
+            return None
+        if auth_service.user_token_version(user) != int(claims.get("ver") or 0):
             return None
         return user
     except HTTPException:

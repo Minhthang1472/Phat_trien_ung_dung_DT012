@@ -59,7 +59,7 @@ export default function SystemInfoModal({
               </View>
               <View style={styles.infoRowItem}>
                 <Text style={styles.infoRowKey}>Bảo mật & Xác thực:</Text>
-                <Text style={styles.infoRowVal}>Mã hóa Bcrypt + OTP Email 6 chữ số</Text>
+                <Text style={styles.infoRowVal}>Mã hóa PBKDF2-SHA256 + OTP Email 6 chữ số</Text>
               </View>
               <View style={styles.infoRowItem}>
                 <Text style={styles.infoRowKey}>Nền tảng hỗ trợ:</Text>

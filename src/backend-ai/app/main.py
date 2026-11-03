@@ -1,14 +1,17 @@
 import asyncio
+import hmac
 import logging
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Tự động vá (patch) PyAV nếu đang dùng phiên bản mới (av >= 19.0) không còn hỗ trợ tham số metadata_errors
 try:
@@ -30,9 +33,14 @@ from app.core.metrics import metrics_registry
 from app.firebase_database import firebase_service
 from app.api.websocket_router import ws_router
 from app.routers import auth_router, export_router, history_router, video_router
+from app.routers import admin_router
 from app.services.cleanup_service import cleanup_uploads, prune_jobs, prune_rate_buckets
 
 logger = logging.getLogger("uvicorn")
+
+# Chỉ chấp nhận request-id do client gửi nếu đúng định dạng, tránh log injection
+# và header quá dài.
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
 async def _cleanup_loop() -> None:
@@ -49,8 +57,23 @@ async def _cleanup_loop() -> None:
             from app.routers import video as video_module
             from app.services.audio_service import AUDIO_TEMP_DIR
 
-            cleanup_uploads(UPLOAD_DIR, upload_ttl)
-            cleanup_uploads(AUDIO_TEMP_DIR, audio_ttl)
+            # Chỉ dọn uploads khi đọc được danh sách media đang được tham chiếu.
+            # Nếu Firestore lỗi (None) thì bỏ qua để tránh xoá nhầm file còn dùng.
+            # Firestore Admin SDK là đồng bộ; chạy trong thread để không chặn
+            # event loop (API/WebSocket) khi quét dữ liệu lớn.
+            referenced_media = await asyncio.to_thread(
+                firebase_service.get_referenced_media_filenames
+            )
+            if referenced_media is None:
+                logger.warning("Bỏ qua dọn uploads vì chưa đọc được dữ liệu Firestore.")
+            else:
+                await asyncio.to_thread(
+                    cleanup_uploads,
+                    UPLOAD_DIR,
+                    upload_ttl,
+                    protected_names=referenced_media,
+                )
+            await asyncio.to_thread(cleanup_uploads, AUDIO_TEMP_DIR, audio_ttl)
             prune_jobs(video_module.streaming_jobs, job_ttl)
             prune_rate_buckets(_rate_buckets, max(3600, job_ttl))
         except Exception as exc:  # pragma: no cover - phòng thủ
@@ -60,6 +83,7 @@ async def _cleanup_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.validate()
     configure_logging(settings.LOG_LEVEL)
     logger.info(
         "Khởi động %s (env=%s, upload_ttl=%sh, job_ttl=%smin)",
@@ -81,24 +105,39 @@ async def lifespan(app: FastAPI):
             await cleanup_task
 
 
+_DOCS_ENABLED = settings.ENABLE_DOCS or not settings.is_production()
+
 app = FastAPI(
     title="Lecture Caption & Summary AI API",
     description="Hệ thống tự động bóc tách phụ đề, đồng bộ timestamps, dịch thuật đa ngôn ngữ và tóm tắt bài giảng",
     version="2.0.0",
     lifespan=lifespan,
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
 )
 
 # Nén JSON/text lớn; Starlette tự bỏ qua audio/* và video/* để không phá stream.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
+
+# Chặn Host header lạ (DNS rebinding/host poisoning). Luôn cho phép địa chỉ nội
+# bộ để healthcheck của Docker hoạt động; môi trường test dùng host "testserver".
+_allowed_hosts = list(dict.fromkeys(settings.ALLOWED_HOSTS))
+for _local_host in ("127.0.0.1", "localhost"):
+    if _local_host not in _allowed_hosts:
+        _allowed_hosts.append(_local_host)
+if not settings.is_production() and "testserver" not in _allowed_hosts:
+    _allowed_hosts.append("testserver")
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
 
 # Cấu hình CORS để Mobile App (React Native) và Browser Extension có thể kết nối không bị chặn
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
-    expose_headers=["X-Request-ID", "X-API-Version", "Content-Disposition"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Admin-Token"],
+    expose_headers=["X-Request-ID", "X-API-Version", "Content-Disposition", "Retry-After"],
 )
 
 
@@ -116,7 +155,11 @@ async def api_version_middleware(request: Request, call_next):
 @app.middleware("http")
 async def request_context_middleware(request: Request, call_next):
     """Gắn request-id và ghi log thời gian xử lý cho mọi request."""
-    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
+    supplied_request_id = (request.headers.get("X-Request-ID") or "").strip()
+    if _REQUEST_ID_RE.fullmatch(supplied_request_id):
+        request_id = supplied_request_id
+    else:
+        request_id = uuid.uuid4().hex[:12]
     started = time.perf_counter()
     status_code = 500
     response = None
@@ -140,6 +183,35 @@ async def request_context_middleware(request: Request, call_next):
             response.headers["X-Request-ID"] = request_id
 
 
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Thêm header bảo mật cho mọi response (kể cả lỗi)."""
+    response = await call_next(request)
+    headers = response.headers
+    headers.setdefault("X-Content-Type-Options", "nosniff")
+    headers.setdefault("X-Frame-Options", "DENY")
+    headers.setdefault("Referrer-Policy", "no-referrer")
+    headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    # API được extension (youtube.com) và mobile gọi cross-origin; CORP same-site
+    # sẽ chặn audio/video tải trực tiếp bằng thẻ media.
+    headers.setdefault("Cross-Origin-Resource-Policy", "cross-origin")
+    # Không để proxy/trình duyệt cache response chứa token hoặc dữ liệu quản trị.
+    if request.url.path.startswith(("/api/auth/", "/api/admin/")):
+        headers["Cache-Control"] = "no-store"
+        headers["Pragma"] = "no-cache"
+    if request.url.path not in {"/docs", "/redoc", "/openapi.json"}:
+        headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'none'; frame-ancestors 'none'",
+        )
+    if settings.is_production():
+        headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+    return response
+
+
 # Kênh WebSocket Live-Caption Realtime
 app.include_router(ws_router)
 
@@ -148,6 +220,7 @@ app.include_router(auth_router)
 app.include_router(history_router)
 app.include_router(video_router)
 app.include_router(export_router)
+app.include_router(admin_router)
 
 
 @app.get("/health")
@@ -182,8 +255,18 @@ def readiness_check(response: Response):
 
 
 @app.get("/metrics", response_class=PlainTextResponse)
-def metrics():
+def metrics(request: Request):
     """Số liệu vận hành tối giản theo định dạng Prometheus."""
+    if settings.METRICS_TOKEN:
+        supplied = request.headers.get("X-Metrics-Token", "")
+        authorization = request.headers.get("Authorization", "")
+        if not supplied and authorization.lower().startswith("bearer "):
+            supplied = authorization[7:].strip()
+        if not hmac.compare_digest(supplied, settings.METRICS_TOKEN):
+            raise HTTPException(status_code=401, detail="Metrics token không hợp lệ.")
+    elif settings.is_production():
+        # Không public metrics ở production khi chưa đặt token.
+        raise HTTPException(status_code=404, detail="Not Found")
     return metrics_registry.render()
 
 
@@ -194,5 +277,5 @@ def read_root():
         "service": settings.PROJECT_NAME,
         "version": "2.0.0",
         "whisper_device": settings.WHISPER_DEVICE,
-        "docs_url": "/docs",
+        "docs_url": "/docs" if _DOCS_ENABLED else None,
     }

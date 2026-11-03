@@ -159,23 +159,96 @@ document.addEventListener("DOMContentLoaded", async () => {
     return deviceId;
   };
 
-  const getAuthToken = async () => {
-    const deviceId = await getDeviceId();
-
-    // 1. Dùng token đã lưu (giải mã bằng device_id của chính máy này)
+  const saveExtensionSession = async (sessionData, deviceId) => {
+    const updates = {};
     try {
-      const stored = await chrome.storage.local.get(["extension_token"]);
-      if (stored && stored.extension_token) {
-        try {
-          const decrypted = await cryptoUtil.decrypt(stored.extension_token, deviceId);
-          if (decrypted) return decrypted;
-        } catch (_) {
-          // Token cũ (định dạng legacy) -> bỏ qua, xin phiên mới bên dưới
+      updates.extension_token = await cryptoUtil.encrypt(sessionData.token, deviceId);
+    } catch (_) {
+      updates.extension_token = sessionData.token;
+    }
+    if (sessionData.refresh_token) {
+      try {
+        updates.extension_refresh_token = await cryptoUtil.encrypt(sessionData.refresh_token, deviceId);
+      } catch (_) {
+        updates.extension_refresh_token = sessionData.refresh_token;
+      }
+    }
+    const ttlSeconds = Number(sessionData.expires_in) || 0;
+    if (ttlSeconds > 0) {
+      updates.extension_token_expires_at = Date.now() + ttlSeconds * 1000;
+    }
+    try {
+      await chrome.storage.local.set(updates);
+    } catch (_) {}
+  };
+
+  const clearExtensionAuth = async () => {
+    try {
+      await chrome.storage.local.remove([
+        "extension_token",
+        "extension_refresh_token",
+        "extension_token_expires_at",
+      ]);
+    } catch (_) {}
+  };
+
+  const decodeStoredToken = async (value, deviceId) => {
+    if (!value) return null;
+    if (!deviceId) return value;
+    try {
+      return await cryptoUtil.decrypt(value, deviceId);
+    } catch (_) {
+      return value;
+    }
+  };
+
+  const refreshExtensionSession = async (deviceId, refreshToken) => {
+    if (!refreshToken) return null;
+    try {
+      const serverUrl = activeBackendUrl || "http://127.0.0.1:8000";
+      const res = await fetchWithTimeout(`${serverUrl}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      }, 4000);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.token) {
+          await saveExtensionSession(data, deviceId);
+          return data.token;
         }
       }
+      if (res.status === 401 || res.status === 403) {
+        await clearExtensionAuth();
+      }
+    } catch (_) {}
+    return null;
+  };
+
+  const getAuthToken = async (forceRefresh = false) => {
+    const deviceId = await getDeviceId();
+    let stored = {};
+    try {
+      stored = await chrome.storage.local.get([
+        "extension_token",
+        "extension_refresh_token",
+        "extension_token_expires_at",
+      ]);
     } catch (_) {}
 
-    // 2. Xin phiên mới theo device_id
+    const token = await decodeStoredToken(stored.extension_token, deviceId);
+    const expiresAt = Number(stored.extension_token_expires_at) || 0;
+    // Token legacy không có mốc hết hạn được coi là cũ để xin phiên mới.
+    if (!forceRefresh && token && expiresAt && Date.now() < expiresAt - 60000) {
+      return token;
+    }
+
+    // Access token hết hạn: thử refresh trước khi xin phiên thiết bị mới.
+    const refreshToken = await decodeStoredToken(stored.extension_refresh_token, deviceId);
+    const refreshed = await refreshExtensionSession(deviceId, refreshToken);
+    if (refreshed) return refreshed;
+
+    // Xin phiên mới theo device_id
     try {
       const serverUrl = activeBackendUrl || "http://127.0.0.1:8000";
       const sessionRes = await fetchWithTimeout(`${serverUrl}/api/auth/extension-session`, {
@@ -186,12 +259,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (sessionRes.ok) {
         const sessionData = await sessionRes.json();
         if (sessionData.token) {
-          try {
-            const encrypted = await cryptoUtil.encrypt(sessionData.token, deviceId);
-            await chrome.storage.local.set({ extension_token: encrypted });
-          } catch (_) {
-            await chrome.storage.local.set({ extension_token: sessionData.token });
-          }
+          await saveExtensionSession(sessionData, deviceId);
           return sessionData.token;
         }
       }
@@ -199,8 +267,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     return null;
   };
 
-  const getAuthHeaders = async () => {
-    const token = await getAuthToken();
+  const getAuthHeaders = async (forceRefresh = false) => {
+    const token = await getAuthToken(forceRefresh);
     return token ? { "Authorization": `Bearer ${token}` } : {};
   };
 

@@ -26,6 +26,41 @@ def test_cleanup_uploads_removes_only_old_files(tmp_path):
     assert new_file.exists()
 
 
+def test_cleanup_uploads_keeps_protected_files(tmp_path):
+    now = time.time()
+    referenced = tmp_path / "referenced.mp4"
+    orphan = tmp_path / "orphan.mp4"
+    _touch(referenced, 7200, now)
+    _touch(orphan, 7200, now)
+
+    removed = cleanup_uploads(
+        str(tmp_path),
+        max_age_seconds=3600,
+        now=now,
+        protected_names={"/uploads/referenced.mp4"},
+    )
+
+    assert removed == 1
+    assert referenced.exists()
+    assert not orphan.exists()
+
+
+def test_cleanup_uploads_protected_names_ignore_empty_values(tmp_path):
+    now = time.time()
+    old_file = tmp_path / "old.mp4"
+    _touch(old_file, 7200, now)
+
+    removed = cleanup_uploads(
+        str(tmp_path),
+        max_age_seconds=3600,
+        now=now,
+        protected_names={"", "   ", None},
+    )
+
+    assert removed == 1
+    assert not old_file.exists()
+
+
 def test_cleanup_uploads_missing_directory_is_noop():
     assert cleanup_uploads("khong-ton-tai", 3600) == 0
     assert cleanup_uploads("khong-ton-tai", 0) == 0

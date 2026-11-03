@@ -11,6 +11,16 @@ def configure_logging(level: str = "INFO") -> None:
     ``logging.getLogger("uvicorn")`` và logger của thư viện sẽ kế thừa
     cấu hình này khi chưa có handler.
     """
+    # Windows console mặc định dùng cp1252, không mã hoá được tiếng Việt.
+    # Chuyển stdout/stderr sang UTF-8 khi có thể để log không bị mất dòng.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            try:
+                reconfigure(encoding="utf-8")
+            except (OSError, ValueError):
+                pass
+
     root = logging.getLogger()
     if root.handlers:
         root.setLevel(level.upper())

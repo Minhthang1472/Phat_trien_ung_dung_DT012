@@ -94,14 +94,88 @@ class ApiService {
     }
   }
 
-  async getAuthToken() {
+  async readSecret(key, { secureOnly = false } = {}) {
     try {
       if (Platform.OS !== 'web') {
-        const token = await SecureStore.getItemAsync(STORAGE_KEYS.AUTH_TOKEN);
-        if (token) return token;
+        const value = await SecureStore.getItemAsync(key);
+        if (value) return value;
+        // Refresh token dài hạn không được đọc từ nơi lưu không mã hoá.
+        if (secureOnly) return null;
       }
     } catch (_) {}
-    return AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+    return AsyncStorage.getItem(key);
+  }
+
+  async writeSecret(key, value, { secureOnly = false } = {}) {
+    if (Platform.OS !== 'web') {
+      try {
+        await SecureStore.setItemAsync(key, value);
+        if (secureOnly) return;
+      } catch (_) {
+        // Không lưu refresh token vào AsyncStorage dạng plaintext nếu
+        // SecureStore lỗi; người dùng chỉ cần đăng nhập lại khi token hết hạn.
+        if (secureOnly) return;
+      }
+    }
+    await AsyncStorage.setItem(key, value);
+  }
+
+  async deleteSecret(key) {
+    try {
+      if (Platform.OS !== 'web') await SecureStore.deleteItemAsync(key);
+    } catch (_) {}
+    await AsyncStorage.removeItem(key);
+  }
+
+  async getRefreshToken() {
+    return this.readSecret(STORAGE_KEYS.AUTH_REFRESH_TOKEN, { secureOnly: true });
+  }
+
+  async getAuthToken() {
+    const token = await this.readSecret(STORAGE_KEYS.AUTH_TOKEN);
+    const expiresAt = Number(await AsyncStorage.getItem(STORAGE_KEYS.AUTH_EXPIRES_AT)) || 0;
+    // Access token ngắn hạn: chủ động làm mới trước khi hết hạn 60 giây.
+    // Token legacy không có mốc hết hạn vẫn được dùng nếu không có refresh
+    // token (không thể làm mới); nếu có refresh token thì làm mới luôn.
+    if (token && expiresAt && Date.now() < expiresAt - 60000) return token;
+    if (await this.getRefreshToken()) {
+      const refreshed = await this.refreshAccessToken();
+      if (refreshed) return refreshed;
+      // Refresh bị 401/403 -> phiên đã bị xoá, không dùng lại token cũ.
+      if (!(await this.getRefreshToken())) return null;
+    }
+    return token;
+  }
+
+  async refreshAccessToken() {
+    if (this._refreshPromise) return this._refreshPromise;
+    this._refreshPromise = (async () => {
+      const refreshToken = await this.getRefreshToken();
+      if (!refreshToken) return null;
+      try {
+        const baseUrl = await this.getBaseUrl();
+        const response = await fetch(`${baseUrl}/api/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (!response.ok) {
+          if (response.status === 401 || response.status === 403) {
+            await this.clearAuthSession();
+          }
+          return null;
+        }
+        const data = await response.json();
+        if (!data?.token) return null;
+        await this.saveAuthSession(data);
+        return data.token;
+      } catch (_) {
+        return null;
+      } finally {
+        this._refreshPromise = null;
+      }
+    })();
+    return this._refreshPromise;
   }
 
   async getAuthHeaders() {
@@ -128,12 +202,33 @@ class ApiService {
   }
 
   async saveAuthSession(data) {
-    try {
-      if (Platform.OS !== 'web') await SecureStore.setItemAsync(STORAGE_KEYS.AUTH_TOKEN, data.token);
-    } catch (_) {}
-    await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, data.token);
-    await AsyncStorage.setItem(STORAGE_KEYS.AUTH_USER, JSON.stringify(data.user));
+    if (!data?.token) return data?.user || null;
+    await this.writeSecret(STORAGE_KEYS.AUTH_TOKEN, data.token);
+    if (data.refresh_token) {
+      await this.writeSecret(STORAGE_KEYS.AUTH_REFRESH_TOKEN, data.refresh_token, {
+        secureOnly: true,
+      });
+    }
+    const ttlSeconds = Number(data.expires_in) || 0;
+    if (ttlSeconds > 0) {
+      await AsyncStorage.setItem(
+        STORAGE_KEYS.AUTH_EXPIRES_AT,
+        String(Date.now() + ttlSeconds * 1000)
+      );
+    } else {
+      await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_EXPIRES_AT);
+    }
+    if (data.user) {
+      await AsyncStorage.setItem(STORAGE_KEYS.AUTH_USER, JSON.stringify(data.user));
+    }
     return data.user;
+  }
+
+  async clearAuthSession() {
+    await this.deleteSecret(STORAGE_KEYS.AUTH_TOKEN);
+    await this.deleteSecret(STORAGE_KEYS.AUTH_REFRESH_TOKEN);
+    await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_EXPIRES_AT);
+    await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_USER);
   }
 
   async register(email, password, displayName = '') {
@@ -239,7 +334,9 @@ class ApiService {
       headers: { 'Content-Type': 'application/json', ...(await this.getAuthHeaders()) },
       body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
     });
-    return this.parseResponse(response);
+    const data = await this.parseResponse(response);
+    await this.clearAuthSession();
+    return data;
   }
 
   async updateProfile(payload) {
@@ -285,10 +382,20 @@ class ApiService {
 
   async logout() {
     try {
-      if (Platform.OS !== 'web') await SecureStore.deleteItemAsync(STORAGE_KEYS.AUTH_TOKEN);
+      const refreshToken = await this.getRefreshToken();
+      if (refreshToken) {
+        const baseUrl = await this.getBaseUrl();
+        await fetch(`${baseUrl}/api/auth/logout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(await this.getAuthHeaders()),
+          },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+      }
     } catch (_) {}
-    await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
-    await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_USER);
+    await this.clearAuthSession();
   }
 
   // Tải toàn bộ dữ liệu cá nhân (bài giảng, media, hồ sơ) dưới dạng JSON.

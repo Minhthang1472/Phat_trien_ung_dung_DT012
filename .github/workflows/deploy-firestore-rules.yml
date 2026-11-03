@@ -13,11 +13,17 @@ on:
 permissions:
   contents: read
 
+# Không huỷ giữa chừng một lần deploy rules đang chạy.
+concurrency:
+  group: deploy-firestore-rules
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # Cho phép CI xanh khi repo chưa cấu hình service account; chỉ cảnh báo.
       - name: Check deployment credentials
@@ -34,7 +40,7 @@ jobs:
 
       - name: Authenticate to Google Cloud
         if: steps.credentials.outputs.available == 'true'
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 

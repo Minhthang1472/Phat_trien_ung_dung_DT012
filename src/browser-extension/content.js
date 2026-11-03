@@ -125,6 +125,79 @@ const cryptoUtil = {
   }
 };
 
+// Đọc token còn hạn; nếu hết hạn thì tự làm mới bằng refresh token đã lưu.
+const getExtensionAuthToken = async () => {
+  let stored = {};
+  try {
+    stored = await chrome.storage?.local?.get([
+      "extension_token",
+      "extension_refresh_token",
+      "extension_device_id",
+      "extension_token_expires_at",
+    ]) || {};
+  } catch (_) {}
+
+  const deviceId = stored.extension_device_id;
+  const decode = async (value) => {
+    if (!value) return null;
+    if (!deviceId) return value;
+    try {
+      return await cryptoUtil.decrypt(value, deviceId);
+    } catch (_) {
+      return value;
+    }
+  };
+
+  const token = await decode(stored.extension_token);
+  const expiresAt = Number(stored.extension_token_expires_at) || 0;
+  // Token legacy không có mốc hết hạn được coi là cũ: thử refresh rồi xin
+  // phiên thiết bị mới thay vì dùng mãi.
+  if (token && expiresAt && Date.now() < expiresAt - 60000) return token;
+
+  const refreshToken = await decode(stored.extension_refresh_token);
+  if (refreshToken) {
+    try {
+      const res = await fetch(`${activeBackendUrl}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.token) {
+          const updates = {};
+          try {
+            updates.extension_token = deviceId
+              ? await cryptoUtil.encrypt(data.token, deviceId)
+              : data.token;
+          } catch (_) {
+            updates.extension_token = data.token;
+          }
+          if (data.refresh_token) {
+            try {
+              updates.extension_refresh_token = deviceId
+                ? await cryptoUtil.encrypt(data.refresh_token, deviceId)
+                : data.refresh_token;
+            } catch (_) {
+              updates.extension_refresh_token = data.refresh_token;
+            }
+          }
+          if (data.expires_in) {
+            updates.extension_token_expires_at = Date.now() + Number(data.expires_in) * 1000;
+          }
+          try {
+            await chrome.storage?.local?.set(updates);
+          } catch (_) {}
+          return data.token;
+        }
+      }
+    } catch (_) {}
+    // Có refresh token nhưng làm mới thất bại: không dùng access token cũ.
+    return null;
+  }
+  return token;
+};
+
 const stopSpeakingEffect = () => {
       if (overlayBox) overlayBox.classList.remove("lecture-ai-speaking");
     };
@@ -134,18 +207,8 @@ const stopSpeakingEffect = () => {
     try {
       let headers = {};
       try {
-        const stored = await chrome.storage?.local?.get(["extension_token", "extension_device_id"]);
-        if (stored && stored.extension_token) {
-          let token = stored.extension_token;
-          if (stored.extension_device_id) {
-            try {
-              token = await cryptoUtil.decrypt(stored.extension_token, stored.extension_device_id);
-            } catch (_) {
-              // Token legacy/không giải mã được -> dùng nguyên giá trị đã lưu
-            }
-          }
-          headers["Authorization"] = `Bearer ${token}`;
-        }
+        const token = await getExtensionAuthToken();
+        if (token) headers["Authorization"] = `Bearer ${token}`;
       } catch (_) { }
 
       const ttsUrl = `${activeBackendUrl}/api/tts?text=${encodeURIComponent(cleanText.slice(0, 250))}&lang=${lang}`;

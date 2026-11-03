@@ -1,4 +1,5 @@
 import io
+import logging
 import re
 from urllib.parse import quote
 
@@ -13,6 +14,7 @@ from app.export_service import (
 )
 from app.firebase_database import firebase_service
 
+logger = logging.getLogger("uvicorn")
 router = APIRouter(prefix="/api/export", tags=["export"])
 
 
@@ -56,12 +58,14 @@ async def export_lecture(
     try:
         payload = build_export_bytes(data, fmt)
     except ImportError as exc:
+        logger.error("Thiếu thư viện xuất tài liệu: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail=f"Thiếu thư viện xuất tài liệu trên máy chủ: {exc}",
+            detail="Máy chủ thiếu thư viện xuất tài liệu.",
         ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Không thể tạo tài liệu: {exc}") from exc
+        logger.error("Không thể tạo tài liệu %s: %s", fmt, exc)
+        raise HTTPException(status_code=500, detail="Không thể tạo tài liệu.") from exc
 
     filename = f"{_safe_filename(data.get('title'))}.{fmt}"
     headers = {

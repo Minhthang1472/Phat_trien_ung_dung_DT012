@@ -8,12 +8,13 @@ from fastapi.concurrency import run_in_threadpool
 from app.services.audio_service import AUDIO_TEMP_DIR
 from app.services.whisper_service import whisper_service
 from app.services.auth_service import auth_service
+from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
 ws_router = APIRouter()
 active_connections = 0
-MAX_CONNECTIONS = 20
-MAX_BUFFER_BYTES = 5 * 1024 * 1024
+MAX_CONNECTIONS = max(1, settings.WS_MAX_CONNECTIONS)
+MAX_BUFFER_BYTES = max(64 * 1024, settings.WS_MAX_BUFFER_BYTES)
 
 @ws_router.websocket("/api/live/stream")
 async def websocket_live_caption(websocket: WebSocket):
@@ -27,7 +28,14 @@ async def websocket_live_caption(websocket: WebSocket):
         await websocket.close(code=1008, reason="Authentication required")
         return
     try:
-        auth_service.decode_token(token)
+        claims = auth_service.decode_token(token)
+        if claims.get("type") != "ws":
+            raise ValueError("not a ws token")
+        user = auth_service.get_user(claims.get("sub", ""))
+        if not user or auth_service.is_account_deleted(user):
+            raise ValueError("user unavailable")
+        if auth_service.user_token_version(user) != int(claims.get("ver") or 0):
+            raise ValueError("revoked token")
     except Exception:
         await websocket.close(code=1008, reason="Invalid authentication token")
         return

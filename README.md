@@ -147,7 +147,7 @@ Phát triển ứng dụng/
 │   │   ├── export_service.py        # Render PDF (WeasyPrint/ReportLab), DOCX, Markdown
 │   │   ├── firebase_database.py     # Firestore: cache, lịch sử, export & soft delete
 │   │   └── main.py                  # FastAPI, middleware, health/readiness, cleanup loop
-│   ├── tests/                       # 81 unit/integration tests (pytest)
+│   ├── tests/                       # 145 unit/integration tests (pytest)
 │   ├── requirements.txt             # Thư viện Python chạy production
 │   ├── requirements-dev.txt         # Thêm pytest/httpx cho CI
 │   ├── Dockerfile                   # Image production (ffmpeg + Pango/Cairo)
@@ -175,6 +175,7 @@ Phát triển ứng dụng/
 │   └── App.js                       # Điểm khởi đầu ứng dụng & Bottom Tabs
 │
 ├── scripts/check-extension.mjs      # Kiểm tra manifest MV3 và cú pháp extension
+├── scripts/backup_firestore.py      # Sao lưu Firestore ra JSON Lines
 ├── .github/workflows/               # CI, security audit & deploy Firestore rules
 ├── firestore.rules                  # Chặn truy cập Firestore trực tiếp từ client
 ├── firebase.json / .firebaserc      # Cấu hình deploy Firebase
@@ -258,6 +259,8 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
    GEMINI_API_KEY=your_gemini_api_key_here
    # JWT_SECRET phải dài >= 32 ký tự, nếu thiếu server sẽ từ chối cấp token
    JWT_SECRET=replace_with_a_long_random_secret_at_least_32_chars
+   ACCESS_TOKEN_TTL_MINUTES=60
+   REFRESH_TOKEN_TTL_DAYS=30
    FIREBASE_CREDENTIALS_PATH=serviceAccountKey.json
    ```
 5. **Khởi chạy máy chủ:**
@@ -280,7 +283,19 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
    copy .env.example .env
    ```
    Mở `.env` và điền `JWT_SECRET` (>= 32 ký tự), `GEMINI_API_KEY`,
-   `FIREBASE_PROJECT_ID`.
+   `FIREBASE_PROJECT_ID`. Với `ENVIRONMENT=production`, backend sẽ **fail-fast**
+   nếu thiếu SMTP, `PUBLIC_API_URL`/`CORS_ORIGINS` không dùng HTTPS,
+   `CORS_ORIGINS`/`ALLOWED_HOSTS` chứa `*` hoặc `METRICS_TOKEN` quá ngắn.
+   `TRUSTED_PROXIES` cũng bị từ chối nếu tin cậy toàn bộ Internet
+   (`0.0.0.0/0`, `::/0`). Đặt `ALLOWED_HOSTS` bằng domain thật
+   (ví dụ `api.example.com`) để chặn Host header lạ. Đặt `METRICS_TOKEN`
+   (>= 16 ký tự) để bảo vệ `/metrics`; đặt `ADMIN_TOKEN` (>= 32 ký tự) nếu cần
+   API khôi phục tài khoản.
+   Nếu chạy sau reverse proxy/load balancer, đặt `TRUSTED_PROXIES` (IP/CIDR,
+   phân tách bằng dấu phẩy) để rate limit đọc đúng IP qua `X-Forwarded-For`.
+   `/docs` mặc định tắt ở production (bật bằng `ENABLE_DOCS=true`).
+   Kênh Live-Caption giới hạn bằng `WS_MAX_CONNECTIONS` (mặc định 20 kết nối)
+   và `WS_MAX_BUFFER_BYTES` (mặc định 5 MB) để tránh một client chiếm hết RAM.
 3. **Build và chạy:**
    ```powershell
    docker compose up --build
@@ -304,10 +319,15 @@ pytest
 Bộ test bao phủ: băm/giải mã JWT, parser SRT/WebVTT, chuẩn hóa quiz/mindmap,
 xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL, health/readiness, SSRF, phân
 quyền cache theo `owner_id`, xuất dữ liệu, vô hiệu hoá tài khoản (xoá mềm),
-media token, phân trang lịch sử và giới hạn upload (81 test).
+media token, phân trang lịch sử, giới hạn upload và nhận diện IP sau proxy
+(145 test).
 
 GitHub Actions chạy thêm kiểm tra manifest extension, `expo-doctor`,
-`expo export --platform web` và build Docker image.
+`expo export --platform web`, build Docker image, smoke test runtime trong
+image Linux (ffmpeg + render PDF bằng WeasyPrint + import app) và quét lỗ hổng
+CRITICAL có bản vá bằng Trivy. Workflow `security.yml` chạy `pip-audit` và
+`npm audit` (hạ ngưỡng mobile xuống `critical` do phụ thuộc `zod` của
+`@expo/cli`).
 
 ---
 
@@ -319,6 +339,11 @@ GitHub Actions chạy thêm kiểm tra manifest extension, `expo-doctor`,
 4. Chọn đường dẫn đến thư mục:  
    `c:\...\Phát triển ứng dụng\src\browser-extension`
 5. Tiện ích **"PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG"** sẽ xuất hiện trên thanh công cụ trình duyệt. Bấm biểu tượng 📌 để ghim tiện ích.
+
+> Extension chỉ được cấp quyền gọi `localhost` và `https://*.trycloudflare.com`.
+> Nếu triển khai backend ở domain riêng (ví dụ `https://api.example.com`), thêm
+> domain đó vào `host_permissions` trong `src/browser-extension/manifest.json`
+> rồi bấm **Reload** tại `chrome://extensions/`.
 
 ---
 
@@ -393,9 +418,57 @@ Chức năng "Vô hiệu hoá tài khoản" là **xoá mềm**: backend chỉ gh
 `deleted: true`, `deleted_at` và `account_status: "deleted"` vào document
 `users/{userId}`. Bài giảng, `media_owners` và file upload vẫn được giữ nguyên.
 
-Để khôi phục, quản trị viên mở Firestore Console và xoá ba trường trên khỏi
-document người dùng (hoặc đặt `deleted: false`). Người dùng có thể đăng nhập
-lại bằng mật khẩu cũ; dữ liệu cũ vẫn còn nguyên.
+Để khôi phục, đặt biến môi trường `ADMIN_TOKEN` (>= 32 ký tự) rồi gọi API
+quản trị. Endpoint trả 404 nếu chưa cấu hình token, nên không lộ sự tồn tại:
+
+```bash
+# Liệt kê tài khoản đang bị vô hiệu hoá
+curl -H "X-Admin-Token: $ADMIN_TOKEN" https://api.example.com/api/admin/users
+
+# Khôi phục một tài khoản
+curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" \
+  https://api.example.com/api/admin/users/<user_id>/restore
+```
+
+Người dùng có thể đăng nhập lại bằng mật khẩu cũ; dữ liệu bài giảng, media và
+file upload vẫn còn nguyên. Nếu chưa bật API quản trị, có thể khôi phục thủ
+công bằng cách xoá ba trường `deleted`, `deleted_at`, `account_status` trong
+Firestore Console (hoặc đặt `deleted: false`).
+
+---
+
+### SAO LƯU DỮ LIỆU FIRESTORE
+
+Script `scripts/backup_firestore.py` xuất toàn bộ collection quan trọng
+(`users`, `lectures`, `media_owners`, `system_config`) ra JSON Lines, mỗi
+document một dòng. Bản sao lưu được đặt trong `backups/<timestamp>/` và đã
+được `.gitignore` bảo vệ vì chứa dữ liệu thật.
+
+```powershell
+python scripts/backup_firestore.py
+python scripts/backup_firestore.py --out D:\backups --collections users,lectures
+```
+
+Script dùng `FIREBASE_CREDENTIALS_PATH` trong `src/backend-ai/.env` (hoặc tham
+số `--credentials`). Nên chạy định kỳ bằng Task Scheduler/cron và giữ bản sao
+ở nơi khác ngoài máy chủ. Bản backup chứa hash mật khẩu/OTP và phiên đăng nhập,
+nên thư mục `backups/` đã được `.gitignore` và script đặt quyền `700/600` trên
+POSIX; nếu lưu lên cloud, hãy bật mã hoá phía dịch vụ lưu trữ. Khi cần khôi phục, tạo lại document từ file JSONL
+bằng Firestore Console hoặc một script `set()` nhỏ; nếu dùng tính năng export
+chính thức của Google Cloud thì nên export thẳng sang Cloud Storage để có thể
+`gcloud firestore import`.
+
+---
+
+### LƯU Ý KHI MỞ RỘNG QUY MÔ
+
+Job xử lý video/streaming, bộ đếm hủy job và rate limit hiện lưu trong RAM của
+tiến trình. Docker chạy `uvicorn --workers 1`; không tăng số worker hoặc chạy
+nhiều instance phía sau load balancer nếu chưa bổ sung hàng đợi ngoài
+(Redis/Celery) hoặc định tuyến cố định theo `job_id`. Với quy mô đồ án, một
+worker là đủ và tránh phát sinh hạ tầng không cần thiết. Khi đặt sau proxy,
+cấu hình `TRUSTED_PROXIES` để rate limit không gộp mọi người dùng vào IP của
+proxy; nếu không cấu hình, backend bỏ qua `X-Forwarded-For` để tránh giả mạo.
 
 ---
 
@@ -427,7 +500,9 @@ lại bằng mật khẩu cũ; dữ liệu cũ vẫn còn nguyên.
 | :--- | :--- | :--- | :--- |
 | `GET` | `/` | Kiểm tra tình trạng hoạt động của Máy chủ AI | Public |
 | `POST` | `/api/auth/register` | Đăng ký tài khoản học viên mới | Public |
-| `POST` | `/api/auth/login` | Đăng nhập hệ thống, cấp mã JWT Token | Public |
+| `POST` | `/api/auth/login` | Đăng nhập hệ thống, cấp access token + refresh token | Public |
+| `POST` | `/api/auth/refresh` | Đổi refresh token lấy access token mới (có xoay token) | Public |
+| `POST` | `/api/auth/logout` | Thu hồi phiên hiện tại hoặc toàn bộ phiên (`revoke_all`) | Optional Token |
 | `POST` | `/api/auth/forgot-password` | Gửi mã OTP khôi phục mật khẩu qua Email | Public |
 | `POST` | `/api/auth/reset-password` | Xác thực mã OTP và đặt lại mật khẩu mới | Public |
 | `GET` | `/api/video/info` | Tra cứu nhanh thời lượng & kiểm tra bài giảng trong Cache | Bearer Token |
@@ -443,26 +518,33 @@ lại bằng mật khẩu cũ; dữ liệu cũ vẫn còn nguyên.
 | `GET` | `/api/video/stream-media` | Proxy phát video (Range Request) cho Drive/LMS | Bearer Token hoặc media token |
 | `POST` | `/api/auth/extension-session` | Cấp phiên riêng cho từng bản cài extension (device-scoped) | Public |
 | `POST` | `/api/auth/ws-token` | Cấp token WebSocket ngắn hạn (1 giờ) | Bearer Token |
+| `WS` | `/api/live/stream?token=...` | Live-Caption: nhận audio micro và trả phụ đề trực tiếp | WS token |
 | `GET` | `/api/auth/export-data` | Xuất toàn bộ dữ liệu cá nhân dạng JSON | Bearer Token |
 | `DELETE` | `/api/auth/account` | Vô hiệu hoá tài khoản (xoá mềm, giữ dữ liệu; mật khẩu bắt buộc với tài khoản email) | Bearer Token |
+| `GET` | `/api/admin/users` | Liệt kê tài khoản đang bị vô hiệu hoá | `X-Admin-Token` |
+| `POST` | `/api/admin/users/{id}/restore` | Khôi phục tài khoản xoá mềm, giữ nguyên dữ liệu | `X-Admin-Token` |
 | `GET` | `/api/export` | Xuất tài liệu bài giảng (`?video_url=...&format=pdf\|docx\|md`) | Bearer Token |
 | `GET` | `/health` | Liveness probe (tiến trình còn sống) | Public |
 | `GET` | `/health/ready` | Readiness probe (Firebase, thư mục upload, JWT secret) | Public |
-| `GET` | `/metrics` | Số liệu vận hành dạng Prometheus text | Public |
+| `GET` | `/metrics` | Số liệu vận hành dạng Prometheus text | Public (dev) / `METRICS_TOKEN` (production) |
 
 > Mọi endpoint `/api/...` có thêm alias `/api/v1/...`; response mang header
 > `X-API-Version: 1`. Response JSON/text lớn hơn 1KB được nén gzip, còn luồng
 > `audio/*` và `video/*` được giữ nguyên để không phá Range Request.
+> Các endpoint bị giới hạn tần suất trả `429` kèm header `Retry-After` (giây)
+> để client biết thời điểm thử lại.
 
 ---
 
 ## 🔒 BẢO MẬT & QUYỀN RIÊNG TƯ
 
-1. **Bảo mật danh tính & Mật khẩu:** Toàn bộ mật khẩu được mã hóa băm một chiều an toàn bằng **PBKDF2-HMAC-SHA256** (240.000 vòng, salt ngẫu nhiên 16 byte). Phiên làm việc duy trì qua **JSON Web Token (JWT)** có thời hạn.
-2. **Xác thực bảo vệ bằng mã OTP:** Quy trình khôi phục tài khoản sử dụng mã xác thực 6 chữ số ngẫu nhiên được gửi trực tiếp vào hòm thư cá nhân.
+1. **Bảo mật danh tính & Mật khẩu:** Toàn bộ mật khẩu được mã hóa băm một chiều an toàn bằng **PBKDF2-HMAC-SHA256** (240.000 vòng, salt ngẫu nhiên 16 byte). Phiên làm việc dùng **access token ngắn hạn** (mặc định 60 phút) và **refresh token** (mặc định 30 ngày) được xoay mỗi lần làm mới; trường `token_version` cho phép thu hồi toàn bộ phiên khi đổi/đặt lại mật khẩu hoặc xoá tài khoản.
+2. **Xác thực bảo vệ bằng mã OTP:** Quy trình xác minh email/khôi phục tài khoản sử dụng mã 6 chữ số ngẫu nhiên, chỉ lưu dưới dạng **HMAC-SHA256**, giới hạn số lần nhập sai và hết hạn sau 10 phút. Ở production, thiếu SMTP hoặc gửi mail lỗi sẽ **fail-closed**, không tự kích hoạt tài khoản.
 3. **Quyền riêng tư dữ liệu:** Dữ liệu phụ đề và ghi chú cá nhân của từng học viên được phân tách độc lập theo `owner_id` trên Google Cloud Firestore. Cache đọc theo `owner_id` không fallback sang bản toàn cục; bản toàn cục chỉ giữ nội dung suy ra từ video công khai.
 4. **Chống SSRF:** URL video được kiểm tra allowlist và phân giải DNS; mọi địa chỉ loopback, private, link-local hoặc metadata cloud đều bị từ chối. Proxy stream yêu cầu Bearer Token hoặc media token và kiểm tra lại từng bước redirect.
 5. **Bản quyền phương tiện:** Hệ thống tôn trọng quyền sở hữu trí tuệ của tác giả video; toàn bộ quá trình trích xuất âm thanh và bóc tách nội dung phục vụ thuần túy cho mục đích nghiên cứu học thuật phi thương mại.
+6. **Chống dò tài khoản:** Đăng nhập luôn chạy PBKDF2 (kể cả khi không tìm thấy tài khoản) để cân bằng thời gian phản hồi; các luồng quên mật khẩu/gửi lại OTP trả thông báo trung tính, không tiết lộ email đã đăng ký hay chưa. Độ dài email/mật khẩu/OTP được giới hạn ở tầng schema để tránh payload quá lớn.
+7. **Xác minh email không thay thế đăng nhập:** `/api/auth/verify-otp` chỉ kích hoạt tài khoản; tài khoản đã xác minh không thể dùng endpoint này để lấy phiên mà phải đăng nhập bằng mật khẩu. Media token cũng mang `token_version` nên bị thu hồi ngay khi đổi/đặt lại mật khẩu hoặc đăng xuất toàn bộ.
 
 ---
 

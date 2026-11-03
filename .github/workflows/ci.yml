@@ -4,26 +4,35 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   extension-checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - run: node scripts/check-extension.mjs
 
   mobile-checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       CI: '1'
     defaults:
       run:
         working-directory: src/mobile-app
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -35,13 +44,63 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate docker-compose config
+        run: |
+          JWT_SECRET=ci-compose-secret-0123456789abcdef0123456789abcdef \
+            docker compose config -q
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: src/backend-ai
           push: false
+          load: true
           tags: lecture-ai-api:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # Xác minh runtime thật trong image Linux: ffmpeg, WeasyPrint (Pango/Cairo)
+      # và import app. Bước này bắt lỗi thư viện hệ thống mà unit test trên
+      # Windows/CI runner không phát hiện được.
+      - name: Smoke test image runtime
+        run: |
+          docker run --rm --entrypoint ffmpeg lecture-ai-api:ci -version
+          docker run --rm --entrypoint python lecture-ai-api:ci -c "
+          import os
+          import weasyprint
+          from weasyprint import HTML
+          HTML(string='<h1>Smoke test</h1>').write_pdf('/tmp/smoke.pdf')
+          assert os.path.getsize('/tmp/smoke.pdf') > 0
+          import app.main  # noqa: F401
+          print('Image runtime OK - WeasyPrint', weasyprint.__version__)
+          "
+      - name: Smoke test HTTP server
+        run: |
+          docker run -d --name lecture-ai-smoke \
+            -e ENVIRONMENT=development \
+            -e JWT_SECRET=smoke-test-secret-0123456789abcdef0123456789abcdef \
+            -p 18000:8000 lecture-ai-api:ci
+          trap 'docker rm -f lecture-ai-smoke >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18000/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18000/health
+          # Không có Firebase credential trong CI: readiness phải trả 503 rõ ràng
+          # thay vì 200 giả hoặc treo.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/health/ready)" = "503"
+          docker logs lecture-ai-smoke
+      # Quét lỗ hổng nghiêm trọng trong image; bỏ qua lỗi chưa có bản vá để CI
+      # không đỏ vì base image. Có thể thêm .trivyignore nếu cần miễn trừ cụ thể.
+      - uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          scan-type: image
+          image-ref: lecture-ai-api:ci
+          severity: CRITICAL
+          vuln-type: os,library
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table

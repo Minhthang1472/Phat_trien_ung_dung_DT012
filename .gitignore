@@ -50,3 +50,8 @@ Thumbs.db
 .expo/
 cloudflared
 cloudflared.exe
+
+# ==========================================
+# Bản sao lưu Firestore (chứa dữ liệu thật)
+# ==========================================
+backups/
