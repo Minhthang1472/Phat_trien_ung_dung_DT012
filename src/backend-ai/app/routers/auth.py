@@ -824,7 +824,7 @@ async def change_password(request: ChangePasswordRequest, user=Depends(get_curre
 
 
 @router.put("/profile")
-async def update_profile(request: UpdateProfileRequest, user=Depends(get_current_user)):
+async def update_profile(request: UpdateProfileRequest, background_tasks: BackgroundTasks, user=Depends(get_current_user)):
     if not firebase_service.db:
         firebase_service.init_firebase()
     if not firebase_service.db:
@@ -886,23 +886,14 @@ async def update_profile(request: UpdateProfileRequest, user=Depends(get_current
                     or ""
                 )
                 if not auth_service.verify_otp(request.email_otp, saved_otp, "change_email"):
-                    attempts = _record_failed_otp(
+                    _record_failed_otp(
                         user_ref,
                         current_data,
                         "email_change_otp_attempts",
                         "email_change_otp_hash",
                         "email_change_expires_at",
                     )
-                    remaining = max(0, settings.OTP_MAX_ATTEMPTS - attempts)
-                    if remaining == 0:
-                        raise HTTPException(
-                            status_code=429,
-                            detail="Bạn đã nhập sai mã OTP quá nhiều lần. Vui lòng yêu cầu mã mới.",
-                        )
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Mã OTP xác thực email không chính xác. Bạn còn {remaining} lần thử.",
-                    )
+                    raise HTTPException(status_code=400, detail=_INVALID_OTP_MESSAGE)
 
                 updates["email"] = clean_email
                 updates["email_verified"] = True
@@ -923,27 +914,32 @@ async def update_profile(request: UpdateProfileRequest, user=Depends(get_current
                 requires_email_otp = True
                 pending_email = clean_email
 
+                def _send_email_change_otp(body, html):
+                    """Gửi OTP đổi email qua BackgroundTasks để không làm chậm API."""
+                    try:
+                        email_service.send(
+                            clean_email,
+                            "Mã OTP xác nhận thay đổi Email Lecture AI",
+                            body, html,
+                        )
+                    except Exception as exc:
+                        logger.error("Không gửi được email đổi email: %s", exc)
+                        try:
+                            user_ref.update({
+                                "email_change_otp_hash": None,
+                                "email_change_otp": None,
+                                "email_change_expires_at": None,
+                            })
+                        except Exception:
+                            pass
+
                 if email_service.configured():
                     plain_body, html_body = render_otp_email(
                         otp,
                         name=user.get("display_name") or "Học viên",
                         purpose="change_email",
                     )
-                    try:
-                        await run_in_threadpool(
-                            email_service.send,
-                            clean_email,
-                            "Mã OTP xác nhận thay đổi Email Lecture AI",
-                            plain_body,
-                            html_body,
-                        )
-                    except Exception as err:
-                        logger.error("Lỗi gửi email OTP đổi email: %s", err)
-                        if _is_production():
-                            raise HTTPException(
-                                status_code=503,
-                                detail="Không thể gửi mã OTP tới email mới. Vui lòng thử lại sau.",
-                            ) from err
+                    background_tasks.add_task(_send_email_change_otp, plain_body, html_body)
                 else:
                     logger.warning("[DEV MODE] Mã OTP đổi email cho %s là: %s", clean_email, otp)
 
