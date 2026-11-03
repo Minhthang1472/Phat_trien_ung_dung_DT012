@@ -23,6 +23,8 @@ export const STORAGE_KEYS = {
   AUTH_REFRESH_TOKEN: 'lecture_ai_refresh_token',
   AUTH_EXPIRES_AT: '@lecture_ai_auth_expires_at',
   AUTH_USER: '@lecture_ai_auth_user',
+  CACHED_USER_STATS: '@lecture_ai_cached_user_stats',
+  LAST_ONLINE_STATUS: '@lecture_ai_last_online_status',
 };
 
 export const SUPPORTED_LANGUAGES = [

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, Platform, Image, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { WebView } from 'react-native-webview';
 import YoutubePlayer from 'react-native-youtube-iframe';
@@ -85,6 +85,28 @@ export default function VideoPlayerSection({
     }
   }
   const [fallbackToIframe, setFallbackToIframe] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const hideControlsTimer = useRef(null);
+
+  const resetControlsTimer = useCallback(() => {
+    if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+    setControlsVisible(true);
+    hideControlsTimer.current = setTimeout(() => {
+      setControlsVisible(false);
+    }, 3500);
+  }, []);
+
+  useEffect(() => {
+    if (isFullscreen) {
+      resetControlsTimer();
+    } else {
+      setControlsVisible(true);
+      if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+    }
+    return () => {
+      if (hideControlsTimer.current) clearTimeout(hideControlsTimer.current);
+    };
+  }, [isFullscreen, resetControlsTimer]);
   const fallbackEmbedUrl = drivePreviewUrl || (lecture?.video_url && !lecture.video_url.startsWith('local_file://') ? lecture.video_url : null);
 
   return (
@@ -365,8 +387,8 @@ export default function VideoPlayerSection({
         </TouchableOpacity>
       )}
 
-      {/* Thanh điều khiển nổi khi đang phóng to */}
-      {isFullscreen && setIsFullscreen && (
+      {/* Thanh điều khiển nổi khi đang phóng to (tự động ẩn sau 3.5s để xem toàn màn hình điện ảnh) */}
+      {isFullscreen && setIsFullscreen && controlsVisible && (
         <View style={styles.fullscreenTopOverlay}>
           <TouchableOpacity
             style={styles.fullscreenExitPill}
@@ -434,6 +456,28 @@ export default function VideoPlayerSection({
             </View>
           )}
         </View>
+      )}
+
+      {/* Nút mờ hỗ trợ hiện lại bảng điều khiển khi đã tự ẩn */}
+      {isFullscreen && setIsFullscreen && !controlsVisible && (
+        <TouchableOpacity
+          style={{
+            position: 'absolute',
+            top: 14,
+            right: 16,
+            zIndex: 40,
+            backgroundColor: 'rgba(11, 16, 32, 0.65)',
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: 'rgba(255, 255, 255, 0.18)',
+          }}
+          onPress={() => resetControlsTimer()}
+          activeOpacity={0.7}
+        >
+          <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '600' }}>Hiện điều khiển</Text>
+        </TouchableOpacity>
       )}
 
       {/* Lớp phủ phụ đề nổi trên video (Overlay CC) */}

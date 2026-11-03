@@ -32,7 +32,7 @@ export default function SettingsScreen({ onNavigate, onLogout, currentUser }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [defaultExportDir, setDefaultExportDir] = useState({ uri: null, name: null });
-  const [serverOnline, setServerOnline] = useState(false);
+  const [serverOnline, setServerOnline] = useState(apiService.getLastKnownOnline ? apiService.getLastKnownOnline() : true);
   const [localLectureCount, setLocalLectureCount] = useState(0);
 
   // States cho Popup Đổi mật khẩu

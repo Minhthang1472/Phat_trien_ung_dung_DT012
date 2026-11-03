@@ -18,7 +18,7 @@ export default function Header({
   rightElement,
   streakLabel = '1 Ngày',
 }) {
-  const [internalOnline, setInternalOnline] = useState(false);
+  const [internalOnline, setInternalOnline] = useState(apiService.getLastKnownOnline ? apiService.getLastKnownOnline() : true);
   const [notifications, setNotifications] = useState([]);
   const [showNotifModal, setShowNotifModal] = useState(false);
 

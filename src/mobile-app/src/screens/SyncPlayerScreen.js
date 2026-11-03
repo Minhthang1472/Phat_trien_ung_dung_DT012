@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { WebView } from 'react-native-webview';
 import YoutubePlayer from 'react-native-youtube-iframe';
 import { colors, spacing, borderRadius } from '../constants/theme';
@@ -74,6 +75,31 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
   const [quizAnswers, setQuizAnswers] = useState({});
   const [isFullscreen, setIsFullscreen] = useState(false);
   const triggeredCheckpointIdsRef = useRef(new Set());
+
+  // Tự động xoay ngang màn hình khi bật toàn màn hình (Landscape Cinema Mode)
+  useEffect(() => {
+    const syncOrientation = async () => {
+      try {
+        if (Platform.OS !== 'web' && ScreenOrientation && ScreenOrientation.lockAsync) {
+          if (isFullscreen) {
+            await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+          } else {
+            await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+          }
+        }
+      } catch (_) {}
+    };
+    syncOrientation();
+  }, [isFullscreen]);
+
+  // Luôn khôi phục chiều dọc khi thoát khỏi màn hình xem bài giảng
+  useEffect(() => {
+    return () => {
+      if (Platform.OS !== 'web' && ScreenOrientation && ScreenOrientation.lockAsync) {
+        ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+      }
+    };
+  }, []);
   const lastTimeUpdateRef = useRef(0);
   const lastSavedProgressRef = useRef(0);
   const lastScrolledIndexRef = useRef(-1);

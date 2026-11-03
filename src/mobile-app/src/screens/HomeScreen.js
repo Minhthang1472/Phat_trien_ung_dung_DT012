@@ -67,7 +67,7 @@ export default function HomeScreen({ currentUser, onNavigate }) {
 
   const [recentLectures, setRecentLectures] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [serverStatus, setServerStatus] = useState({ online: false });
+  const [serverStatus, setServerStatus] = useState({ online: true });
 
 
   // Cơ chế ngắt ngang tiến trình (Task Cancellation - Yêu cầu 1)

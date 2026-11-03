@@ -153,21 +153,28 @@ export default function ProfileScreen({ currentUser, onBack, onAuthSuccess, onSk
         });
 
         const totalLangs = viCount + enCount || 1;
-        setLangStats({
-          vi: Math.round((viCount / totalLangs) * 100),
-          en: Math.round((enCount / totalLangs) * 100),
-        });
-
-        setFeatureStats({
-          summary: Math.round((sumCount / count) * 100),
-          quiz: Math.round((qzCount / count) * 100),
-          mindmap: Math.round((mmCount / count) * 100),
-        });
-
-        setStats({
+        const newStats = {
           processed_lectures: count,
           total_minutes: Math.round(totalSecs / 60),
           saved_quizzes: totalQuiz,
+        };
+        const newLang = {
+          vi: Math.round((viCount / totalLangs) * 100),
+          en: Math.round((enCount / totalLangs) * 100),
+        };
+        const newFeature = {
+          summary: Math.round((sumCount / count) * 100),
+          quiz: Math.round((qzCount / count) * 100),
+          mindmap: Math.round((mmCount / count) * 100),
+        };
+        setLangStats(newLang);
+        setFeatureStats(newFeature);
+        setStats(newStats);
+        apiService.saveCachedStats({
+          stats: newStats,
+          streakDays: uniqueDays.size || 1,
+          langStats: newLang,
+          featureStats: newFeature,
         });
       } else {
         setStreakDays(0);
@@ -186,11 +193,18 @@ export default function ProfileScreen({ currentUser, onBack, onAuthSuccess, onSk
         if (profile?.stats) {
           setStats((prev) => {
             const newCount = Math.max(profile.stats.processed_lectures || 0, prev.processed_lectures || 0);
-            return {
+            const nextStats = {
               processed_lectures: newCount,
               total_minutes: Math.max(profile.stats.total_minutes || 0, prev.total_minutes || 0),
               saved_quizzes: Math.max(profile.stats.saved_quizzes || 0, prev.saved_quizzes || 0),
             };
+            apiService.saveCachedStats({
+              stats: nextStats,
+              streakDays: profile.stats.processed_lectures > 0 && streakDays === 0 ? 1 : streakDays,
+              langStats,
+              featureStats,
+            });
+            return nextStats;
           });
           if (profile.stats.processed_lectures > 0 && streakDays === 0) {
             setStreakDays(1);
@@ -206,6 +220,19 @@ export default function ProfileScreen({ currentUser, onBack, onAuthSuccess, onSk
       setInitialLoading(false);
     }
   };
+
+  useEffect(() => {
+    let active = true;
+    apiService.getCachedStats().then((cached) => {
+      if (active && cached) {
+        if (cached.stats) setStats(cached.stats);
+        if (typeof cached.streakDays === 'number') setStreakDays(cached.streakDays);
+        if (cached.langStats) setLangStats(cached.langStats);
+        if (cached.featureStats) setFeatureStats(cached.featureStats);
+      }
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (currentUser) {

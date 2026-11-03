@@ -12,6 +12,32 @@ const SAF = LegacyFileSystem?.StorageAccessFramework || FileSystem?.StorageAcces
 class ApiService {
   constructor() {
     this.cachedBaseUrl = null;
+    this.lastKnownOnline = true;
+    this.cachedStatsInMemory = null;
+  }
+
+  getLastKnownOnline() {
+    return this.lastKnownOnline ?? true;
+  }
+
+  async getCachedStats() {
+    if (this.cachedStatsInMemory) return this.cachedStatsInMemory;
+    try {
+      const raw = await AsyncStorage.getItem(STORAGE_KEYS.CACHED_USER_STATS);
+      if (raw) {
+        this.cachedStatsInMemory = JSON.parse(raw);
+        return this.cachedStatsInMemory;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  async saveCachedStats(data) {
+    if (!data) return;
+    try {
+      this.cachedStatsInMemory = data;
+      await AsyncStorage.setItem(STORAGE_KEYS.CACHED_USER_STATS, JSON.stringify(data));
+    } catch (_) {}
   }
 
   async syncServerUrlFromFirebase() {
@@ -90,6 +116,7 @@ class ApiService {
       }
       return { online: false, error: `Status ${response.status}` };
     } catch (err) {
+      this.lastKnownOnline = false;
       return { online: false, error: err.message || 'Không thể kết nối máy chủ' };
     }
   }
@@ -229,6 +256,8 @@ class ApiService {
     await this.deleteSecret(STORAGE_KEYS.AUTH_REFRESH_TOKEN);
     await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_EXPIRES_AT);
     await AsyncStorage.removeItem(STORAGE_KEYS.AUTH_USER);
+    await AsyncStorage.removeItem(STORAGE_KEYS.CACHED_USER_STATS).catch(() => {});
+    this.cachedStatsInMemory = null;
   }
 
   async register(email, password, displayName = '') {
