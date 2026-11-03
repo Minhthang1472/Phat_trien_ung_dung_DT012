@@ -71,6 +71,8 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
   // Trắc nghiệm theo mốc thời gian (In-Video Checkpoint Quiz)
   const [interactiveQuizEnabled, setInteractiveQuizEnabled] = useState(true);
   const [activeCheckpointQuiz, setActiveCheckpointQuiz] = useState(null);
+  const [quizAnswers, setQuizAnswers] = useState({});
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const triggeredCheckpointIdsRef = useRef(new Set());
   const lastTimeUpdateRef = useRef(0);
   const lastSavedProgressRef = useRef(0);
@@ -277,7 +279,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
       return;
     }
     for (const cp of checkpointQuizzes) {
-      if (!triggeredCheckpointIdsRef.current.has(cp.checkpoint_id)) {
+      if (!triggeredCheckpointIdsRef.current.has(cp.checkpoint_id) && !quizAnswers[cp.index]) {
         if (timeSec >= cp.checkpoint_time && timeSec <= cp.checkpoint_time + 3.0) {
           triggeredCheckpointIdsRef.current.add(cp.checkpoint_id);
           // 1. Tạm dừng video phát lại
@@ -311,19 +313,59 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
     }
   };
 
-  const handleSelectQuizOption = (optKey) => {
+  const handleSelectQuizOption = (opt, optLetter) => {
     if (!activeCheckpointQuiz || activeCheckpointQuiz.isSubmitted) return;
     const q = activeCheckpointQuiz.quiz;
-    const correctAns = (q.correct_answer || q.answer || '').toUpperCase().trim();
-    const isRight =
-      optKey.toUpperCase().startsWith(correctAns[0]) ||
-      optKey.toUpperCase() === correctAns;
+    const qIdx = q.index !== undefined ? q.index : checkpointQuizzes.findIndex((item) => item.checkpoint_id === q.checkpoint_id);
+
+    const rawCorrect = (q.correct_answer || q.answer || 'A').toUpperCase().trim();
+    const correctLetter = rawCorrect.match(/^[A-E]/i) ? rawCorrect[0] : 'A';
+
+    let letter = optLetter;
+    if (!letter) {
+      if (typeof opt === 'string' && opt.match(/^[A-E]\./i)) {
+        letter = opt.substring(0, 1).toUpperCase();
+      } else {
+        const idx = (q.options || []).indexOf(opt);
+        letter = idx >= 0 ? ['A', 'B', 'C', 'D', 'E'][idx] : 'A';
+      }
+    }
+
+    const isRight = letter === correctLetter;
 
     setActiveCheckpointQuiz((prev) => ({
       ...prev,
-      userChoice: optKey,
+      userChoice: opt,
+      chosenLetter: letter,
       isSubmitted: true,
       isCorrect: isRight,
+    }));
+
+    // Đồng bộ vào state quizAnswers cho tab Tóm tắt & Ôn tập
+    if (qIdx >= 0) {
+      setQuizAnswers((prev) => ({
+        ...prev,
+        [qIdx]: {
+          selectedOption: letter,
+          isCorrect: isRight,
+          userChoice: opt,
+        },
+      }));
+    }
+  };
+
+  const handleAnswerInSummary = (index, letter) => {
+    const q = rawQuizzes[index];
+    const rawCorrect = (q?.correct_answer || q?.answer || 'A').toUpperCase().trim();
+    const correctLetter = rawCorrect.match(/^[A-E]/i) ? rawCorrect[0] : 'A';
+    const isRight = letter === correctLetter;
+
+    setQuizAnswers((prev) => ({
+      ...prev,
+      [index]: {
+        selectedOption: letter,
+        isCorrect: isRight,
+      },
     }));
   };
 
@@ -763,34 +805,37 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
   };
 
   return (
-    <View style={styles.container}>
-      <Header
-        title="ĐỒNG BỘ PHỤ ĐỀ"
-        showBack
-        onBack={onBack}
-        serverStatus={{ online: true }}
-        rightElement={
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TouchableOpacity
-              style={styles.headerShareBtn}
-              onPress={handleShare}
-              activeOpacity={0.7}
-            >
-              <Icon name="share" size={13} color={colors.violet} />
-              <Text style={styles.headerShareText}>Chia sẻ</Text>
-            </TouchableOpacity>
-            <View style={styles.langBadge}>
-              <LanguageMark code={targetLangInfo.code} size={13} />
-              <Text style={styles.langBadgeText}>
-                {targetLangInfo.code.toUpperCase()}
-              </Text>
+    <View style={[styles.container, isFullscreen && { backgroundColor: '#000000' }]}>
+      {!isFullscreen && (
+        <Header
+          title="ĐỒNG BỘ PHỤ ĐỀ"
+          showBack
+          onBack={onBack}
+          serverStatus={{ online: true }}
+          rightElement={
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity
+                style={styles.headerShareBtn}
+                onPress={handleShare}
+                activeOpacity={0.7}
+              >
+                <Icon name="share" size={13} color={colors.violet} />
+                <Text style={styles.headerShareText}>Chia sẻ</Text>
+              </TouchableOpacity>
+              <View style={styles.langBadge}>
+                <LanguageMark code={targetLangInfo.code} size={13} />
+                <Text style={styles.langBadgeText}>
+                  {targetLangInfo.code.toUpperCase()}
+                </Text>
+              </View>
             </View>
-          </View>
-        }
-      />
+          }
+        />
+      )}
 
       {/* Tab Switcher */}
-      <View style={styles.tabContainer}>
+      {!isFullscreen && (
+        <View style={styles.tabContainer}>
         <TouchableOpacity
           style={[styles.tabBtn, currentTab === 'subtitles' && styles.activeTabBtn]}
           onPress={() => setCurrentTab('subtitles')}
@@ -818,12 +863,13 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
           </Text>
         </TouchableOpacity>
       </View>
+      )}
 
-      {currentTab === 'summary' ? (
-        <SummaryQuizScreen lecture={lecture} onShare={handleShare} />
+      {currentTab === 'summary' && !isFullscreen ? (
+        <SummaryQuizScreen lecture={lecture} onShare={handleShare} quizAnswers={quizAnswers} onAnswerQuiz={handleAnswerInSummary} />
       ) : (
-        <View style={styles.playerContent}>
-          <View style={styles.playerBox}>
+        <View style={[styles.playerContent, isFullscreen && { flex: 1, backgroundColor: '#000000' }]}>
+          <View style={[styles.playerBox, isFullscreen && { flex: 1, paddingHorizontal: 0, paddingTop: 0 }]}>
             <VideoPlayerSection
               isYouTube={isYouTube}
               youtubeId={youtubeId}
@@ -854,10 +900,13 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
               handleSelectQuizOption={handleSelectQuizOption}
               generateMediaHtml={generateMediaHtml}
               apiService={apiService}
+              isFullscreen={isFullscreen}
+              setIsFullscreen={setIsFullscreen}
+              setSubMode={setSubMode}
               styles={styles}
             />
 
-            {effectiveEndTime > 0 && (
+            {!isFullscreen && effectiveEndTime > 0 && (
               <View style={{
                 backgroundColor: reachedRangeEnd ? colors.coralTint : colors.surfaceHigh,
                 paddingVertical: 8,
@@ -904,26 +953,31 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
                 )}
               </View>
             )}
-            <PlayerControlsSection
-              isSeeking={isSeeking}
-              seekDragTime={seekDragTime}
-              currentTime={currentTime}
-              duration={duration}
-              isPlaying={isPlaying}
-              showCC={showCC}
-              formatTime={formatTime}
-              handleSeek={handleSeek}
-              togglePlayPause={togglePlayPause}
-              setShowCC={setShowCC}
-              setIsSeeking={setIsSeeking}
-              setSeekDragTime={setSeekDragTime}
-              seekBarLayoutRef={seekBarLayoutRef}
-              styles={styles}
-            />
+            {!isFullscreen && (
+              <PlayerControlsSection
+                isSeeking={isSeeking}
+                seekDragTime={seekDragTime}
+                currentTime={currentTime}
+                duration={duration}
+                isPlaying={isPlaying}
+                showCC={showCC}
+                formatTime={formatTime}
+                handleSeek={handleSeek}
+                togglePlayPause={togglePlayPause}
+                setShowCC={setShowCC}
+                setIsSeeking={setIsSeeking}
+                setSeekDragTime={setSeekDragTime}
+                seekBarLayoutRef={seekBarLayoutRef}
+                isFullscreen={isFullscreen}
+                setIsFullscreen={setIsFullscreen}
+                styles={styles}
+              />
+            )}
           </View>
 
-          <SubtitleListSection
-            scrollRef={scrollRef}
+          {!isFullscreen && (
+            <SubtitleListSection
+              scrollRef={scrollRef}
             hasDifferentOriginal={hasDifferentOriginal}
             sourceLangCode={sourceLangCode}
             targetLangCode={targetLangCode}
@@ -943,6 +997,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
             handleSeek={handleSeek}
             styles={styles}
           />
+          )}
         </View>
       )}
     </View>

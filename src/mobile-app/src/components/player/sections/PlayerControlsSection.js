@@ -17,6 +17,8 @@ export default function PlayerControlsSection({
   setIsSeeking,
   setSeekDragTime,
   seekBarLayoutRef,
+  isFullscreen,
+  setIsFullscreen,
   styles,
 }) {
   return (
@@ -162,6 +164,21 @@ export default function PlayerControlsSection({
           <Text style={styles.liveTimerText}>
             {formatTime(isSeeking ? seekDragTime : currentTime)} / {formatTime(duration)}
           </Text>
+          {setIsFullscreen && (
+            <TouchableOpacity
+              style={styles.fullscreenBtn}
+              onPress={() => setIsFullscreen(!isFullscreen)}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel={isFullscreen ? "Thu nhỏ màn hình" : "Phóng to xoay ngang"}
+            >
+              <Icon
+                name={isFullscreen ? "fullscreenExit" : "fullscreen"}
+                size={19}
+                color={colors.slate}
+              />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </>

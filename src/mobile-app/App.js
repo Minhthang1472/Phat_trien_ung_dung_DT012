@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, Platform, ActivityIndicator, LogBox } from 'react-native';
-
-LogBox.ignoreLogs(['Possible EventEmitter memory leak detected']);
-import { StatusBar } from 'expo-status-bar';
+import { View, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import {
   useFonts,
   PlusJakartaSans_400Regular,
@@ -12,21 +10,23 @@ import {
   PlusJakartaSans_700Bold,
   PlusJakartaSans_800ExtraBold,
 } from '@expo-google-fonts/plus-jakarta-sans';
+
 import { colors } from './src/constants/theme';
+import { apiService } from './src/services/api';
 import AuthScreen from './src/screens/AuthScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import SyncPlayerScreen from './src/screens/SyncPlayerScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import BottomNavBar from './src/components/BottomNavBar';
-import { apiService } from './src/services/api';
 
 export default function App() {
-  const [currentRoute, setCurrentRoute] = useState('Auth');
+  const [currentRoute, setCurrentRoute] = useState('Home');
+  const [currentUser, setCurrentUser] = useState(null);
   const [routeParams, setRouteParams] = useState({});
   const [checkingAuth, setCheckingAuth] = useState(true);
 
-  // Plus Jakarta Sans là font nền tảng của design system mới.
+  // Nạp bộ font Plus Jakarta Sans đầy đủ các trọng số
   const [fontsLoaded, fontError] = useFonts({
     PlusJakartaSans_400Regular,
     PlusJakartaSans_500Medium,
@@ -38,8 +38,6 @@ export default function App() {
   useEffect(() => {
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       document.title = 'EdTech AI - Học Thông Minh Mỗi Ngày';
-      // Expo web không tự khóa chiều cao #root, khiến ScrollView không cuộn
-      // mà cả trang cuộn theo (bottom nav bị đẩy khỏi màn hình).
       const rootEl = document.getElementById('root');
       document.documentElement.style.height = '100%';
       document.body.style.height = '100%';
@@ -55,19 +53,21 @@ export default function App() {
     // Tự động kiểm tra và cập nhật link server mới nhất từ Firebase khi mở app
     apiService.syncServerUrlFromFirebase().catch(() => {});
 
-    // Mới mở app: Nếu chưa đăng nhập thì hiện Đăng ký / Đăng nhập trước
-    // Nếu đã có phiên đăng nhập hợp lệ thì chuyển thẳng vào màn hình chính Home
+    // Mới mở app: Kiểm tra phiên đăng nhập đã lưu
     const checkAuth = async () => {
       try {
         const user = await apiService.getSavedUser();
         const token = await apiService.getAuthToken();
         if (user && token) {
+          setCurrentUser(user);
           setCurrentRoute('Home');
         } else {
-          setCurrentRoute('Auth');
+          setCurrentUser(null);
+          setCurrentRoute('Home');
         }
       } catch (_) {
-        setCurrentRoute('Auth');
+        setCurrentUser(null);
+        setCurrentRoute('Home');
       } finally {
         setCheckingAuth(false);
       }
@@ -83,6 +83,14 @@ export default function App() {
   const handleBack = () => {
     setCurrentRoute('Home');
     setRouteParams({});
+  };
+
+  const handleLogout = async () => {
+    try {
+      await apiService.logout();
+    } catch (_) {}
+    setCurrentUser(null);
+    setCurrentRoute('Home');
   };
 
   if (checkingAuth || (!fontsLoaded && !fontError)) {
@@ -106,11 +114,19 @@ export default function App() {
           <View style={styles.contentArea}>
             {currentRoute === 'Auth' && (
               <AuthScreen
-                onAuthSuccess={() => setCurrentRoute('Home')}
+                onAuthSuccess={(user) => {
+                  setCurrentUser(user);
+                  setCurrentRoute('Home');
+                }}
                 onSkip={() => setCurrentRoute('Home')}
               />
             )}
-            {currentRoute === 'Home' && <HomeScreen onNavigate={handleNavigate} />}
+            {currentRoute === 'Home' && (
+              <HomeScreen
+                currentUser={currentUser}
+                onNavigate={handleNavigate}
+              />
+            )}
 
             {currentRoute === 'SyncPlayer' && (
               <SyncPlayerScreen
@@ -122,23 +138,27 @@ export default function App() {
             )}
             {currentRoute === 'Profile' && (
               <ProfileScreen
+                currentUser={currentUser}
                 onBack={handleBack}
                 onNavigate={handleNavigate}
-                onLogout={() => setCurrentRoute('Auth')}
+                onLogout={handleLogout}
               />
             )}
             {currentRoute === 'Settings' && (
               <SettingsScreen
+                currentUser={currentUser}
                 onBack={handleBack}
                 onNavigate={handleNavigate}
+                onLogout={handleLogout}
               />
             )}
           </View>
 
           {/* Thanh điều hướng cố định dưới đáy (Bottom Navigation Bar) */}
-          {(currentRoute === 'Home' || currentRoute === 'Profile' || currentRoute === 'Settings') && (
+          {(currentRoute === 'Home' || currentRoute === 'Profile' || currentRoute === 'Settings' || currentRoute === 'Auth') && (
             <BottomNavBar
               currentRoute={currentRoute}
+              isLoggedIn={!!currentUser}
               onNavigate={(route) => {
                 setRouteParams({});
                 setCurrentRoute(route);
@@ -158,13 +178,12 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: colors.surface,
   },
   contentArea: {
     flex: 1,
   },
   loadingCenter: {
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
 });

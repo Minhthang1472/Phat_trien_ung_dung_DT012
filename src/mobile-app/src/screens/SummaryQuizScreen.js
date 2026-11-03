@@ -28,7 +28,7 @@ import {
   formatSectionRange,
 } from '../utils/quizSections';
 
-export default function SummaryQuizScreen({ lecture, onShare }) {
+export default function SummaryQuizScreen({ lecture, onShare, quizAnswers = {}, onAnswerQuiz }) {
   const [subTab, setSubTab] = useState('summary'); // 'summary' | 'mindmap' | 'exercises'
 
   const summary = lecture?.summary || 'Chưa có bản tóm tắt bài giảng.';
@@ -332,7 +332,7 @@ export default function SummaryQuizScreen({ lecture, onShare }) {
                   ) : null}
 
                   {group.questions.map(({ quiz, index }) => (
-                    <QuizCard key={`${group.key}_${index}`} quiz={quiz} index={index} />
+                    <QuizCard key={`${group.key}_${index}`} quiz={quiz} index={index} savedAnswer={quizAnswers[index]} onAnswer={(letter) => onAnswerQuiz && onAnswerQuiz(index, letter)} />
                   ))}
                 </View>
               ))

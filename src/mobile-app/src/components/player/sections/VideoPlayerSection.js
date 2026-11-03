@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Platform, Image } from 'react-native';
+import { View, Text, Platform, Image, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { WebView } from 'react-native-webview';
 import YoutubePlayer from 'react-native-youtube-iframe';
 import InVideoQuizOverlay from './InVideoQuizOverlay';
@@ -35,13 +35,60 @@ export default function VideoPlayerSection({
   handleSelectQuizOption,
   generateMediaHtml,
   apiService,
+  isFullscreen,
+  setIsFullscreen,
+  setSubMode,
   styles,
 }) {
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const isPhysicallyLandscape = winWidth > winHeight;
+
+  let containerDynamicStyle = styles.videoContainer;
+  let playerHeight = 220;
+
+  if (isFullscreen) {
+    if (isPhysicallyLandscape) {
+      containerDynamicStyle = [
+        styles.videoContainer,
+        {
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          width: winWidth,
+          height: winHeight,
+          zIndex: 99999,
+          elevation: 99999,
+          borderRadius: 0,
+          backgroundColor: '#000000',
+        },
+      ];
+      playerHeight = winHeight;
+    } else {
+      containerDynamicStyle = [
+        styles.videoContainer,
+        {
+          position: 'absolute',
+          width: winHeight,
+          height: winWidth,
+          top: (winHeight - winWidth) / 2,
+          left: -(winHeight - winWidth) / 2,
+          transform: [{ rotate: '90deg' }],
+          zIndex: 99999,
+          elevation: 99999,
+          borderRadius: 0,
+          backgroundColor: '#000000',
+        },
+      ];
+      playerHeight = winWidth;
+    }
+  }
   const [fallbackToIframe, setFallbackToIframe] = useState(false);
   const fallbackEmbedUrl = drivePreviewUrl || (lecture?.video_url && !lecture.video_url.startsWith('local_file://') ? lecture.video_url : null);
 
   return (
-    <View style={styles.videoContainer}>
+    <View style={containerDynamicStyle}>
       {Platform.OS === 'web' ? (
         isYouTube && youtubeId ? (
           <iframe
@@ -192,14 +239,17 @@ export default function VideoPlayerSection({
         isYouTube && youtubeId ? (
           <YoutubePlayer
             ref={ytPlayerRef}
-            height={220}
+            height={isFullscreen ? playerHeight : 220}
             play={isPlaying}
             videoId={youtubeId}
             initialPlayerParams={{
-              preventFullScreen: false,
+              preventFullScreen: true,
               controls: true,
               rel: false,
               start: Math.floor(effectiveSeekTime || 0),
+            }}
+            onFullScreenChange={(status) => {
+              if (setIsFullscreen) setIsFullscreen(status);
             }}
             onReady={() => {
               if (effectiveSeekTime > 0 && ytPlayerRef.current?.seekTo) {
@@ -300,11 +350,115 @@ export default function VideoPlayerSection({
         )
       )}
 
+      {/* Nút phóng to nổi trực tiếp trên video */}
+      {!isFullscreen && setIsFullscreen && (
+        <TouchableOpacity
+          style={styles.floatingFullscreenBtn}
+          onPress={() => setIsFullscreen(true)}
+          activeOpacity={0.8}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <View style={styles.floatingFullscreenPill}>
+            <Icon name="fullscreen" size={15} color="#FFFFFF" />
+            <Text style={styles.floatingFullscreenText}>Phóng to</Text>
+          </View>
+        </TouchableOpacity>
+      )}
+
+      {/* Thanh điều khiển nổi khi đang phóng to */}
+      {isFullscreen && setIsFullscreen && (
+        <View style={styles.fullscreenTopOverlay}>
+          <TouchableOpacity
+            style={styles.fullscreenExitPill}
+            onPress={() => setIsFullscreen(false)}
+            activeOpacity={0.8}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Icon name="fullscreenExit" size={18} color="#FFFFFF" />
+            <Text style={styles.fullscreenExitPillText}>Thu nhỏ</Text>
+          </TouchableOpacity>
+
+          {setSubMode && (
+            <View style={styles.fullscreenSubModeGroup}>
+              <TouchableOpacity
+                style={[
+                  styles.fullscreenSubPill,
+                  subMode === 'bilingual' && styles.fullscreenSubPillActive,
+                ]}
+                onPress={() => setSubMode('bilingual')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.fullscreenSubPillText,
+                    subMode === 'bilingual' && styles.fullscreenSubPillTextActive,
+                  ]}
+                >
+                  Song ngữ
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.fullscreenSubPill,
+                  subMode === 'vietnamese' && styles.fullscreenSubPillActive,
+                ]}
+                onPress={() => setSubMode('vietnamese')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.fullscreenSubPillText,
+                    subMode === 'vietnamese' && styles.fullscreenSubPillTextActive,
+                  ]}
+                >
+                  Tiếng Việt
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.fullscreenSubPill,
+                  subMode === 'original' && styles.fullscreenSubPillActive,
+                ]}
+                onPress={() => setSubMode('original')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.fullscreenSubPillText,
+                    subMode === 'original' && styles.fullscreenSubPillTextActive,
+                  ]}
+                >
+                  Gốc
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      )}
+
       {/* Lớp phủ phụ đề nổi trên video (Overlay CC) */}
       {showCC && activeSegment && !activeCheckpointQuiz && (
-        <View style={styles.ccOverlayContainer} pointerEvents="none">
-          <View style={styles.ccOverlayBox}>
-            <Text style={styles.ccOverlayText} numberOfLines={2} ellipsizeMode="tail">
+        <View
+          style={[
+            styles.ccOverlayContainer,
+            isFullscreen && styles.ccOverlayContainerFullscreen,
+          ]}
+          pointerEvents="none"
+        >
+          <View
+            style={[
+              styles.ccOverlayBox,
+              isFullscreen && styles.ccOverlayBoxFullscreen,
+            ]}
+          >
+            <Text
+              style={[
+                styles.ccOverlayText,
+                isFullscreen && styles.ccOverlayTextFullscreen,
+              ]}
+              numberOfLines={2}
+              ellipsizeMode="tail"
+            >
               {subMode === 'original'
                 ? activeSegment.original_text || activeSegment.text
                 : activeSegment.translated_text ||
@@ -319,7 +473,14 @@ export default function VideoPlayerSection({
                   activeSegment.text ||
                   ''
                 ).trim() && (
-                <Text style={styles.ccOverlaySubText} numberOfLines={1} ellipsizeMode="tail">
+                <Text
+                  style={[
+                    styles.ccOverlaySubText,
+                    isFullscreen && styles.ccOverlaySubTextFullscreen,
+                  ]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
                   {activeSegment.original_text}
                 </Text>
               )}

@@ -28,7 +28,7 @@ import {
 
 const SAF = LegacyFileSystem?.StorageAccessFramework || FileSystem?.StorageAccessFramework;
 
-export default function SettingsScreen({ onNavigate }) {
+export default function SettingsScreen({ onNavigate, onLogout, currentUser }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [defaultExportDir, setDefaultExportDir] = useState({ uri: null, name: null });
@@ -222,8 +222,10 @@ export default function SettingsScreen({ onNavigate }) {
       console.warn('Lỗi đăng xuất:', e);
     }
     setUser(null);
-    if (onNavigate) {
-      onNavigate('Profile');
+    if (onLogout) {
+      onLogout();
+    } else if (onNavigate) {
+      onNavigate('Home');
     }
   };
 
@@ -265,8 +267,10 @@ export default function SettingsScreen({ onNavigate }) {
         'Đã vô hiệu hoá tài khoản',
         'Bạn đã được đăng xuất. Dữ liệu bài giảng và media vẫn được lưu trữ để quản trị viên có thể khôi phục khi cần.'
       );
-      if (onNavigate) {
-        onNavigate('Profile');
+      if (onLogout) {
+        onLogout();
+      } else if (onNavigate) {
+        onNavigate('Home');
       }
     } catch (error) {
       setDeleteError(error.message || 'Không thể vô hiệu hoá tài khoản. Vui lòng thử lại.');

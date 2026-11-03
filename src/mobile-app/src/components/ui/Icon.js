@@ -103,6 +103,9 @@ const ICON_MAP = {
   sparkle2: 'flare',
   rocket: 'rocket-launch',
   face: 'face',
+  fullscreen: 'fullscreen',
+  fullscreenExit: 'fullscreen-exit',
+  screenRotation: 'screen-rotation',
 };
 
 export function resolveIconName(name) {

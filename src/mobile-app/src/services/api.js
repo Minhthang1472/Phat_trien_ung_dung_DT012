@@ -265,9 +265,13 @@ class ApiService {
   }
 
   async getProfile() {
+    const token = await this.getAuthToken();
+    if (!token) return null;
     const baseUrl = await this.getBaseUrl();
     const response = await fetch(`${baseUrl}/api/auth/me`, {
-      headers: await this.getAuthHeaders(),
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
     return this.parseResponse(response);
   }

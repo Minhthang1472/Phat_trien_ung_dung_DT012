@@ -47,7 +47,7 @@ import {
   homeStyles as styles,
 } from '../components/home';
 
-export default function HomeScreen({ onNavigate }) {
+export default function HomeScreen({ currentUser, onNavigate }) {
   const [videoUrl, setVideoUrl] = useState('');
   const [targetLang, setTargetLang] = useState('vi');
   const [loading, setLoading] = useState(false);

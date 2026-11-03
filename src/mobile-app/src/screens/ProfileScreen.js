@@ -41,8 +41,9 @@ import {
 
 WebBrowser.maybeCompleteAuthSession();
 
-export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip = true, onNavigate, onLogout }) {
-  const [user, setUser] = useState(null);
+export default function ProfileScreen({ currentUser, onBack, onAuthSuccess, onSkip, allowSkip = true, onNavigate, onLogout }) {
+  const [user, setUser] = useState(currentUser || null);
+  const [initialLoading, setInitialLoading] = useState(!currentUser);
   const [stats, setStats] = useState({ processed_lectures: 0, total_minutes: 0, saved_quizzes: 0 });
   const [streakDays, setStreakDays] = useState(0);
   const [langStats, setLangStats] = useState({ vi: 0, en: 0 });
@@ -98,7 +99,8 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
   const loadProfile = async () => {
     try {
       const saved = await apiService.getSavedUser();
-      if (!saved) {
+      const activeUser = saved || currentUser;
+      if (!activeUser) {
         setUser(null);
         setStats({ processed_lectures: 0, total_minutes: 0, saved_quizzes: 0 });
         setStreakDays(0);
@@ -106,7 +108,7 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
         setFeatureStats({ summary: 0, quiz: 0, mindmap: 0 });
         return;
       }
-      setUser(saved);
+      setUser(activeUser);
 
       // 1. Đồng bộ tức thì từ lịch sử bài giảng thực tế của người dùng
       let localLectures = [];
@@ -174,8 +176,9 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
         setStats({ processed_lectures: 0, total_minutes: 0, saved_quizzes: 0 });
       }
 
-      // 2. Đồng bộ thêm từ CSDL Cloud (/api/auth/me)
-      try {
+      // 2. Đồng bộ thêm từ CSDL Cloud (/api/auth/me) nếu đã đăng nhập
+      if (activeUser) {
+        try {
         const profile = await apiService.getProfile();
         if (profile?.user) {
           setUser(profile.user);
@@ -194,16 +197,25 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
           }
         }
       } catch (_) {
-        // Offline or token expired fallback
+          // Offline or token expired fallback
+        }
       }
     } catch (e) {
       console.warn('Lỗi tải thông tin tài khoản:', e);
+    } finally {
+      setInitialLoading(false);
     }
   };
 
   useEffect(() => {
+    if (currentUser) {
+      setUser(currentUser);
+      setInitialLoading(false);
+    } else {
+      setUser(null);
+    }
     loadProfile();
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     const idToken = response?.params?.id_token;
@@ -707,7 +719,11 @@ export default function ProfileScreen({ onBack, onAuthSuccess, onSkip, allowSkip
           />
         }
       >
-        {user ? (
+        {initialLoading ? (
+          <View style={{ paddingVertical: 100, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator size="large" color={colors.coral} />
+          </View>
+        ) : user ? (
           <>
             {/* 1. Thẻ Hero thông tin học viên & Chuỗi học tập */}
             <ProfileHeroSection

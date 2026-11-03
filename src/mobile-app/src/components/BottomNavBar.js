@@ -4,17 +4,24 @@ import { colors, fonts, radius } from '../constants/theme';
 import GlassBar from './ui/GlassBar';
 import Icon from './ui/Icon';
 
-const TABS = [
+const LOGGED_IN_TABS = [
   { route: 'Home', label: 'Bài giảng', icon: 'lecture' },
   { route: 'Profile', label: 'Hồ sơ', icon: 'profile' },
   { route: 'Settings', label: 'Cài đặt', icon: 'settings' },
 ];
 
-export default function BottomNavBar({ currentRoute, onNavigate }) {
+const GUEST_TABS = [
+  { route: 'Home', label: 'Bài giảng', icon: 'lecture' },
+  { route: 'Auth', label: 'Đăng nhập', icon: 'login' },
+];
+
+export default function BottomNavBar({ currentRoute, onNavigate, isLoggedIn = false }) {
+  const tabs = isLoggedIn ? LOGGED_IN_TABS : GUEST_TABS;
+
   return (
     <GlassBar style={styles.container} intensity={55} tint="light">
       <View style={styles.bar}>
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const active = currentRoute === tab.route;
           return (
             <TouchableOpacity

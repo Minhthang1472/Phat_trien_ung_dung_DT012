@@ -1,11 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, fonts, radius, shadows, spacing } from '../constants/theme';
 import Icon from './ui/Icon';
 
-export default function QuizCard({ quiz, index }) {
-  const [selectedOption, setSelectedOption] = useState(null);
-  const [submitted, setSubmitted] = useState(false);
+export default function QuizCard({ quiz, index, savedAnswer, onAnswer }) {
+  const [selectedOption, setSelectedOption] = useState(savedAnswer?.selectedOption || null);
+  const [submitted, setSubmitted] = useState(!!savedAnswer);
+
+  useEffect(() => {
+    if (savedAnswer?.selectedOption) {
+      setSelectedOption(savedAnswer.selectedOption);
+      setSubmitted(true);
+    }
+  }, [savedAnswer]);
 
   const options = quiz.options || ['A', 'B', 'C', 'D'];
   const rawCorrect = quiz.correct_answer || quiz.answer || 'A';
@@ -17,6 +24,9 @@ export default function QuizCard({ quiz, index }) {
     if (submitted) return;
     setSelectedOption(letter);
     setSubmitted(true);
+    if (onAnswer) {
+      onAnswer(letter);
+    }
   };
 
   const getOptionLetter = (opt, idx) => {
@@ -108,51 +118,48 @@ export default function QuizCard({ quiz, index }) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: colors.surfaceLowest,
-    borderRadius: radius.md,
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.lg,
     padding: spacing.md,
     marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: colors.outline,
-    ...shadows.card,
+    borderColor: '#E2E8F0',
+    ...shadows.soft,
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: spacing.sm + 2,
+    alignItems: 'center',
+    marginBottom: spacing.sm,
   },
   badge: {
-    backgroundColor: colors.coralTint,
+    backgroundColor: colors.surfaceHigh,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: radius.pill,
   },
   badgeText: {
-    fontFamily: fonts.extraBold,
-    fontSize: 10,
-    lineHeight: 14,
-    color: colors.coralDeep,
-    letterSpacing: 0.3,
+    fontFamily: fonts.bold,
+    fontSize: 11,
+    color: colors.slate,
   },
   resultPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: radius.pill,
   },
   correctPill: {
-    backgroundColor: colors.mintSoft,
+    backgroundColor: '#ECFDF5',
   },
   wrongPill: {
-    backgroundColor: colors.errorSoft,
+    backgroundColor: '#FEF2F2',
   },
   resultBadge: {
     fontFamily: fonts.bold,
-    fontSize: 10.5,
-    lineHeight: 14,
+    fontSize: 11,
   },
   correctBadge: {
     color: colors.mintDeep,
@@ -161,24 +168,25 @@ const styles = StyleSheet.create({
     color: colors.error,
   },
   question: {
-    fontFamily: fonts.bold,
+    fontFamily: fonts.semiBold,
     fontSize: 14,
+    lineHeight: 20,
     color: colors.ink,
-    lineHeight: 21,
     marginBottom: spacing.md,
   },
   optionsList: {
-    gap: spacing.sm,
+    gap: 8,
   },
   optionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surfaceLow,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-    borderRadius: radius.sm,
     paddingVertical: 10,
-    paddingHorizontal: 11,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    gap: 10,
   },
   selectedOptionBtn: {
     borderColor: colors.violet,
@@ -186,20 +194,19 @@ const styles = StyleSheet.create({
   },
   correctOptionBtn: {
     borderColor: colors.mint,
-    backgroundColor: colors.mintSoft,
+    backgroundColor: '#ECFDF5',
   },
   wrongOptionBtn: {
     borderColor: colors.error,
-    backgroundColor: colors.errorSoft,
+    backgroundColor: '#FEF2F2',
   },
   optionLetterBox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceLowest,
+    width: 26,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: '#E2E8F0',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: spacing.sm,
   },
   correctLetterBox: {
     backgroundColor: colors.mint,
@@ -208,49 +215,48 @@ const styles = StyleSheet.create({
     backgroundColor: colors.error,
   },
   optionLetterText: {
-    fontFamily: fonts.extraBold,
-    fontSize: 11,
-    color: colors.slate,
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: colors.ink,
   },
   optionText: {
     flex: 1,
     fontFamily: fonts.medium,
-    fontSize: 12.5,
-    color: colors.ink,
+    fontSize: 13,
     lineHeight: 18,
+    color: colors.ink,
   },
   correctOptionText: {
+    color: '#065F46',
     fontFamily: fonts.bold,
-    color: colors.mintDeep,
   },
   wrongOptionText: {
+    color: '#991B1B',
     fontFamily: fonts.bold,
-    color: colors.error,
   },
   explanationBox: {
     marginTop: spacing.md,
-    padding: spacing.sm + 2,
-    backgroundColor: colors.violetSoft,
-    borderRadius: radius.sm,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.violet,
+    padding: spacing.md,
+    backgroundColor: '#F8FAFC',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   explanationTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    marginBottom: 3,
+    gap: 6,
+    marginBottom: 4,
   },
   explanationTitle: {
     fontFamily: fonts.bold,
-    fontSize: 11,
-    lineHeight: 15,
+    fontSize: 12,
     color: colors.violet,
   },
   explanationText: {
-    fontFamily: fonts.medium,
-    fontSize: 11.5,
+    fontFamily: fonts.regular,
+    fontSize: 12.5,
+    lineHeight: 18,
     color: colors.slate,
-    lineHeight: 17,
   },
 });
