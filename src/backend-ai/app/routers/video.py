@@ -594,7 +594,10 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
     return result
 
 @router.post("/api/video/lookahead")
-async def process_lookahead_window(request: LookaheadSubtitleRequest):
+async def process_lookahead_window(
+    request: LookaheadSubtitleRequest,
+    _limit=Depends(heavy_rate_limit),
+):
     """Return captions for the next short playback window without blocking the player."""
     audio_path = None
     try:
