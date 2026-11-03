@@ -172,6 +172,25 @@ export default function SubtitleListSection({
         )}
       </View>
 
+      {/* Gợi ý tương tác thông minh cho người học */}
+      {searchQuery.length === 0 && (
+        <View style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingVertical: 6,
+          paddingHorizontal: 10,
+          backgroundColor: 'rgba(235, 94, 85, 0.08)',
+          borderRadius: 8,
+          marginBottom: 10,
+        }}>
+          <Icon name="sparkle" size={13} color={colors.coral} />
+          <Text style={{ fontSize: 11.5, color: colors.coralDeep, fontWeight: '500', flex: 1 }}>
+            Chạm câu bất kỳ để tua video • Bấm "Phóng to" để xoay ngang rạp phim
+          </Text>
+        </View>
+      )}
+
       {/* Thống kê kết quả tìm kiếm */}
       {searchQuery.trim().length > 0 && (
         <View style={styles.searchStatsBar}>

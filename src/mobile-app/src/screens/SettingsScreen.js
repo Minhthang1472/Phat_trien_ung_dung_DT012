@@ -20,6 +20,7 @@ import {
   DeleteAccountModal,
   SystemInfoModal,
   LegalInfoModal,
+  UserGuideModal,
   StorageSection,
   DataBackupSection,
   InfoLinksSection,
@@ -53,6 +54,7 @@ export default function SettingsScreen({ onNavigate, onLogout, currentUser }) {
   // States cho Popup Thông tin hệ thống & Thông tin pháp lý
   const [systemInfoVisible, setSystemInfoVisible] = useState(false);
   const [legalInfoVisible, setLegalInfoVisible] = useState(false);
+  const [guideModalVisible, setGuideModalVisible] = useState(false);
 
   const loadUserData = async () => {
     try {
@@ -364,6 +366,7 @@ export default function SettingsScreen({ onNavigate, onLogout, currentUser }) {
             <InfoLinksSection
               onOpenSystemInfo={() => setSystemInfoVisible(true)}
               onOpenLegalInfo={() => setLegalInfoVisible(true)}
+              onOpenGuide={() => setGuideModalVisible(true)}
               styles={styles}
             />
 
@@ -432,6 +435,12 @@ export default function SettingsScreen({ onNavigate, onLogout, currentUser }) {
       <LegalInfoModal
         visible={legalInfoVisible}
         onClose={() => setLegalInfoVisible(false)}
+        styles={styles}
+      />
+
+      <UserGuideModal
+        visible={guideModalVisible}
+        onClose={() => setGuideModalVisible(false)}
         styles={styles}
       />
     </View>

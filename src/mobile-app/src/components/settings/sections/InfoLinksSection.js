@@ -7,11 +7,31 @@ import SectionHeading from './SectionHeading';
 export default function InfoLinksSection({
   onOpenSystemInfo,
   onOpenLegalInfo,
+  onOpenGuide,
   styles,
 }) {
   return (
     <>
-      <SectionHeading icon="info" title="THÔNG TIN & ĐIỀU KHOẢN" tone="neutral" />
+      <SectionHeading icon="info" title="THÔNG TIN & HƯỚNG DẪN" tone="neutral" />
+
+      <TouchableOpacity
+        style={styles.actionBtn}
+        onPress={onOpenGuide}
+        activeOpacity={0.7}
+      >
+        <View style={[styles.actionIconWrap, { backgroundColor: colors.coralTint }]}>
+          <Icon name="school" size={18} color={colors.coral} />
+        </View>
+        <View style={styles.actionTextCol}>
+          <Text style={styles.actionBtnText}>Cẩm nang sử dụng &amp; Mẹo học</Text>
+          <Text style={styles.actionBtnDesc}>5 bí quyết học bài giảng song ngữ hiệu quả nhất</Text>
+        </View>
+        <View style={[styles.actionBadge, { backgroundColor: colors.coralTint }]}>
+          <Text style={[styles.actionBadgeText, { color: colors.coralDeep }]}>HƯỚNG DẪN</Text>
+        </View>
+        <Icon name="chevronRight" size={20} color={colors.muted} />
+      </TouchableOpacity>
+
       <TouchableOpacity
         style={styles.actionBtn}
         onPress={onOpenSystemInfo}

@@ -10,23 +10,38 @@ export default function HomeEmptyFilter({
   searchKeyword = '',
   activeCategory = 'all',
   onResetFilter,
+  onPasteSample,
 }) {
   const hasFilter = searchKeyword.trim().length > 0 || activeCategory !== 'all';
 
   return (
     <View style={styles.emptyFilterBox}>
       <View style={styles.iconCircle}>
-        <Icon name="search" size={24} color={colors.coral} />
+        <Icon name={hasFilter ? 'search' : 'school'} size={24} color={colors.coral} />
       </View>
-      <Text style={styles.emptyFilterTitle}>Không tìm thấy bài giảng phù hợp</Text>
-      <Text style={styles.emptyFilterSub}>
-        {searchKeyword.trim()
-          ? `Không có kết quả nào cho "${searchKeyword}". Thử từ khóa khác hoặc đặt lại bộ lọc.`
-          : 'Chưa có bài giảng nào trong danh mục này.'}
+      <Text style={styles.emptyFilterTitle}>
+        {hasFilter ? 'Không tìm thấy bài giảng phù hợp' : 'Chưa có bài giảng nào'}
       </Text>
+      <Text style={styles.emptyFilterSub}>
+        {hasFilter
+          ? searchKeyword.trim()
+            ? `Không có kết quả nào cho "${searchKeyword}". Thử từ khóa khác hoặc đặt lại bộ lọc.`
+            : 'Chưa có bài giảng nào trong danh mục này.'
+          : 'Dán đường dẫn YouTube hoặc thử ngay bài giảng mẫu để bắt đầu học song ngữ cùng AI!'}
+      </Text>
+
       {hasFilter ? (
         <TouchableOpacity style={styles.resetFilterBtn} onPress={onResetFilter} activeOpacity={0.8}>
           <Text style={styles.resetFilterBtnText}>Đặt lại bộ lọc</Text>
+        </TouchableOpacity>
+      ) : onPasteSample ? (
+        <TouchableOpacity
+          style={styles.sampleActionBtn}
+          onPress={onPasteSample}
+          activeOpacity={0.8}
+        >
+          <Icon name="sparkle" size={15} color="#FFFFFF" />
+          <Text style={styles.sampleActionBtnText}>Thử bài giảng mẫu (AI &amp; Machine Learning)</Text>
         </TouchableOpacity>
       ) : null}
     </View>
@@ -58,35 +73,48 @@ const styles = StyleSheet.create({
   emptyFilterTitle: {
     fontFamily: fonts.bold,
     fontSize: 15,
-    lineHeight: 20,
     color: colors.ink,
-    marginBottom: 5,
+    marginBottom: 6,
     textAlign: 'center',
   },
   emptyFilterSub: {
-    fontFamily: fonts.medium,
-    fontSize: 11.5,
-    lineHeight: 17,
-    color: colors.slate,
+    fontFamily: fonts.regular,
+    fontSize: 13,
+    lineHeight: 18,
+    color: colors.muted,
     textAlign: 'center',
-    maxWidth: 300,
-    marginBottom: 14,
+    maxWidth: 290,
   },
   resetFilterBtn: {
-    backgroundColor: colors.coral,
-    paddingHorizontal: 18,
-    paddingVertical: 9,
+    marginTop: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
     borderRadius: radius.pill,
-    shadowColor: colors.coral,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 14,
-    elevation: 4,
+    backgroundColor: colors.coralTint,
   },
   resetFilterBtnText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: colors.coralDeep,
+  },
+  sampleActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    backgroundColor: colors.coral,
+    borderRadius: radius.pill,
+    shadowColor: colors.coral,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  sampleActionBtnText: {
     fontFamily: fonts.bold,
-    fontSize: 11.5,
-    lineHeight: 16,
+    fontSize: 13,
     color: '#FFFFFF',
   },
 });

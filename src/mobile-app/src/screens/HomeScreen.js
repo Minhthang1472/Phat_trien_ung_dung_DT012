@@ -1149,6 +1149,7 @@ export default function HomeScreen({ currentUser, onNavigate }) {
           onCancelProcessing={handleCancelProcessing}
           onPairVideoAndSubtitle={handlePairVideoAndSubtitle}
           onUploadFile={handleUploadFile}
+          onPasteSample={() => setVideoUrl('https://www.youtube.com/watch?v=k2P_pHQDlp0')}
         />
 
         {/* 2. Khối Thống kê Tiến độ Học Tập */}
@@ -1201,6 +1202,7 @@ export default function HomeScreen({ currentUser, onNavigate }) {
                 setSearchKeyword('');
                 setActiveCategory('all');
               }}
+              onPasteSample={() => setVideoUrl('https://www.youtube.com/watch?v=k2P_pHQDlp0')}
             />
           )}
         </View>
