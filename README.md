@@ -182,6 +182,7 @@ Phát triển ứng dụng/
 ├── PTUD.ipynb                       # Notebook chạy backend trên Google Colab GPU
 ├── backend_ai_colab.ipynb           # Notebook dự phòng tối ưu Tesla T4
 └── docs/                            # Tài liệu học thuật & hướng dẫn dự án
+    ├── THIET_KE_KIEN_TRUC_VA_DATABASE.md
     └── QUY_TRINH_KHOI_DONG_LAI_COLAB.md
 ```
 
@@ -431,7 +432,7 @@ lại bằng mật khẩu cũ; dữ liệu cũ vẫn còn nguyên.
 | `POST` | `/api/auth/reset-password` | Xác thực mã OTP và đặt lại mật khẩu mới | Public |
 | `GET` | `/api/video/info` | Tra cứu nhanh thời lượng & kiểm tra bài giảng trong Cache | Bearer Token |
 | `POST` | `/api/video/process` | Bóc tách âm thanh, Whisper ASR, dịch thuật và tóm tắt | Bearer Token |
-| `POST` | `/api/video/lookahead` | Tải phụ đề trước 15s cho video dài (Streaming) | Public / Token |
+| `POST` | `/api/video/lookahead` | Tải phụ đề trước 15s cho video dài (Streaming, có rate limit) | Public / Token |
 | `POST` | `/api/video/cancel/{job_id}`| Hủy tiến trình xử lý đang chạy ngầm | Bearer Token |
 | `GET` | `/api/tts` | Phát âm chuẩn Google Translate TTS đa ngôn ngữ | Public / Optional |
 | `GET` | `/api/history` | Lấy danh sách bài giảng đã học theo tài khoản (`?limit=25&offset=0`) | Bearer Token |
