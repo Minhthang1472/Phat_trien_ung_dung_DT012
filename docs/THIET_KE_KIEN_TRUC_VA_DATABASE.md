@@ -127,7 +127,7 @@ Mỗi tài khoản là một document. ID là SHA-256 của email; tài khoản 
 | `verification_otp_hash`, `reset_otp_hash`, `email_change_otp_hash` | String | Optional | OTP băm HMAC-SHA256 (không lưu plaintext) |
 | `*_otp_attempts` | Number | Default: 0 | Số lần nhập sai; vượt ngưỡng sẽ vô hiệu hoá OTP |
 | `token_version` | Number | Default: 0 | Tăng khi thu hồi toàn bộ phiên đăng nhập |
-| `refresh_sessions` | Array of Objects | Optional | Phiên refresh gồm `id`, `hash`, `created_at`, `expires_at`; tối đa 5 phiên |
+| `refresh_sessions` | Array of Objects | Optional | Phiên refresh gồm `id`, `hash`, `rotated_at`, `previous_hashes` (hash cũ + thời điểm xoay), `created_at`, `expires_at`; tối đa 5 phiên |
 | `created_at` | String (ISO-8601) | Required | Thời điểm tạo tài khoản |
 | `deleted` | Boolean | Default: `false` | Đánh dấu xoá mềm |
 | `deleted_at` | String (ISO-8601) | Optional | Thời điểm vô hiệu hoá |
