@@ -32,11 +32,11 @@ Hệ thống được thiết kế theo mô hình kiến trúc phân tầng chu�
 │    - Translation Service: Neural Machine Translation (Đa ngôn ngữ)         │
 │    - Summary Service: Large Language Model (Gemini / Local LLM)            │
 └─────────────────────────────────────┬──────────────────────────────────────┘
-                                      │ Firebase Admin SDK / Motor ODM
+                                      │ Firebase Admin SDK
 ┌─────────────────────────────────────▼──────────────────────────────────────┐
 │ 4. TẦNG LƯU TRỮ DỮ LIỆU & CACHE (DATA PERSISTENCE LAYER)                   │
-│    - Google Firebase Cloud Firestore: Kho lưu vĩnh cửu & Cache O(1)        │
-│    - MongoDB Atlas: Cơ sở dữ liệu NoSQL đám mây (Dự phòng mở rộng)         │
+│    - Google Firebase Cloud Firestore: users, lectures, media_owners          │
+│    - Cache phía client: IndexedDB (extension) & AsyncStorage (mobile)      │
 │    - Local File Cache: Lưu trữ tạm file WAV khi đang xử lý                 │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -53,14 +53,14 @@ sequenceDiagram
     actor User as Sinh viên / Người dùng
     participant Client as Mobile App / Extension
     participant API as FastAPI Backend
-    participant DB as MongoDB Atlas
+    participant DB as Firebase Firestore
     participant Audio as Audio Service (yt-dlp)
     participant AI as Whisper ASR Engine
     participant LLM as Summary Service (LLM)
 
     User->>Client: Dán liên kết video (URL)
     Client->>API: POST /api/video/process { video_url, target_lang }
-    API->>DB: Kiểm tra Cache: lectures.findOne({ video_url })
+    API->>DB: Đọc cache: lectures/{owner_id}_{hash(video_url)}
     alt Đã có trong Cache
         DB-->>API: Trả về kết quả phụ đề & tóm tắt có sẵn
         API-->>Client: Phản hồi ngay lập tức (0.1 giây)
@@ -72,7 +72,7 @@ sequenceDiagram
         AI-->>API: Danh sách câu phụ đề kèm Timestamps [start, end, text]
         API->>LLM: summarize_transcript(full_text)
         LLM-->>API: Bản tóm tắt bài giảng & ý chính
-        API->>DB: Lưu kết quả mới vào MongoDB (lectures, subtitles, summaries)
+        API->>DB: Lưu kết quả mới vào Firestore (lectures + media_owners)
         API-->>Client: Trả về JSON kết quả hoàn chỉnh
         Client->>User: Hiển thị phụ đề đồng bộ trên giao diện
     end
@@ -109,56 +109,63 @@ sequenceDiagram
 
 ## 3. THIẾT KẾ CƠ SỞ DỮ LIỆU CHI TIẾT (DATA DICTIONARY)
 
-Hệ thống sử dụng MongoDB làm cơ sở dữ liệu phi quan hệ (NoSQL) với 4 Collection chính:
+Hệ thống sử dụng **Google Firebase Cloud Firestore** (NoSQL, document-oriented) với 4 collection chính. Backend truy cập qua Firebase Admin SDK; client không đọc trực tiếp (xem `firestore.rules`).
 
 ### 3.1. Collection: `users`
-Lưu trữ thông tin tài khoản của sinh viên và giảng viên.
+Mỗi tài khoản là một document. ID là SHA-256 của email; tài khoản Google có tiền tố `google_`, tài khoản extension có tiền tố `ext_`.
 
 | Tên trường (Field) | Kiểu dữ liệu | Ràng buộc (Constraint) | Mô tả chi tiết |
 | :--- | :--- | :--- | :--- |
-| `_id` | ObjectId | Primary Key | Khóa chính tự sinh |
-| `name` | String | Required | Họ và tên người dùng |
-| `email` | String | Required, **Unique Index** | Email đăng nhập |
-| `password_hash` | String | Required | Mật khẩu băm (PBKDF2-SHA256, 240,000 vòng lặp) |
-| `role` | String | Enum: `["student", "lecturer"]` | Vai trò người dùng |
-| `created_at` | DateTime | Default: `now()` | Thời điểm tạo tài khoản |
+| `id` | String | Document ID | Khóa chính ổn định |
+| `username` | String | Required, duy nhất | Tên đăng nhập (chữ thường) |
+| `email` | String | Required | Email đăng nhập |
+| `display_name` | String | Required | Tên hiển thị |
+| `password_hash` | String | Optional | Mật khẩu băm Bcrypt; rỗng với tài khoản Google |
+| `auth_provider` | String | Enum: `password`, `google`, `extension` | Nguồn xác thực |
+| `avatar_url` / `avatar` | String | Optional | Ảnh đại diện |
+| `email_verified` | Boolean | Default: `false` | Đã xác minh OTP hay chưa |
+| `created_at` | String (ISO-8601) | Required | Thời điểm tạo tài khoản |
+| `deleted` | Boolean | Default: `false` | Đánh dấu xoá mềm |
+| `deleted_at` | String (ISO-8601) | Optional | Thời điểm vô hiệu hoá |
+| `account_status` | String | Optional, `"deleted"` | Trạng thái tài khoản bị vô hiệu hoá |
 
 ### 3.2. Collection: `lectures`
-Lưu trữ thông tin metadata của video bài giảng và quản lý bộ nhớ đệm (Cache).
+Mỗi bài giảng là một document. Bản riêng của người dùng có ID `{owner_id}_{md5(video_url)}`; bản cache công khai có ID `md5(video_url)` và chỉ chứa nội dung suy ra từ video.
 
 | Tên trường (Field) | Kiểu dữ liệu | Ràng buộc (Constraint) | Mô tả chi tiết |
 | :--- | :--- | :--- | :--- |
-| `_id` | ObjectId | Primary Key | Khóa chính bài giảng |
-| `video_url` | String | Required, **Unique Index** | Đường dẫn bài giảng (để check cache) |
-| `title` | String | Required | Tiêu đề của video bài giảng |
-| `duration_seconds` | Double | Default: 0 | Tổng thời lượng video (giây) |
-| `source_type` | String | Enum: `["youtube", "drive", "lms", "mic"]` | Nguồn video |
-| `detected_language`| String | Default: `"en"` | Ngôn ngữ AI tự phát hiện (`vi`, `en`, `ja`...) |
-| `status` | String | Enum: `["processing", "completed", "failed"]`| Trạng thái xử lý |
-| `created_at` | DateTime | **Index**, Default: `now()` | Thời gian xử lý video |
+| `owner_id` | String | Required (bản riêng) | Chủ sở hữu bài giảng |
+| `video_url` | String | Required | Đường dẫn bài giảng (khóa cache) |
+| `title` | String | Required | Tiêu đề video bài giảng |
+| `duration_seconds` | Number | Default: 0 | Tổng thời lượng video (giây) |
+| `language` | String | Default: `"en"` | Ngôn ngữ AI tự phát hiện |
+| `segments` | Array of Objects | Required | Phụ đề gồm `id`, `start`, `end`, `text` |
+| `summary` | String | Optional | Bản tóm tắt tổng quan |
+| `key_points` | Array of Strings | Optional | Các ý cốt lõi, khái niệm, công thức |
+| `formulas_and_terms` | Array of Objects | Optional | Công thức và thuật ngữ quan trọng |
+| `sections` | Array of Objects | Optional | Bài giảng chia theo chương/mục |
+| `quiz` | Array of Objects | Optional | Câu hỏi trắc nghiệm tự ôn tập |
+| `quiz_target` | String | Optional | Trình độ/đối tượng của quiz |
+| `folder`, `tags` | String / Array | Optional | Phân loại cá nhân (không đưa vào cache công khai) |
+| `media_url`, `media_stream_url` | String | Optional | File upload hoặc URL stream riêng |
+| `cached_at` | Timestamp | Required | Thời điểm ghi cache, dùng để sắp xếp lịch sử |
+| `created_at` | String (ISO-8601) | Optional | Thời điểm xử lý ban đầu |
 
-### 3.3. Collection: `subtitles`
-Lưu trữ phụ đề chi tiết kèm mốc thời gian chính xác từng mili-giây.
-
-| Tên trường (Field) | Kiểu dữ liệu | Ràng buộc (Constraint) | Mô tả chi tiết |
-| :--- | :--- | :--- | :--- |
-| `_id` | ObjectId | Primary Key | Khóa chính |
-| `lecture_id` | ObjectId | **Index**, Ref: `lectures._id` | Khóa ngoại trỏ đến bài giảng |
-| `language` | String | Required (ví dụ: `vi`, `en`) | Ngôn ngữ của bộ phụ đề |
-| `segments` | Array of Objects | Required | Danh sách các đoạn phụ đề |
-| `segments.id` | Integer | Required | Số thứ tự câu phụ đề |
-| `segments.start` | Double | Required | Giây bắt đầu nói |
-| `segments.end` | Double | Required | Giây kết thúc nói |
-| `segments.text` | String | Required | Nội dung văn bản câu nói |
-
-### 3.4. Collection: `summaries`
-Lưu trữ nội dung tóm tắt học tập được sinh ra bởi LLM.
+### 3.3. Collection: `media_owners`
+Lưu quyền sở hữu file upload để cấp lại media token. Document ID là `md5("{owner_id}:{media_url}")`.
 
 | Tên trường (Field) | Kiểu dữ liệu | Ràng buộc (Constraint) | Mô tả chi tiết |
 | :--- | :--- | :--- | :--- |
-| `_id` | ObjectId | Primary Key | Khóa chính bản tóm tắt |
-| `lecture_id` | ObjectId | **Index**, Ref: `lectures._id` | Khóa ngoại trỏ đến bài giảng |
-| `overview` | String | Required | Đoạn văn tóm tắt tổng quan |
-| `key_points` | Array of Strings | Required | Các ý cốt lõi, khái niệm, công thức |
-| `quiz` | Array of Objects | Optional | Bộ câu hỏi trắc nghiệm tự ôn tập |
-| `created_at` | DateTime | Default: `now()` | Thời gian tạo tóm tắt |
+| `owner_id` | String | Required, **Index** | Người sở hữu file |
+| `media_url` | String | Required | Đường dẫn `/uploads/...` |
+| `created_at` | Timestamp | Default: server timestamp | Thời điểm đăng ký quyền |
+
+### 3.4. Collection: `system_config`
+Chỉ document `system_config/server` được đọc công khai để client tự động lấy địa chỉ backend (ví dụ sau khi khởi động lại Colab).
+
+| Tên trường (Field) | Kiểu dữ liệu | Ràng buộc (Constraint) | Mô tả chi tiết |
+| :--- | :--- | :--- | :--- |
+| `url` | String | Required | URL công khai của backend (`https://*.trycloudflare.com`) |
+| `updated_at` | Timestamp | Optional | Lần cập nhật gần nhất |
+
+> Cache phía client là tùy chọn: extension dùng IndexedDB (`cacheDB.js`), mobile dùng AsyncStorage. Firestore vẫn là nguồn dữ liệu chính; xoá cache không làm mất bài giảng.
