@@ -43,3 +43,10 @@ test_sample.*
 .idea/
 .DS_Store
 Thumbs.db
+
+# ==========================================
+# Cache Expo & binary tunnel tải cục bộ
+# ==========================================
+.expo/
+cloudflared
+cloudflared.exe

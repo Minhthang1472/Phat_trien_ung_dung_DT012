@@ -3,7 +3,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_optional_user
 from app.firebase_database import firebase_service
 from app.main import app
 from app.services.auth_service import auth_service
@@ -259,3 +259,61 @@ def test_google_account_can_delete_without_password(monkeypatch):
     assert response.status_code == 200
     assert db.collection("users").document("google_123").exists
     assert db.collection("users").document("google_123").to_dict()["deleted"] is True
+
+
+def test_soft_deleted_account_media_token_is_rejected(monkeypatch, tmp_path):
+    db = FakeDB()
+    _seed(db)
+    db.collection("users").document("user-1").update(
+        {"deleted": True, "account_status": "deleted"}
+    )
+    monkeypatch.setattr(firebase_service, "db", db)
+
+    from app.routers import video as video_module
+
+    monkeypatch.setattr(video_module, "UPLOAD_DIR", str(tmp_path))
+    (tmp_path / "a.mp4").write_bytes(b"video")
+    token = auth_service.create_media_token("user-1", "/uploads/a.mp4")
+
+    response = TestClient(app).get(f"/uploads/a.mp4?access_token={token}")
+
+    assert response.status_code == 403
+    assert "vô hiệu hoá" in response.json()["detail"]
+
+
+def test_history_pagination_returns_next_offset(monkeypatch):
+    db = FakeDB()
+    _seed(db)
+    lectures = db.collection("lectures")
+    lectures.document("lecture-1").set({
+        "owner_id": "user-1",
+        "video_url": "https://youtu.be/abc",
+        "title": "Bài mới nhất",
+        "cached_at": "2026-01-03T00:00:00",
+    })
+    lectures.document("lecture-3").set({
+        "owner_id": "user-1",
+        "video_url": "https://youtu.be/def",
+        "title": "Bài cũ hơn",
+        "cached_at": "2026-01-02T00:00:00",
+    })
+    monkeypatch.setattr(firebase_service, "db", db)
+    app.dependency_overrides[get_optional_user] = lambda: dict(USER)
+    try:
+        client = TestClient(app)
+        first = client.get("/api/history?limit=1&offset=0")
+        second = client.get("/api/history?limit=1&offset=1")
+    finally:
+        app.dependency_overrides.pop(get_optional_user, None)
+
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert [item["title"] for item in first_payload["items"]] == ["Bài mới nhất"]
+    assert first_payload["has_more"] is True
+    assert first_payload["next_offset"] == 1
+
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert [item["title"] for item in second_payload["items"]] == ["Bài cũ hơn"]
+    assert second_payload["has_more"] is False
+    assert second_payload["next_offset"] is None

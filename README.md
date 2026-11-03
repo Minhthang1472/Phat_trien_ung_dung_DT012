@@ -86,7 +86,7 @@ Trong kỷ nguyên số hóa giáo dục, các nền tảng video học tập tr
 flowchart TD
     subgraph Client["Lớp Giao diện & Tương tác"]
         Ext["Chrome Extension (Manifest V3)\n- Giao diện phụ đề nổi YouTube\n- Google Voice TTS\n- Lưu tạm SessionStorage"]
-        App["Mobile / Web App (React Native)\n- Expo SDK 52/53\n- Interactive Player\n- Quiz & Mindmap Viewer"]
+        App["Mobile / Web App (React Native)\n- Expo SDK 57\n- Interactive Player\n- Quiz & Mindmap Viewer"]
     end
 
     subgraph Gateway["Cổng Kết nối & Định tuyến"]
@@ -123,53 +123,69 @@ Phát triển ứng dụng/
 │   │   ├── api/
 │   │   │   └── websocket_router.py  # WebSocket bóc tách trực tiếp (Live Caption)
 │   │   ├── core/
-│   │   │   ├── config.py            # Cấu hình biến môi trường pydantic-settings
-│   │   │   └── dependencies.py      # Middleware xác thực JWT & Rate Limit
+│   │   │   ├── config.py            # Cấu hình biến môi trường
+│   │   │   ├── dependencies.py      # Xác thực JWT, rate limit & phân quyền
+│   │   │   ├── logging_config.py    # Log tập trung kèm request-id
+│   │   │   └── metrics.py           # Bộ đếm metrics dạng Prometheus text
 │   │   ├── models/
 │   │   │   └── schemas.py           # Pydantic schemas (Request/Response models)
 │   │   ├── routers/
-│   │   │   ├── auth.py              # Đăng ký, đăng nhập, cấp token & quên mật khẩu OTP
-│   │   │   ├── history.py           # Lịch sử bài giảng người dùng
-│   │   │   └── video.py             # Xử lý video, tải âm thanh, TTS, burn phụ đề
+│   │   │   ├── auth.py              # Đăng ký, đăng nhập, OTP, xuất/vô hiệu hoá tài khoản
+│   │   │   ├── export.py            # Xuất tài liệu PDF / DOCX / Markdown
+│   │   │   ├── history.py           # Lịch sử bài giảng có phân trang
+│   │   │   └── video.py             # Xử lý video, media token, stream proxy, burn phụ đề
 │   │   ├── services/
-│   │   │   ├── audio_service.py     # yt-dlp & FFmpeg trích xuất âm thanh
-│   │   │   ├── auth_service.py      # Băm Bcrypt & mã hóa JWT an toàn
+│   │   │   ├── audio_service.py     # yt-dlp, FFmpeg & kiểm tra SSRF
+│   │   │   ├── auth_service.py      # Băm mật khẩu, JWT & media token
+│   │   │   ├── cleanup_service.py   # Dọn file upload/audio tạm và job cũ
 │   │   │   ├── email_service.py     # Gửi mã OTP xác minh qua Email
 │   │   │   ├── subtitle_exporter.py # Xuất định dạng SRT, VTT, TXT
 │   │   │   ├── subtitle_parser.py   # Phân tích file phụ đề tải lên
 │   │   │   ├── summary_service.py   # Pipeline tóm tắt & Quiz qua Gemini / Ollama
 │   │   │   ├── translation_service.py# Dịch thuật song ngữ đa ngôn ngữ
-│   │   │   └── whisper_service.py   # Nhận diện giọng nói Faster-Whisper CUDA
-│   │   ├── firebase_database.py     # Kết nối Cloud Firestore & Quản lý Cache
-│   │   └── main.py                  # Khởi tạo FastAPI App & Middleware CORS
-│   ├── requirements.txt             # Thư viện Python dependencies
-│   ├── run_server.py                # File khởi chạy máy chủ cục bộ (Localhost)
-│   └── serviceAccountKey.json       # Khóa cấu hình dịch vụ Firebase Admin SDK
+│   │   │   └── whisper_service.py   # Nhận diện giọng nói Faster-Whisper
+│   │   ├── export_service.py        # Render PDF (WeasyPrint/ReportLab), DOCX, Markdown
+│   │   ├── firebase_database.py     # Firestore: cache, lịch sử, export & soft delete
+│   │   └── main.py                  # FastAPI, middleware, health/readiness, cleanup loop
+│   ├── tests/                       # 81 unit/integration tests (pytest)
+│   ├── requirements.txt             # Thư viện Python chạy production
+│   ├── requirements-dev.txt         # Thêm pytest/httpx cho CI
+│   ├── Dockerfile                   # Image production (ffmpeg + Pango/Cairo)
+│   ├── run_server.py                # Khởi chạy máy chủ cục bộ
+│   └── .env.example                 # Mẫu biến môi trường backend
 │
 ├── src/browser-extension/           # TIỆN ÍCH MỞ RỘNG TRÌNH DUYỆT (MANIFEST V3)
-│   ├── manifest.json                # Khai báo quyền, host permissions & scripts
+│   ├── manifest.json                # Quyền, host permissions & content scripts
 │   ├── popup.html / popup.css       # Giao diện điều khiển nhanh khi click icon
 │   ├── popup.js                     # Điều hướng, gọi API, auto-load bài giảng cũ
 │   ├── content.js                   # Tiêm khung phụ đề nổi, TTS & auto-sync YouTube
-│   └── overlay.css                  # Hiệu ứng Glassmorphism, ghim khung lên video
+│   ├── cacheDB.js                   # Cache bài giảng phía client bằng IndexedDB
+│   ├── overlay.css                  # Hiệu ứng Glassmorphism cho khung phụ đề
+│   └── icons/                       # Icon 16/32/48/128 cho extension
 │
-├── src/mobile-app/                  # ỨNG DỤNG DI ĐỘNG & WEB (REACT NATIVE / EXPO)
+├── src/mobile-app/                  # ỨNG DỤNG DI ĐỘNG & WEB (REACT NATIVE / EXPO SDK 57)
 │   ├── src/
-│   │   ├── screens/
-│   │   │   ├── HomeScreen.js        # Màn hình chính phát video, phụ đề, Quiz
-│   │   │   ├── ProfileScreen.js     # Màn hình hồ sơ, cấp bậc EXP, đăng nhập/OTP
-│   │   │   └── SettingsScreen.js    # Cài đặt thư mục, backup dữ liệu, bảo mật
-│   │   ├── components/              # Các component giao diện tái sử dụng
-│   │   ├── constants/theme.js       # Hệ màu Dark Theme hiện đại
-│   │   └── services/api.js          # Client gọi API, tự động đồng bộ link máy chủ
-│   ├── package.json                 # Cấu hình thư viện Expo SDK 52/53
+│   │   ├── screens/                 # Home, Profile, Settings, SyncPlayer, SummaryQuiz...
+│   │   ├── components/              # Component giao diện, player, settings, quiz
+│   │   ├── constants/theme.js       # Design tokens & hệ màu
+│   │   └── services/api.js          # Client API, cache AsyncStorage, media token
+│   ├── app.json                     # Cấu hình Expo & định danh phát hành
+│   ├── eas.json                     # Profile build development/preview/production
+│   ├── package.json                 # Thư viện Expo SDK 57 / React Native 0.86
 │   └── App.js                       # Điểm khởi đầu ứng dụng & Bottom Tabs
 │
-├── PTUD.ipynb                       # NOTEBOOK CHẠY TOÀN BỘ BACKEND TRÊN GOOGLE COLAB GPU
-├── backend_ai_colab.ipynb           # Notebook dự phòng tối ưu hóa Tesla T4
-└── docs/                            # TÀI LIỆU HỌC THUẬT & HƯỚNG DẪN DỰ ÁN
-    └── QUY_TRINH_KHOI_DONG_LAI_COLAB.md # Quy trình khởi động lại Colab từng bước
+├── scripts/check-extension.mjs      # Kiểm tra manifest MV3 và cú pháp extension
+├── .github/workflows/               # CI, security audit & deploy Firestore rules
+├── firestore.rules                  # Chặn truy cập Firestore trực tiếp từ client
+├── firebase.json / .firebaserc      # Cấu hình deploy Firebase
+├── docker-compose.yml               # Chạy backend production bằng Docker
+├── PTUD.ipynb                       # Notebook chạy backend trên Google Colab GPU
+├── backend_ai_colab.ipynb           # Notebook dự phòng tối ưu Tesla T4
+└── docs/                            # Tài liệu học thuật & hướng dẫn dự án
+    └── QUY_TRINH_KHOI_DONG_LAI_COLAB.md
 ```
+
+> `serviceAccountKey.json` và file `.env` phải tự tạo từ mẫu, không commit lên Git.
 
 ---
 
@@ -287,7 +303,7 @@ pytest
 Bộ test bao phủ: băm/giải mã JWT, parser SRT/WebVTT, chuẩn hóa quiz/mindmap,
 xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL, health/readiness, SSRF, phân
 quyền cache theo `owner_id`, xuất dữ liệu, vô hiệu hoá tài khoản (xoá mềm),
-media token và giới hạn upload (79 test).
+media token, phân trang lịch sử và giới hạn upload (81 test).
 
 GitHub Actions chạy thêm kiểm tra manifest extension, `expo-doctor`,
 `expo export --platform web` và build Docker image.
@@ -367,6 +383,18 @@ Workflow `.github/workflows/deploy-firestore-rules.yml` tự deploy khi
 `firestore.rules` thay đổi trên nhánh `main`, với điều kiện repo đã cấu hình
 secret `FIREBASE_SERVICE_ACCOUNT` (JSON service account có quyền Firebase
 Rules Admin).
+
+---
+
+### KHÔI PHỤC TÀI KHOẢN ĐÃ VÔ HIỆU HOÁ
+
+Chức năng "Vô hiệu hoá tài khoản" là **xoá mềm**: backend chỉ ghi
+`deleted: true`, `deleted_at` và `account_status: "deleted"` vào document
+`users/{userId}`. Bài giảng, `media_owners` và file upload vẫn được giữ nguyên.
+
+Để khôi phục, quản trị viên mở Firestore Console và xoá ba trường trên khỏi
+document người dùng (hoặc đặt `deleted: false`). Người dùng có thể đăng nhập
+lại bằng mật khẩu cũ; dữ liệu cũ vẫn còn nguyên.
 
 ---
 

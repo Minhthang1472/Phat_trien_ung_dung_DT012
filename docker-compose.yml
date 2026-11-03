@@ -16,6 +16,8 @@ services:
     restart: unless-stopped
     ports:
       - "${API_PORT:-8000}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -25,12 +27,24 @@ services:
       JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-168}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+      MEDIA_TOKEN_TTL_MINUTES: ${MEDIA_TOKEN_TTL_MINUTES:-120}
+      ALLOWED_VIDEO_HOSTS: ${ALLOWED_VIDEO_HOSTS:-youtube.com,youtu.be,drive.google.com,drive.usercontent.google.com,docs.google.com,dropbox.com}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
       WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-small}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
       FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
+      REDIS_URL: ${REDIS_URL:-}
       UPLOAD_TTL_HOURS: ${UPLOAD_TTL_HOURS:-24}
+      AUDIO_TEMP_TTL_HOURS: ${AUDIO_TEMP_TTL_HOURS:-6}
       STREAM_JOB_TTL_MINUTES: ${STREAM_JOB_TTL_MINUTES:-120}
       CLEANUP_INTERVAL_MINUTES: ${CLEANUP_INTERVAL_MINUTES:-30}
     volumes:
