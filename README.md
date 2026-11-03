@@ -147,7 +147,7 @@ Phát triển ứng dụng/
 │   │   ├── export_service.py        # Render PDF (WeasyPrint/ReportLab), DOCX, Markdown
 │   │   ├── firebase_database.py     # Firestore: cache, lịch sử, export & soft delete
 │   │   └── main.py                  # FastAPI, middleware, health/readiness, cleanup loop
-│   ├── tests/                       # 145 unit/integration tests (pytest)
+│   ├── tests/                       # 154 unit/integration tests (pytest)
 │   ├── requirements.txt             # Thư viện Python chạy production
 │   ├── requirements-dev.txt         # Thêm pytest/httpx cho CI
 │   ├── Dockerfile                   # Image production (ffmpeg + Pango/Cairo)
@@ -261,6 +261,7 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
    JWT_SECRET=replace_with_a_long_random_secret_at_least_32_chars
    ACCESS_TOKEN_TTL_MINUTES=60
    REFRESH_TOKEN_TTL_DAYS=30
+   REFRESH_REPLAY_GRACE_SECONDS=300
    FIREBASE_CREDENTIALS_PATH=serviceAccountKey.json
    ```
 5. **Khởi chạy máy chủ:**
@@ -319,8 +320,8 @@ pytest
 Bộ test bao phủ: băm/giải mã JWT, parser SRT/WebVTT, chuẩn hóa quiz/mindmap,
 xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL, health/readiness, SSRF, phân
 quyền cache theo `owner_id`, xuất dữ liệu, vô hiệu hoá tài khoản (xoá mềm),
-media token, phân trang lịch sử, giới hạn upload và nhận diện IP sau proxy
-(145 test).
+media token, phân trang lịch sử, giới hạn upload, xác thực/giới hạn WebSocket
+và nhận diện IP sau proxy (154 test).
 
 GitHub Actions chạy thêm kiểm tra manifest extension, `expo-doctor`,
 `expo export --platform web`, build Docker image, smoke test runtime trong
@@ -538,7 +539,7 @@ proxy; nếu không cấu hình, backend bỏ qua `X-Forwarded-For` để tránh
 
 ## 🔒 BẢO MẬT & QUYỀN RIÊNG TƯ
 
-1. **Bảo mật danh tính & Mật khẩu:** Toàn bộ mật khẩu được mã hóa băm một chiều an toàn bằng **PBKDF2-HMAC-SHA256** (240.000 vòng, salt ngẫu nhiên 16 byte). Phiên làm việc dùng **access token ngắn hạn** (mặc định 60 phút) và **refresh token** (mặc định 30 ngày) được xoay mỗi lần làm mới; trường `token_version` cho phép thu hồi toàn bộ phiên khi đổi/đặt lại mật khẩu hoặc xoá tài khoản.
+1. **Bảo mật danh tính & Mật khẩu:** Toàn bộ mật khẩu được mã hóa băm một chiều an toàn bằng **PBKDF2-HMAC-SHA256** (240.000 vòng, salt ngẫu nhiên 16 byte). Phiên làm việc dùng **access token ngắn hạn** (mặc định 60 phút) và **refresh token** (mặc định 30 ngày) được xoay mỗi lần làm mới; trường `token_version` cho phép thu hồi toàn bộ phiên khi đổi/đặt lại mật khẩu hoặc xoá tài khoản. Refresh token cũ bị dùng lại sau `REFRESH_REPLAY_GRACE_SECONDS` (mặc định 300 giây) bị coi là bị đánh cắp và thu hồi toàn bộ phiên; trong khoảng grace, các client refresh đồng thời không bị đăng xuất oan.
 2. **Xác thực bảo vệ bằng mã OTP:** Quy trình xác minh email/khôi phục tài khoản sử dụng mã 6 chữ số ngẫu nhiên, chỉ lưu dưới dạng **HMAC-SHA256**, giới hạn số lần nhập sai và hết hạn sau 10 phút. Ở production, thiếu SMTP hoặc gửi mail lỗi sẽ **fail-closed**, không tự kích hoạt tài khoản.
 3. **Quyền riêng tư dữ liệu:** Dữ liệu phụ đề và ghi chú cá nhân của từng học viên được phân tách độc lập theo `owner_id` trên Google Cloud Firestore. Cache đọc theo `owner_id` không fallback sang bản toàn cục; bản toàn cục chỉ giữ nội dung suy ra từ video công khai.
 4. **Chống SSRF:** URL video được kiểm tra allowlist và phân giải DNS; mọi địa chỉ loopback, private, link-local hoặc metadata cloud đều bị từ chối. Proxy stream yêu cầu Bearer Token hoặc media token và kiểm tra lại từng bước redirect.

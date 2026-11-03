@@ -312,6 +312,42 @@ async def login(request: LoginRequest, _limit=Depends(auth_rate_limit)):
     return _session_payload(user, firebase_service.db.collection("users").document(user["id"]))
 
 
+def _revoke_replayed_refresh_token(user: dict, session: dict, provided_hash: str) -> None:
+    """Thu hồi toàn bộ phiên nếu refresh token cũ bị dùng lại ngoài grace period.
+
+    Trong grace period, nhiều client (mobile + extension) có thể refresh gần như
+    đồng thời; chỉ một yêu cầu thắng nên yêu cầu còn lại nhận 401 nhưng không bị
+    đăng xuất. Nếu token cũ xuất hiện muộn hơn, coi là bị đánh cắp và thu hồi.
+    """
+    now = datetime.now(timezone.utc)
+    for item in session.get("previous_hashes") or []:
+        if not isinstance(item, dict):
+            continue
+        if not hmac.compare_digest(str(item.get("hash") or ""), provided_hash):
+            continue
+        try:
+            rotated_at = datetime.fromisoformat(str(item.get("rotated_at")))
+        except (TypeError, ValueError):
+            rotated_at = None
+        if rotated_at and (now - rotated_at).total_seconds() <= max(
+            0, settings.REFRESH_REPLAY_GRACE_SECONDS
+        ):
+            return
+        user_ref = firebase_service.db.collection("users").document(user["id"])
+        user_ref.update({
+            "token_version": auth_service.user_token_version(user) + 1,
+            "refresh_sessions": [],
+        })
+        logger.warning(
+            "Refresh token bị dùng lại ngoài grace period cho user %s; đã thu hồi toàn bộ phiên.",
+            user.get("id"),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại.",
+        )
+
+
 @router.post("/refresh")
 async def refresh_session(request: RefreshTokenRequest, _limit=Depends(auth_rate_limit)):
     """Đổi refresh token lấy access token mới, đồng thời xoay refresh token."""
@@ -332,15 +368,24 @@ async def refresh_session(request: RefreshTokenRequest, _limit=Depends(auth_rate
     session = next((item for item in sessions if item.get("id") == claims.get("sid")), None)
     if not session:
         raise HTTPException(status_code=401, detail="Phiên đăng nhập không hợp lệ hoặc đã hết hạn.")
+    provided_hash = auth_service.token_hash(request.refresh_token)
     if not hmac.compare_digest(
         str(session.get("hash") or ""),
-        auth_service.token_hash(request.refresh_token),
+        provided_hash,
     ):
+        _revoke_replayed_refresh_token(user, session, provided_hash)
         raise HTTPException(status_code=401, detail="Refresh token không hợp lệ.")
 
     new_refresh_token = auth_service.create_refresh_token(user, claims["sid"])
+    now = datetime.now(timezone.utc)
+    history = [
+        item for item in (session.get("previous_hashes") or [])
+        if isinstance(item, dict)
+    ]
+    history.append({"hash": session.get("hash"), "rotated_at": now.isoformat()})
+    session["previous_hashes"] = history[-5:]
     session["hash"] = auth_service.token_hash(new_refresh_token)
-    session["rotated_at"] = datetime.now(timezone.utc).isoformat()
+    session["rotated_at"] = now.isoformat()
 
     user_ref = firebase_service.db.collection("users").document(user["id"])
     user_ref.update({"refresh_sessions": sessions})

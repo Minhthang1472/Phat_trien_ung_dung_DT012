@@ -94,13 +94,17 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/health/ready)" = "503"
           docker logs lecture-ai-smoke
       # Quét lỗ hổng nghiêm trọng trong image; bỏ qua lỗi chưa có bản vá để CI
-      # không đỏ vì base image. Có thể thêm .trivyignore nếu cần miễn trừ cụ thể.
-      - uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
-        with:
-          scan-type: image
-          image-ref: lecture-ai-api:ci
-          severity: CRITICAL
-          vuln-type: os,library
-          ignore-unfixed: true
-          exit-code: '1'
-          format: table
+      # không đỏ vì base image. Chạy Trivy bằng Docker image pin digest thay vì
+      # trivy-action vì setup-trivy tải binary từ GitHub Releases hay lỗi.
+      - name: Trivy image scan
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy@sha256:bcc376de8d77cfe086a917230e818dc9f8528e3c852f7b1aff648949b6258d1c \
+            image \
+            --scanners vuln \
+            --severity CRITICAL \
+            --ignore-unfixed \
+            --exit-code 1 \
+            --no-progress \
+            lecture-ai-api:ci

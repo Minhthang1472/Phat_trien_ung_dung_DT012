@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -558,6 +559,56 @@ def test_refresh_rotates_and_revokes_old_token(monkeypatch, no_auth_rate_limit):
 
     reused = client.post("/api/auth/refresh", json={"refresh_token": refresh_token})
     assert reused.status_code == 401
+
+
+def test_refresh_reuse_within_grace_keeps_session(monkeypatch, no_auth_rate_limit):
+    """Hai client refresh đồng thời không bị đăng xuất oan."""
+    db = FakeDB()
+    _seed(db)
+    session_id = auth_service.new_session_id()
+    refresh_token = auth_service.create_refresh_token(USER, session_id)
+    db.collection("users").document("user-1").update({
+        "refresh_sessions": [auth_service.build_refresh_session(refresh_token, session_id)],
+    })
+    monkeypatch.setattr(firebase_service, "db", db)
+
+    client = TestClient(app)
+    first = client.post("/api/auth/refresh", json={"refresh_token": refresh_token})
+    assert first.status_code == 200
+
+    reused = client.post("/api/auth/refresh", json={"refresh_token": refresh_token})
+    assert reused.status_code == 401
+
+    stored = db.collection("users").document("user-1").to_dict()
+    assert len(stored["refresh_sessions"]) == 1
+    assert stored.get("token_version", 0) == 0
+
+
+def test_refresh_reuse_after_grace_revokes_all_sessions(monkeypatch, no_auth_rate_limit):
+    """Token cũ xuất hiện muộn bị coi là bị đánh cắp và thu hồi toàn bộ phiên."""
+    db = FakeDB()
+    _seed(db)
+    session_id = auth_service.new_session_id()
+    refresh_token = auth_service.create_refresh_token(USER, session_id)
+    db.collection("users").document("user-1").update({
+        "refresh_sessions": [auth_service.build_refresh_session(refresh_token, session_id)],
+    })
+    monkeypatch.setattr(firebase_service, "db", db)
+
+    client = TestClient(app)
+    assert client.post("/api/auth/refresh", json={"refresh_token": refresh_token}).status_code == 200
+
+    stored = db.collection("users").document("user-1").to_dict()
+    old_time = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    stored["refresh_sessions"][0]["previous_hashes"][0]["rotated_at"] = old_time
+    db.collection("users").document("user-1").update({"refresh_sessions": stored["refresh_sessions"]})
+
+    reused = client.post("/api/auth/refresh", json={"refresh_token": refresh_token})
+    assert reused.status_code == 401
+
+    after = db.collection("users").document("user-1").to_dict()
+    assert after["refresh_sessions"] == []
+    assert after["token_version"] == 1
 
 
 def test_token_version_revokes_access_and_refresh(monkeypatch, no_auth_rate_limit):

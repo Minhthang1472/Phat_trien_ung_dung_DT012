@@ -27,6 +27,9 @@ class Settings:
     ACCESS_TOKEN_TTL_MINUTES: int = int(os.getenv("ACCESS_TOKEN_TTL_MINUTES", "60"))
     REFRESH_TOKEN_TTL_DAYS: int = int(os.getenv("REFRESH_TOKEN_TTL_DAYS", "30"))
     MAX_REFRESH_SESSIONS: int = int(os.getenv("MAX_REFRESH_SESSIONS", "5"))
+    # Refresh token cũ bị dùng lại trong khoảng này được coi là refresh đồng
+    # thời (không thu hồi phiên); quá hạn mới coi là bị đánh cắp.
+    REFRESH_REPLAY_GRACE_SECONDS: int = int(os.getenv("REFRESH_REPLAY_GRACE_SECONDS", "300"))
     # Token ngắn hạn gắn vào URL media (/uploads/...). Đủ dài cho một buổi học,
     # mobile sẽ tự xin token mới trước khi hết hạn.
     MEDIA_TOKEN_TTL_MINUTES: int = int(os.getenv("MEDIA_TOKEN_TTL_MINUTES", "120"))
