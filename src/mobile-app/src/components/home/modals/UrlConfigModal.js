@@ -26,6 +26,10 @@ export default function UrlConfigModal({
   onChangeRangeEnd,
   includeQuiz,
   onToggleQuiz,
+  quizMode = 'auto',
+  onSelectQuizMode,
+  quizTarget = 5,
+  onChangeQuizTarget,
   onClose,
   onSubmit,
 }) {
@@ -186,6 +190,72 @@ export default function UrlConfigModal({
                 thumbColor="#FFFFFF"
               />
             </TouchableOpacity>
+
+            {includeQuiz && onSelectQuizMode && (
+              <View style={styles.quizModeContainer}>
+                <Text style={styles.quizModeTitle}>
+                  Phương thức tạo Quiz:
+                </Text>
+                <View style={styles.quizModeRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.modePill,
+                      quizMode === 'auto' && styles.modePillActive,
+                    ]}
+                    onPress={() => onSelectQuizMode('auto')}
+                    activeOpacity={0.8}
+                  >
+                    <Icon name="sparkle" size={13} color={quizMode === 'auto' ? '#FFFFFF' : colors.slate} />
+                    <Text style={[styles.modePillText, quizMode === 'auto' && styles.modePillTextActive]}>
+                      AI Tự Động Sinh
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.modePill,
+                      quizMode === 'custom' && styles.modePillActive,
+                    ]}
+                    onPress={() => onSelectQuizMode('custom')}
+                    activeOpacity={0.8}
+                  >
+                    <Icon name="tune" size={13} color={quizMode === 'custom' ? '#FFFFFF' : colors.slate} />
+                    <Text style={[styles.modePillText, quizMode === 'custom' && styles.modePillTextActive]}>
+                      Tự Chọn Số Câu
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {quizMode === 'auto' ? (
+                  <Text style={styles.quizModeHint}>
+                    • AI tự động phân tích thời lượng và nội dung bài giảng để sinh số câu hỏi tối ưu nhất.
+                  </Text>
+                ) : (
+                  <View style={{ marginTop: 6 }}>
+                    <Text style={styles.quizTargetLabel}>
+                      Chọn số lượng câu hỏi mong muốn:
+                    </Text>
+                    <View style={styles.quizTargetRow}>
+                      {[3, 5, 8, 10, 15].map((cnt) => (
+                        <TouchableOpacity
+                          key={cnt}
+                          style={[
+                            styles.countPill,
+                            quizTarget === cnt && styles.countPillActive,
+                          ]}
+                          onPress={() => onChangeQuizTarget && onChangeQuizTarget(cnt)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.countPillText, quizTarget === cnt && styles.countPillTextActive]}>
+                            {cnt} câu
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
           </View>
 
           {/* Hàng nút bấm */}
@@ -433,6 +503,84 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     lineHeight: 16,
     color: colors.ink,
+  },
+  quizModeContainer: {
+    marginTop: 10,
+    padding: 10,
+    backgroundColor: 'rgba(235, 94, 85, 0.05)',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(235, 94, 85, 0.12)',
+  },
+  quizModeTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: colors.ink,
+    marginBottom: 6,
+  },
+  quizModeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 6,
+  },
+  modePill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceContainer,
+  },
+  modePillActive: {
+    backgroundColor: colors.coral,
+  },
+  modePillText: {
+    fontFamily: fonts.medium,
+    fontSize: 11.5,
+    color: colors.slate,
+  },
+  modePillTextActive: {
+    fontFamily: fonts.bold,
+    color: '#FFFFFF',
+  },
+  quizModeHint: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: colors.muted,
+    lineHeight: 15,
+  },
+  quizTargetLabel: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: colors.slate,
+    marginBottom: 4,
+  },
+  quizTargetRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  countPill: {
+    flex: 1,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceContainer,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countPillActive: {
+    backgroundColor: colors.coral,
+  },
+  countPillText: {
+    fontFamily: fonts.medium,
+    fontSize: 11,
+    color: colors.slate,
+  },
+  countPillTextActive: {
+    fontFamily: fonts.bold,
+    color: '#FFFFFF',
   },
   quizToggleDesc: {
     fontFamily: fonts.medium,

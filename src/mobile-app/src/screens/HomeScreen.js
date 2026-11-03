@@ -60,6 +60,8 @@ export default function HomeScreen({ currentUser, onNavigate }) {
   const [uploadConfigModalVisible, setUploadConfigModalVisible] = useState(false);
   const [uploadTargetLang, setUploadTargetLang] = useState('vi');
   const [uploadIncludeQuiz, setUploadIncludeQuiz] = useState(true);
+  const [uploadQuizMode, setUploadQuizMode] = useState('auto'); // 'auto' | 'custom'
+  const [uploadQuizTarget, setUploadQuizTarget] = useState(5);
 
   // Tiến trình đa bước AI (Upload -> Whisper AI -> Dịch thuật -> Tóm tắt & Quiz)
   const [aiProcessingStage, setAiProcessingStage] = useState('uploading'); // 'uploading' | 'whisper' | 'translating' | 'summarizing' | 'done'
@@ -92,6 +94,8 @@ export default function HomeScreen({ currentUser, onNavigate }) {
   const [urlRangeStart, setUrlRangeStart] = useState('00:00');
   const [urlRangeEnd, setUrlRangeEnd] = useState('');
   const [urlIncludeQuiz, setUrlIncludeQuiz] = useState(true);
+  const [urlQuizMode, setUrlQuizMode] = useState('auto'); // 'auto' | 'custom'
+  const [urlQuizTarget, setUrlQuizTarget] = useState(5);
 
   // Mốc thời gian cắt đoạn cho File Upload
   const [uploadEnableTimeRange, setUploadEnableTimeRange] = useState(false);
@@ -340,6 +344,13 @@ export default function HomeScreen({ currentUser, onNavigate }) {
 
   // Bước 1: Khi bấm Bắt đầu -> Xác minh video & Mở Popup hỏi cấu hình (Toàn bộ vs Cắt đoạn, Bật/Tắt Quiz)
   const handleProcessVideo = async () => {
+    if (loading || activeJobId) {
+      Alert.alert(
+        'Tiến trình đang chạy',
+        'Hệ thống đang xử lý một bài giảng khác. Vui lòng đợi tiến trình hoàn tất hoặc bấm "Hủy tiến trình" trước khi tạo tác vụ mới.'
+      );
+      return;
+    }
     const trimmed = videoUrl.trim();
     if (!trimmed) {
       Alert.alert('Chưa nhập URL', 'Vui lòng dán liên kết video YouTube hoặc liên kết bài giảng hợp lệ.');
@@ -489,6 +500,7 @@ export default function HomeScreen({ currentUser, onNavigate }) {
         sourceLanguage: 'auto',
         maxDuration: null,
         includeQuiz: urlIncludeQuiz,
+        quizTarget: urlQuizMode === 'custom' ? urlQuizTarget : null,
         startTime: parsedStart,
         endTime: parsedEnd,
         jobId: jobId,
@@ -628,6 +640,13 @@ export default function HomeScreen({ currentUser, onNavigate }) {
 
   // 1. Khi người dùng bấm nút Chọn File -> Chọn file -> Mở Popup cấu hình ngôn ngữ dịch thuật
   const handleUploadFile = () => {
+    if (loading || activeJobId) {
+      Alert.alert(
+        'Tiến trình đang chạy',
+        'Hệ thống đang xử lý một bài giảng khác. Vui lòng đợi tiến trình hoàn tất hoặc bấm "Hủy tiến trình" trước khi tải lên file mới.'
+      );
+      return;
+    }
     if (Platform.OS === 'web') {
       try {
         let input = document.getElementById('lecture-file-picker');
@@ -751,6 +770,9 @@ export default function HomeScreen({ currentUser, onNavigate }) {
       }
       formData.append('target_language', uploadTargetLang);
       formData.append('include_quiz', uploadIncludeQuiz ? 'true' : 'false');
+      if (uploadQuizMode === 'custom' && uploadQuizTarget) {
+        formData.append('quiz_target', String(uploadQuizTarget));
+      }
       formData.append('job_id', jobId);
 
       // Cắt mốc thời gian nếu bật (Yêu cầu 4)
@@ -923,6 +945,13 @@ export default function HomeScreen({ currentUser, onNavigate }) {
 
   // Ghép đôi Video và Phụ đề có sẵn (Giai đoạn 2)
   const handlePairVideoAndSubtitle = async () => {
+    if (loading || activeJobId) {
+      Alert.alert(
+        'Tiến trình đang chạy',
+        'Hệ thống đang xử lý một bài giảng khác. Vui lòng đợi tiến trình hoàn tất trước khi ghép đôi bài giảng mới.'
+      );
+      return;
+    }
     try {
       // 1. Chọn file phụ đề .srt hoặc .vtt
       const subResult = await DocumentPicker.getDocumentAsync({
@@ -1216,6 +1245,10 @@ export default function HomeScreen({ currentUser, onNavigate }) {
         onSelectLang={setUploadTargetLang}
         includeQuiz={uploadIncludeQuiz}
         onToggleQuiz={setUploadIncludeQuiz}
+        quizMode={uploadQuizMode}
+        onSelectQuizMode={setUploadQuizMode}
+        quizTarget={uploadQuizTarget}
+        onChangeQuizTarget={setUploadQuizTarget}
         enableTimeRange={uploadEnableTimeRange}
         onToggleTimeRange={setUploadEnableTimeRange}
         timeRangeStart={uploadTimeRangeStart}
@@ -1264,6 +1297,10 @@ export default function HomeScreen({ currentUser, onNavigate }) {
         onChangeRangeEnd={setUrlRangeEnd}
         includeQuiz={urlIncludeQuiz}
         onToggleQuiz={setUrlIncludeQuiz}
+        quizMode={urlQuizMode}
+        onSelectQuizMode={setUrlQuizMode}
+        quizTarget={urlQuizTarget}
+        onChangeQuizTarget={setUrlQuizTarget}
         onClose={() => setUrlConfigModalVisible(false)}
         onSubmit={handleConfirmUrlProcess}
       />

@@ -664,6 +664,7 @@ async def upload_video(
     source_language: Optional[str] = Form("auto", description="Ngôn ngữ nguồn (auto, vi, en, ja...)"),
     target_language: Optional[str] = Form("vi", description="Ngôn ngữ phụ đề muốn xuất (vi, en, ja...)"),
     include_quiz: Optional[bool] = Form(True, description="Tùy chọn tạo bài trắc nghiệm hay không"),
+    quiz_target: Optional[int] = Form(None, description="Số câu hỏi trắc nghiệm mong muốn (None = AI tự tính)"),
     folder: Optional[str] = Form(None, description="Thư mục phân loại bài giảng"),
     tags: Optional[str] = Form("", description="Danh sách nhãn phân loại, phân cách bằng dấu phẩy"),
     user=Depends(get_current_user),
@@ -773,6 +774,7 @@ async def upload_video(
     summary_data = summary_service.summarize_transcript(
         full_transcript,
         include_quiz=include_q,
+        quiz_target=quiz_target,
         duration_seconds=audio_info.get("duration"),
         video_title=audio_info.get("title", ""),
     )

@@ -579,6 +579,7 @@ class ApiService {
     let folder = null;
     let tags = [];
     let signal = null;
+    let quizTarget = null;
 
     if (typeof targetLanguageOrOptions === 'object' && targetLanguageOrOptions !== null) {
       targetLanguage = targetLanguageOrOptions.targetLanguage || 'vi';
@@ -591,6 +592,7 @@ class ApiService {
       folder = targetLanguageOrOptions.folder || null;
       tags = targetLanguageOrOptions.tags || [];
       signal = targetLanguageOrOptions.signal || null;
+      quizTarget = targetLanguageOrOptions.quizTarget || targetLanguageOrOptions.quiz_target || null;
     } else {
       targetLanguage = targetLanguageOrOptions || 'vi';
       if (extraOptions) {
@@ -600,6 +602,7 @@ class ApiService {
         folder = extraOptions.folder || null;
         tags = extraOptions.tags || [];
         signal = extraOptions.signal || null;
+        quizTarget = extraOptions.quizTarget || extraOptions.quiz_target || null;
       }
     }
 
@@ -610,6 +613,7 @@ class ApiService {
       source_language: sourceLang,
       max_duration_seconds: maxDur,
       include_quiz: incQuiz,
+      quiz_target: quizTarget,
       start_time: startTime,
       end_time: endTime,
       job_id: jobId,
