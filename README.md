@@ -297,6 +297,9 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
    `/docs` mặc định tắt ở production (bật bằng `ENABLE_DOCS=true`).
    Kênh Live-Caption giới hạn bằng `WS_MAX_CONNECTIONS` (mặc định 20 kết nối)
    và `WS_MAX_BUFFER_BYTES` (mặc định 5 MB) để tránh một client chiếm hết RAM.
+   Dịch phụ đề dùng chung pool 6 worker (`TRANSLATION_WORKERS`), tối đa
+   `TRANSLATION_MAX_CONCURRENCY` request Google đồng thời (mặc định 4) và cache
+   `TRANSLATION_CACHE_SIZE` mục trong RAM (mặc định 5000, đặt 0 để tắt).
 3. **Build và chạy:**
    ```powershell
    docker compose up --build
