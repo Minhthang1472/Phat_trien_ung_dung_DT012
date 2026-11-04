@@ -147,7 +147,7 @@ Phát triển ứng dụng/
 │   │   ├── export_service.py        # Render PDF (WeasyPrint/ReportLab), DOCX, Markdown
 │   │   ├── firebase_database.py     # Firestore: cache, lịch sử, export & soft delete
 │   │   └── main.py                  # FastAPI, middleware, health/readiness, cleanup loop
-│   ├── tests/                       # 154 unit/integration tests (pytest)
+│   ├── tests/                       # 179 unit/integration tests (pytest)
 │   ├── requirements.txt             # Thư viện Python chạy production
 │   ├── requirements-dev.txt         # Thêm pytest/httpx cho CI
 │   ├── Dockerfile                   # Image production (ffmpeg + Pango/Cairo)
@@ -320,8 +320,9 @@ pytest
 Bộ test bao phủ: băm/giải mã JWT, parser SRT/WebVTT, chuẩn hóa quiz/mindmap,
 xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL, health/readiness, SSRF, phân
 quyền cache theo `owner_id`, xuất dữ liệu, vô hiệu hoá tài khoản (xoá mềm),
-media token, phân trang lịch sử, giới hạn upload, xác thực/giới hạn WebSocket
-và nhận diện IP sau proxy (154 test).
+media token, phân trang lịch sử, giới hạn upload, xác thực/giới hạn WebSocket,
+dịch phụ đề theo ngữ cảnh (cache/retry/giới hạn song song), số câu quiz theo
+thời lượng và nhận diện IP sau proxy (179 test).
 
 GitHub Actions chạy thêm kiểm tra manifest extension, `expo-doctor`,
 `expo export --platform web`, build Docker image, smoke test runtime trong

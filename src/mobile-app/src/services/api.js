@@ -772,8 +772,9 @@ class ApiService {
     return data;
   }
 
-  async streamInit(videoUrl, targetLang = 'vi', sourceLang = 'auto') {
+  async streamInit(videoUrl, targetLang = 'vi', sourceLang = 'auto', options = {}) {
     const baseUrl = await this.getBaseUrl();
+    const quizTarget = options.quizTarget || options.quiz_target || null;
     const response = await fetch(`${baseUrl}/api/video/stream-init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await this.getAuthHeaders()) },
@@ -781,6 +782,7 @@ class ApiService {
         video_url: videoUrl,
         target_language: targetLang,
         source_language: sourceLang,
+        quiz_target: quizTarget,
       }),
     });
     if (!response.ok) {

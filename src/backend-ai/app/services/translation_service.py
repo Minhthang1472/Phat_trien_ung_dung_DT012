@@ -3,6 +3,8 @@ import hashlib
 import json
 import logging
 import re
+import threading
+import time
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -11,8 +13,42 @@ from app.core.config import settings
 
 logger = logging.getLogger("uvicorn")
 
-# Bộ nhớ đệm O(1) tăng tốc dịch thuật các đoạn phụ đề / câu lặp lại
+# Bộ nhớ đệm O(1) tăng tốc dịch thuật các đoạn phụ đề / câu lặp lại.
+# Giới hạn số mục và bảo vệ bằng lock vì việc dịch chạy đa luồng.
+_MAX_MEM_CACHE_ENTRIES = settings.TRANSLATION_CACHE_SIZE
 _TRANSLATION_MEM_CACHE: Dict[str, str] = {}
+_MEM_CACHE_LOCK = threading.Lock()
+
+# Dùng chung một pool cho toàn bộ tiến trình thay vì tạo 6 thread mỗi lần dịch;
+# tránh bùng nổ số thread khi nhiều bài giảng được xử lý đồng thời.
+_MAX_TRANSLATION_WORKERS = settings.TRANSLATION_WORKERS
+_TRANSLATION_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_MAX_TRANSLATION_WORKERS,
+    thread_name_prefix="translate",
+)
+# Giới hạn số request đồng thời tới Google Translate để tránh bị chặn 429.
+_GOOGLE_SEMAPHORE = threading.BoundedSemaphore(settings.TRANSLATION_MAX_CONCURRENCY)
+
+
+def _cache_get(key: str) -> Optional[str]:
+    if _MAX_MEM_CACHE_ENTRIES <= 0:
+        return None
+    with _MEM_CACHE_LOCK:
+        return _TRANSLATION_MEM_CACHE.get(key)
+
+
+def _cache_put(key: str, value: str) -> None:
+    if _MAX_MEM_CACHE_ENTRIES <= 0:
+        return
+    with _MEM_CACHE_LOCK:
+        if key in _TRANSLATION_MEM_CACHE:
+            _TRANSLATION_MEM_CACHE[key] = value
+            return
+        if len(_TRANSLATION_MEM_CACHE) >= _MAX_MEM_CACHE_ENTRIES:
+            # Xoá mục cũ nhất thay vì clear toàn bộ để giữ cache hữu ích.
+            _TRANSLATION_MEM_CACHE.pop(next(iter(_TRANSLATION_MEM_CACHE)), None)
+        _TRANSLATION_MEM_CACHE[key] = value
+
 
 # Từ điển chuyên ngành dùng để "neo" nghĩa trước khi dịch.
 # Đây là lớp bảo hiểm cuối cùng: sau khi Google/Gemini dịch, các thuật ngữ
@@ -327,33 +363,46 @@ Chỉ trả về JSON đúng dạng:
             return []
         joined = "\n".join(lines)
         cache_key = f"{source_lang or 'auto'}->{target_lang}:" + joined
-        if cache_key in _TRANSLATION_MEM_CACHE:
-            cached_lines = _TRANSLATION_MEM_CACHE[cache_key].split("\n")
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            cached_lines = cached.split("\n")
             if len(cached_lines) == len(lines):
                 return [line.strip() for line in cached_lines]
-        try:
-            params = {
-                "client": "dict-chrome-ex",
-                "sl": source_lang or "auto",
-                "tl": target_lang,
-                "dt": "t",
-                "q": joined,
-            }
-            res = requests.get(self.endpoint, params=params, headers=self.headers, timeout=14)
-            if res.status_code != 200:
+        params = {
+            "client": "dict-chrome-ex",
+            "sl": source_lang or "auto",
+            "tl": target_lang,
+            "dt": "t",
+            "q": joined,
+        }
+        # Google Translate hay trả 429/5xx khi dịch song song; thử lại 1 lần
+        # với backoff ngắn và luôn giới hạn số request đồng thời.
+        for attempt in range(2):
+            try:
+                with _GOOGLE_SEMAPHORE:
+                    res = requests.get(
+                        self.endpoint, params=params, headers=self.headers, timeout=14
+                    )
+            except requests.RequestException as exc:
+                logger.warning("Google context translation failed: %s", exc)
+                res = None
+            if res is not None and res.status_code == 200:
+                try:
+                    data = res.json()
+                    translated_full = "".join([part[0] for part in data[0] if part[0]])
+                    translated_lines = translated_full.split("\n")
+                    if len(translated_lines) != len(lines):
+                        return None
+                    _cache_put(cache_key, translated_full)
+                    return [line.strip() for line in translated_lines]
+                except (ValueError, KeyError, IndexError, TypeError) as exc:
+                    logger.warning("Google context translation parse failed: %s", exc)
+                    return None
+            if res is not None and res.status_code not in (429, 500, 502, 503, 504):
                 return None
-            data = res.json()
-            translated_full = "".join([part[0] for part in data[0] if part[0]])
-            translated_lines = translated_full.split("\n")
-            if len(translated_lines) != len(lines):
-                return None
-            if len(_TRANSLATION_MEM_CACHE) > 5000:
-                _TRANSLATION_MEM_CACHE.clear()
-            _TRANSLATION_MEM_CACHE[cache_key] = translated_full
-            return [line.strip() for line in translated_lines]
-        except Exception as exc:
-            logger.warning("Google context translation failed: %s", exc)
-            return None
+            if attempt == 0:
+                time.sleep(0.4)
+        return None
 
     def _translate_lines(
         self,
@@ -461,27 +510,28 @@ Chỉ trả về JSON đúng dạng:
             block_lines = [texts[idx] for idx in non_empty]
             blocks_to_process.append((non_empty, block_lines))
 
-        # Tối ưu song song hóa (Parallel Batch Translation) tăng tốc gấp 3-5 lần
+        # Tối ưu song song hóa (Parallel Batch Translation) tăng tốc gấp 3-5 lần.
+        # Dùng executor dùng chung để không tạo/ huỷ thread pool cho mỗi bài giảng.
         if len(blocks_to_process) <= 1:
             for non_empty, block_lines in blocks_to_process:
                 block_result = self._translate_lines(block_lines, source_lang, target_lang)
                 for idx, translated in zip(non_empty, block_result):
                     translated_texts[idx] = translated or texts[idx]
         else:
-            max_workers = min(6, len(blocks_to_process))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_block = {
-                    executor.submit(self._translate_lines, block_lines, source_lang, target_lang): non_empty
-                    for non_empty, block_lines in blocks_to_process
-                }
-                for future in concurrent.futures.as_completed(future_to_block):
-                    non_empty = future_to_block[future]
-                    try:
-                        block_result = future.result()
-                        for idx, translated in zip(non_empty, block_result):
-                            translated_texts[idx] = translated or texts[idx]
-                    except Exception as err:
-                        logger.warning("Lỗi xử lý song song block dịch: %s", err)
+            future_to_block = {
+                _TRANSLATION_EXECUTOR.submit(
+                    self._translate_lines, block_lines, source_lang, target_lang
+                ): non_empty
+                for non_empty, block_lines in blocks_to_process
+            }
+            for future in concurrent.futures.as_completed(future_to_block):
+                non_empty = future_to_block[future]
+                try:
+                    block_result = future.result()
+                    for idx, translated in zip(non_empty, block_result):
+                        translated_texts[idx] = translated or texts[idx]
+                except Exception as err:
+                    logger.warning("Lỗi xử lý song song block dịch: %s", err)
 
         for index, trans in enumerate(translated_texts):
             translated_texts[index] = self._apply_glossary(trans, glossary)

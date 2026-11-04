@@ -553,6 +553,7 @@ async def process_video(request: ProcessVideoRequest, user=Depends(get_current_u
         full_transcript,
         include_quiz=include_quiz,
         duration_seconds=duration_seconds,
+        quiz_target=request.quiz_target,
         video_title=(audio_info or {}).get("title", ""),
     )
 
@@ -664,7 +665,7 @@ async def upload_video(
     source_language: Optional[str] = Form("auto", description="Ngôn ngữ nguồn (auto, vi, en, ja...)"),
     target_language: Optional[str] = Form("vi", description="Ngôn ngữ phụ đề muốn xuất (vi, en, ja...)"),
     include_quiz: Optional[bool] = Form(True, description="Tùy chọn tạo bài trắc nghiệm hay không"),
-    quiz_target: Optional[int] = Form(None, description="Số câu hỏi trắc nghiệm mong muốn (None = AI tự tính)"),
+    quiz_target: Optional[int] = Form(None, ge=1, le=24, description="Số câu hỏi trắc nghiệm mong muốn (None = AI tự tính)"),
     folder: Optional[str] = Form(None, description="Thư mục phân loại bài giảng"),
     tags: Optional[str] = Form("", description="Danh sách nhãn phân loại, phân cách bằng dấu phẩy"),
     user=Depends(get_current_user),
@@ -1276,6 +1277,7 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
             transcript,
             include_quiz=True,
             duration_seconds=job.get("duration_seconds"),
+            quiz_target=job.get("quiz_target"),
             video_title=job.get("title", ""),
         )
 
@@ -1389,6 +1391,7 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
         "segments": fast_segments,
         "language": target_lang,
         "owner_id": user["id"],
+        "quiz_target": request.quiz_target,
         "created_at": time.time(),
     }
 
@@ -1423,6 +1426,7 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
         "key_points": ["Hệ thống streaming song song đang hoạt động"],
         "formulas_and_terms": [],
         "quiz": [],
+        "quiz_target": request.quiz_target,
         "mindmap": normalize_mindmap(None, default_title=audio_info["title"]),
         "exercises": [],
         "owner_id": user["id"],

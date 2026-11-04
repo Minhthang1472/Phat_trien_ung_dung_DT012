@@ -73,6 +73,11 @@ class Settings:
     # Giới hạn tài nguyên cho kênh Live-Caption WebSocket.
     WS_MAX_CONNECTIONS: int = int(os.getenv("WS_MAX_CONNECTIONS", "20"))
     WS_MAX_BUFFER_BYTES: int = int(os.getenv("WS_MAX_BUFFER_BYTES", str(5 * 1024 * 1024)))
+    # Số request Google Translate chạy song song tối đa và số worker của pool dịch.
+    TRANSLATION_MAX_CONCURRENCY: int = max(1, int(os.getenv("TRANSLATION_MAX_CONCURRENCY", "4")))
+    TRANSLATION_WORKERS: int = max(1, int(os.getenv("TRANSLATION_WORKERS", "6")))
+    # Số mục tối đa của cache dịch trong RAM (0 = tắt cache).
+    TRANSLATION_CACHE_SIZE: int = max(0, int(os.getenv("TRANSLATION_CACHE_SIZE", "5000")))
 
     # Vận hành & dọn dẹp tài nguyên tạm
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")

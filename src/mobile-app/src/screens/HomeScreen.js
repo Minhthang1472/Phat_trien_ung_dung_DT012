@@ -479,7 +479,12 @@ export default function HomeScreen({ currentUser, onNavigate }) {
 
         const minutes = Math.round(durationSec / 60);
         setLoadingStep(`Video dài ${minutes}p (≥ 30p) - Tự động bật Xem ngay & Xử lý song song...`);
-        const streamResult = await apiService.streamInit(trimmed, targetLang);
+        const streamResult = await apiService.streamInit(
+          trimmed,
+          targetLang,
+          'auto',
+          { quizTarget: urlQuizMode === 'custom' ? urlQuizTarget : null }
+        );
         setLoading(false);
         setActiveJobId(null);
 
@@ -934,7 +939,12 @@ export default function HomeScreen({ currentUser, onNavigate }) {
     setLoadingStep('Khởi tạo phát tức thì & Lookahead phân đoạn đầu...');
 
     try {
-      const result = await apiService.streamInit(trimmed, targetLang);
+      const result = await apiService.streamInit(
+        trimmed,
+        targetLang,
+        'auto',
+        { quizTarget: urlQuizMode === 'custom' ? urlQuizTarget : null }
+      );
       setLoading(false);
       onNavigate('SyncPlayer', { lecture: result });
     } catch (err) {

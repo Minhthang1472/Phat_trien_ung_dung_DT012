@@ -19,6 +19,12 @@ class ProcessVideoRequest(BaseModel):
     source_language: Optional[str] = Field("auto", description="Ngôn ngữ gốc của video bài giảng")
     target_language: Optional[str] = Field("vi", description="Ngôn ngữ phụ đề muốn xuất ra (vi, en, ja, zh, ko...)")
     include_quiz: Optional[bool] = Field(True, description="Tùy chọn tạo câu hỏi trắc nghiệm ôn tập hay không")
+    quiz_target: Optional[int] = Field(
+        None,
+        ge=1,
+        le=24,
+        description="Số câu hỏi trắc nghiệm mong muốn (None = AI tự tính theo thời lượng)",
+    )
     folder: Optional[str] = Field(None, description="Thư mục gom nhóm phân loại bài giảng")
     tags: Optional[List[str]] = Field(default=[], description="Danh sách nhãn phân loại")
 
