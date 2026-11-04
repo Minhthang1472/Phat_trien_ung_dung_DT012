@@ -26,7 +26,7 @@ export default function LectureCard({
 
   // Trích xuất YouTube Video ID để lấy Thumbnail HD
   const ytMatch = lecture?.video_url?.match(
-    /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/
+    /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/
   );
   const youtubeId = ytMatch ? ytMatch[1] : null;
   const isLocalUpload =

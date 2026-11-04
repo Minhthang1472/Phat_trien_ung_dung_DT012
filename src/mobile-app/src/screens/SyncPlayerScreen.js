@@ -437,7 +437,7 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
     (lecture.video_url.includes('youtube.com') || lecture.video_url.includes('youtu.be')));
 
   const youtubeId = isYouTube
-    ? lecture.video_url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/)?.[1]
+    ? lecture.video_url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/)?.[1]
     : null;
 
   const isDrive = Boolean(
