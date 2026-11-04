@@ -1,9 +1,9 @@
 # Backend Web Framework & Server
-fastapi==0.143.1
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
-pydantic==2.14.1
+pydantic==2.14.2
 python-dotenv==1.2.4
-python-multipart==0.0.32
+python-multipart==0.0.33
 
 # AI & Speech Recognition (Chạy tăng tốc trên GPU NVIDIA RTX 2050 / Tesla T4)
 av<19
@@ -14,7 +14,7 @@ yt-dlp>=2025.01.01
 firebase-admin==7.7.0
 
 # NLP & Summarization / Translation
-google-genai==2.31.0
+google-genai==2.34.0
 requests==2.34.2
 PyJWT==2.15.1
 google-auth==2.62.0
