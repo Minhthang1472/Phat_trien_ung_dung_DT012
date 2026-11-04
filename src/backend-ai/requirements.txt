@@ -6,7 +6,7 @@ python-dotenv==1.2.4
 python-multipart==0.0.32
 
 # AI & Speech Recognition (Chạy tăng tốc trên GPU NVIDIA RTX 2050 / Tesla T4)
-av<19
+av<20
 faster-whisper==1.2.1
 yt-dlp>=2025.01.01
 
