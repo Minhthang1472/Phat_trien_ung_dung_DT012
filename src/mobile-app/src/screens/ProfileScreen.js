@@ -745,8 +745,9 @@ export default function ProfileScreen({ currentUser, onBack, onAuthSuccess, onSk
 
   const totalExp =
     (stats.processed_lectures || 0) * 100 +
-    (stats.saved_quizzes || 0) * 10 +
-    (stats.total_minutes || 0) * 2;
+    (stats.saved_quizzes || 0) * 25 +
+    (stats.total_minutes || 0) * 5 +
+    (streakDays || 1) * 50;
   const rankInfo = getRankDetails(totalExp);
 
   return (

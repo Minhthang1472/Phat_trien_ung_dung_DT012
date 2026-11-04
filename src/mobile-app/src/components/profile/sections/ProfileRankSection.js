@@ -12,7 +12,10 @@ const RANK_ICONS = {
   silver: 'workspacePremium',
   gold: 'stars',
   diamond: 'diamond',
-  master: 'crown',
+  trainee: 'menuBook',
+  expert: 'militaryTech',
+  master: 'trophy',
+  legend: 'crown',
 };
 
 /**
@@ -193,12 +196,12 @@ export default function ProfileRankSection({ rankInfo }) {
             <View style={styles.expRuleItem}>
               <Icon name="factCheck" size={16} color={colors.mintDeep} />
               <Text style={styles.expRuleText}>Ôn trắc nghiệm</Text>
-              <Text style={[styles.expRuleVal, { color: colors.mintDeep }]}>+10 EXP</Text>
+              <Text style={[styles.expRuleVal, { color: colors.mintDeep }]}>+25 EXP</Text>
             </View>
             <View style={styles.expRuleItem}>
               <Icon name="clock" size={16} color={colors.violet} />
               <Text style={styles.expRuleText}>Thời gian học</Text>
-              <Text style={[styles.expRuleVal, { color: colors.violet }]}>+2 EXP/ph</Text>
+              <Text style={[styles.expRuleVal, { color: colors.violet }]}>+5 EXP/ph</Text>
             </View>
           </View>
         </View>

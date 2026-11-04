@@ -780,9 +780,9 @@ export const styles = StyleSheet.create({
   },
   fullscreenTopOverlay: {
     position: 'absolute',
-    top: 14,
-    left: 16,
-    right: 16,
+    top: 16,
+    left: 24,
+    right: 24,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',

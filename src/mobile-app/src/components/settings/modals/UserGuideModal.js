@@ -40,7 +40,7 @@ export default function UserGuideModal({
             </TouchableOpacity>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false} style={{ marginVertical: 8 }}>
+          <ScrollView showsVerticalScrollIndicator={false} style={{ marginVertical: 8 }} contentContainerStyle={{ paddingBottom: 20 }}>
             {/* Banner giới thiệu */}
             <View style={[styles.infoBadgeBanner, { backgroundColor: colors.coralTint, borderColor: colors.coralSoft }]}>
               <Text style={[styles.infoBadgeTitle, { color: colors.coralDeep }]}>
@@ -147,11 +147,11 @@ export default function UserGuideModal({
           {/* Nút hoàn tất */}
           <View style={styles.modalFooter}>
             <TouchableOpacity
-              style={[styles.modalActionBtn, { backgroundColor: colors.coral }]}
+              style={styles.modalActionBtn}
               onPress={onClose}
               activeOpacity={0.8}
             >
-              <Text style={[styles.modalActionBtnText, { color: '#FFFFFF' }]}>Đã Hiểu &amp; Bắt Đầu Học</Text>
+              <Text style={styles.modalActionBtnText}>Đã Hiểu & Bắt Đầu Học</Text>
             </TouchableOpacity>
           </View>
         </View>

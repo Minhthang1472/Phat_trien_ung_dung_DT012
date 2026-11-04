@@ -62,6 +62,8 @@ export default function VideoPlayerSection({
           elevation: 99999,
           borderRadius: 0,
           backgroundColor: '#000000',
+          alignItems: 'center',
+          justifyContent: 'center',
         },
       ];
       playerHeight = winHeight;
@@ -79,6 +81,8 @@ export default function VideoPlayerSection({
           elevation: 99999,
           borderRadius: 0,
           backgroundColor: '#000000',
+          alignItems: 'center',
+          justifyContent: 'center',
         },
       ];
       playerHeight = winWidth;
@@ -261,6 +265,7 @@ export default function VideoPlayerSection({
         isYouTube && youtubeId ? (
           <YoutubePlayer
             ref={ytPlayerRef}
+            width={isFullscreen ? (isPhysicallyLandscape ? winWidth : winHeight) : '100%'}
             height={isFullscreen ? playerHeight : 220}
             play={isPlaying}
             videoId={youtubeId}

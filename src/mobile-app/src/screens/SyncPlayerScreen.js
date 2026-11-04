@@ -241,7 +241,24 @@ export default function SyncPlayerScreen({ lecture, onBack, initialSeekTime, end
   }, [lecture?.job_id, lecture?.is_streaming, liveSegments.length]);
 
   const duration = lecture?.duration_seconds || 300;
-  const segments = liveSegments.length > 0 ? liveSegments : (lecture?.segments || []);
+  const rawSegments = liveSegments.length > 0 ? liveSegments : (lecture?.segments || []);
+  const segments = useMemo(() => {
+    if (!rawSegments || rawSegments.length === 0) return [];
+    const first = rawSegments[0];
+    if (first && typeof first.start === 'number' && first.start >= 3.5) {
+      const introSeg = {
+        id: 'intro_0',
+        start: 0,
+        end: first.start,
+        text: '🎵 Phần mở đầu / Đoạn dạo đầu bài giảng',
+        original_text: '🎵 [Phần mở đầu / Nhạc dạo bài giảng]',
+        translated_text: '🎵 Phần mở đầu / Đoạn dạo đầu bài giảng',
+        is_intro: true,
+      };
+      return [introSeg, ...rawSegments];
+    }
+    return rawSegments;
+  }, [rawSegments]);
   const title = lecture?.title || 'Bài giảng đồng bộ phụ đề';
 
   // Xác định chuẩn xác ngôn ngữ đích (Phụ đề dịch) và ngôn ngữ gốc (Người nói trong video)

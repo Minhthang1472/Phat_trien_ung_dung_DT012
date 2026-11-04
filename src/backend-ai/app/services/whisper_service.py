@@ -112,8 +112,13 @@ class WhisperService:
                 beam_size=5,
                 language=language if language and language != "auto" else None,
                 task=task,
-                vad_filter=True, # Lọc khoảng lặng không có tiếng nói
-                vad_parameters=dict(min_silence_duration_ms=500),
+                vad_filter=True, # Lọc khoảng lặng thông minh, tối ưu độ nhạy âm thanh
+                vad_parameters=dict(
+                    threshold=0.25,
+                    min_speech_duration_ms=200,
+                    min_silence_duration_ms=1200,
+                    speech_pad_ms=600
+                ),
                 condition_on_previous_text=False, # Chống ảo giác và lặp câu
                 initial_prompt="Video bài giảng, ký sự, du lịch, ẩm thực, phát âm tiếng Việt rõ ràng, bóc tách chính xác từ ngữ, ánh sáng, văn hóa và địa danh."
             )
@@ -156,7 +161,12 @@ class WhisperService:
                 language=language if language and language != "auto" else None,
                 task=task,
                 vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=500),
+                vad_parameters=dict(
+                    threshold=0.25,
+                    min_speech_duration_ms=200,
+                    min_silence_duration_ms=1200,
+                    speech_pad_ms=600
+                ),
                 condition_on_previous_text=False,
                 initial_prompt="Video bài giảng, ký sự, du lịch, ẩm thực, phát âm tiếng Việt rõ ràng, bóc tách chính xác từ ngữ, ánh sáng, văn hóa và địa danh."
             )
