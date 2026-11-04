@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -37,6 +37,89 @@ from app.routers import admin_router
 from app.services.cleanup_service import cleanup_uploads, prune_jobs, prune_rate_buckets
 
 logger = logging.getLogger("uvicorn")
+
+
+def _payload_too_large_response() -> JSONResponse:
+    return JSONResponse(
+        {
+            "detail": (
+                "Dữ liệu gửi lên quá lớn. Giới hạn hiện tại là "
+                f"{settings.MAX_JSON_BODY_BYTES} byte."
+            )
+        },
+        status_code=413,
+    )
+
+
+class BodySizeLimitMiddleware:
+    """Chặn body JSON/form quá lớn trước khi ứng dụng đọc toàn bộ vào RAM.
+
+    Kiểm tra ``Content-Length`` trước, đồng thời đọc tối đa
+    ``MAX_JSON_BODY_BYTES`` khi client dùng ``Transfer-Encoding: chunked``
+    (không có header độ dài). Body JSON/form được đệm tối đa 2 MB mặc định rồi
+    chuyển tiếp cho ứng dụng. Upload file dùng multipart và đã có giới hạn
+    riêng theo từng endpoint, nên middleware này bỏ qua multipart.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            key.decode("latin-1").lower(): value.decode("latin-1")
+            for key, value in scope.get("headers", [])
+        }
+        content_type = headers.get("content-type", "").lower()
+        if not content_type.startswith(
+            ("application/json", "application/x-www-form-urlencoded")
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        raw_length = headers.get("content-length", "").strip()
+        if raw_length:
+            try:
+                length = int(raw_length)
+            except ValueError:
+                await JSONResponse(
+                    {"detail": "Content-Length không hợp lệ."}, status_code=400
+                )(scope, receive, send)
+                return
+            if length > settings.MAX_JSON_BODY_BYTES:
+                await _payload_too_large_response()(scope, receive, send)
+                return
+
+        chunks = []
+        total = 0
+        while True:
+            message = await receive()
+            if message.get("type") == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            total += len(chunk)
+            if total > settings.MAX_JSON_BODY_BYTES:
+                await _payload_too_large_response()(scope, receive, send)
+                return
+            chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+
+        body = b"".join(chunks)
+        delivered = False
+
+        async def replay_receive():
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
 
 # Chỉ chấp nhận request-id do client gửi nếu đúng định dạng, tránh log injection
 # và header quá dài.
@@ -84,7 +167,7 @@ async def _cleanup_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.validate()
-    configure_logging(settings.LOG_LEVEL)
+    configure_logging(settings.LOG_LEVEL, settings.LOG_FORMAT)
     logger.info(
         "Khởi động %s (env=%s, upload_ttl=%sh, job_ttl=%smin)",
         settings.PROJECT_NAME,
@@ -129,6 +212,7 @@ for _local_host in ("127.0.0.1", "localhost"):
 if not settings.is_production() and "testserver" not in _allowed_hosts:
     _allowed_hosts.append("testserver")
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
+app.add_middleware(BodySizeLimitMiddleware)
 
 # Cấu hình CORS để Mobile App (React Native) và Browser Extension có thể kết nối không bị chặn
 app.add_middleware(

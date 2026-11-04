@@ -1,0 +1,82 @@
+name: Mobile EAS build
+
+# Workflow thủ công để tránh đốt phút build khi chưa cấu hình tài khoản Expo.
+# Kích hoạt tại Actions -> "Mobile EAS build" -> Run workflow.
+# Cần secret EXPO_TOKEN (https://expo.dev/accounts/<owner>/settings/access-tokens).
+# Nếu thiếu token, job kiểm tra và bỏ qua bước build thay vì báo lỗi.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Nền tảng cần build
+        type: choice
+        options: [android, ios, all]
+        default: android
+      profile:
+        description: Hồ sơ build trong eas.json
+        type: choice
+        options: [preview, production]
+        default: preview
+      submit:
+        description: Submit lên store sau khi build (cần thêm quyền)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-eas-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: src/mobile-app
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/mobile-app/package-lock.json
+      - run: npm ci
+      - name: Kiểm tra EXPO_TOKEN
+        id: token
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -n "$EXPO_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Thiếu secret EXPO_TOKEN - bỏ qua EAS build."
+          fi
+      - name: Build trên EAS
+        if: steps.token.outputs.available == 'true'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+          EXPO_OWNER: ${{ vars.EXPO_OWNER }}
+          EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
+        run: |
+          npx eas-cli@latest build \
+            --platform "${{ inputs.platform }}" \
+            --profile "${{ inputs.profile }}" \
+            --non-interactive \
+            --no-wait
+      - name: Submit lên store
+        if: steps.token.outputs.available == 'true' && inputs.submit
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+          EXPO_OWNER: ${{ vars.EXPO_OWNER }}
+        run: |
+          npx eas-cli@latest submit \
+            --platform "${{ inputs.platform }}" \
+            --profile "${{ inputs.profile }}" \
+            --non-interactive

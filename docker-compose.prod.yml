@@ -1,0 +1,52 @@
+# Lớp production: thêm Caddy (HTTPS tự động) và siết cấu hình.
+#
+# Sử dụng cùng file compose gốc:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Yêu cầu trong .env:
+#   API_DOMAIN=api.example.com        (A/AAAA trỏ về máy chủ)
+#   ACME_EMAIL=ops@example.com
+#   PUBLIC_API_URL=https://api.example.com
+#   CORS_ORIGINS=https://app.example.com
+#   ALLOWED_HOSTS=api.example.com
+#   API_BIND=127.0.0.1                (không mở cổng 8000 ra Internet)
+#
+# Cổng 80/443 do Caddy quản lý; firewall chỉ nên mở 22/80/443.
+
+services:
+  api:
+    environment:
+      # Caddy nằm trong mạng Docker riêng nên IP peer là dải private.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN phải được đặt, ví dụ api.example.com}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL phải được đặt để nhận cảnh báo TLS}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  caddy_data:
+  caddy_config:

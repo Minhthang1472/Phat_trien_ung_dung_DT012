@@ -55,3 +55,7 @@ cloudflared.exe
 # Bản sao lưu Firestore (chứa dữ liệu thật)
 # ==========================================
 backups/
+
+# Gói phát hành extension
+dist/
+*.zip

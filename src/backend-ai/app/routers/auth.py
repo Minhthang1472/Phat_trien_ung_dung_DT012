@@ -29,6 +29,11 @@ from app.models.schemas import (
 )
 from app.services.auth_service import auth_service
 from app.services.email_service import email_service, render_otp_email
+from app.core.login_throttle import (
+    clear_login_failures,
+    login_retry_after,
+    record_login_failure,
+)
 from app.core.dependencies import (
     auth_rate_limit,
     get_current_user,
@@ -264,6 +269,19 @@ async def login(request: LoginRequest, _limit=Depends(auth_rate_limit)):
         raise HTTPException(status_code=503, detail="Firebase chưa sẵn sàng để đăng nhập.")
 
     raw_ident = request.email.strip()
+    # Khoá tạm theo định danh (email/username) để chống dò mật khẩu. Bộ đếm áp
+    # dụng cả khi tài khoản không tồn tại nên không thể dùng 429 để dò email.
+    throttle_key = (
+        auth_service.normalize_email(raw_ident) if "@" in raw_ident else raw_ident.lower()
+    )
+    retry_after = login_retry_after(throttle_key)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail="Bạn đã nhập sai quá nhiều lần. Vui lòng thử lại sau.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     user = None
     user_id = None
 
@@ -288,8 +306,10 @@ async def login(request: LoginRequest, _limit=Depends(auth_rate_limit)):
     stored_hash = (user or {}).get("password_hash") or auth_service.DUMMY_PASSWORD_HASH
     password_ok = auth_service.verify_password(request.password, stored_hash)
     if not user or not password_ok:
+        record_login_failure(throttle_key)
         raise HTTPException(status_code=401, detail="Tên đăng nhập hoặc mật khẩu không đúng.")
 
+    clear_login_failures(throttle_key)
     _ensure_active_user(user)
 
     if user.get("email_verified") is False:

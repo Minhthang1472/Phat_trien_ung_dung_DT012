@@ -158,6 +158,10 @@ class AudioService:
             'quiet': True,
             'no_warnings': True,
             'source_address': '0.0.0.0',
+            # Tránh treo vô hạn khi mạng chậm hoặc YouTube không phản hồi.
+            'socket_timeout': 20,
+            'retries': 2,
+            'fragment_retries': 2,
             'extractor_args': {
                 'youtube': {
                     'player_client': ['android', 'web', 'mweb'],
@@ -463,7 +467,19 @@ class AudioService:
 
         try:
             logger.info(f"Đang chuẩn hóa audio từ file upload: {filename} (Mốc: {start_time_sec or 0}s -> {end_time_sec or 'hết'})")
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+                timeout=settings.FFMPEG_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            logger.error("FFmpeg chuẩn hóa audio vượt quá %ss", settings.FFMPEG_TIMEOUT_SECONDS)
+            raise HTTPException(
+                status_code=504,
+                detail="Xử lý âm thanh quá thời gian cho phép. Vui lòng thử file ngắn hơn.",
+            ) from exc
         finally:
             if delete_raw_temp and os.path.exists(raw_temp_path):
                 try: os.remove(raw_temp_path)

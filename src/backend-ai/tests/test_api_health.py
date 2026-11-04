@@ -54,6 +54,37 @@ def test_request_id_rejects_invalid_client_value():
     assert len(request_id) == 12
 
 
+def test_json_body_over_limit_is_rejected(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "MAX_JSON_BODY_BYTES", 16)
+    response = TestClient(app).post(
+        "/api/auth/login",
+        content=b'{"email":"a@b.c","password":"secret123"}',
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+
+
+def test_chunked_json_body_over_limit_is_rejected(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "MAX_JSON_BODY_BYTES", 16)
+
+    def body():
+        yield b'{"email":"a@b.c",'
+        yield b'"password":"secret123"}'
+
+    response = TestClient(app).post(
+        "/api/auth/login",
+        content=body(),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+
+
 def test_security_headers_are_present():
     response = TestClient(app).get("/health")
 

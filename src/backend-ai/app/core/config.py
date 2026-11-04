@@ -78,6 +78,15 @@ class Settings:
     TRANSLATION_WORKERS: int = max(1, int(os.getenv("TRANSLATION_WORKERS", "6")))
     # Số mục tối đa của cache dịch trong RAM (0 = tắt cache).
     TRANSLATION_CACHE_SIZE: int = max(0, int(os.getenv("TRANSLATION_CACHE_SIZE", "5000")))
+    # Chặn body JSON/form quá lớn trước khi FastAPI đọc vào RAM.
+    MAX_JSON_BODY_BYTES: int = max(1024, int(os.getenv("MAX_JSON_BODY_BYTES", str(2 * 1024 * 1024))))
+    # Thời gian tối đa cho một lần chạy ffmpeg (giây) để tránh treo worker.
+    FFMPEG_TIMEOUT_SECONDS: int = max(30, int(os.getenv("FFMPEG_TIMEOUT_SECONDS", "1800")))
+    # Chống dò mật khẩu theo từng tài khoản (áp dụng cả email không tồn tại).
+    LOGIN_MAX_ATTEMPTS: int = max(3, int(os.getenv("LOGIN_MAX_ATTEMPTS", "10")))
+    LOGIN_WINDOW_SECONDS: int = max(60, int(os.getenv("LOGIN_WINDOW_SECONDS", "900")))
+    # Định dạng log: text (mặc định) hoặc json để đẩy vào hệ thống log tập trung.
+    LOG_FORMAT: str = os.getenv("LOG_FORMAT", "text").strip().lower()
 
     # Vận hành & dọn dẹp tài nguyên tạm
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
@@ -122,6 +131,12 @@ class Settings:
             problems.append("METRICS_TOKEN nếu đặt phải dài ít nhất 16 ký tự")
         if self.ADMIN_TOKEN and len(self.ADMIN_TOKEN) < 32:
             problems.append("ADMIN_TOKEN nếu đặt phải dài ít nhất 32 ký tự")
+        if self.LOG_FORMAT not in {"text", "json"}:
+            problems.append("LOG_FORMAT chỉ nhận 'text' hoặc 'json'")
+        if self.MAX_JSON_BODY_BYTES < 1024:
+            problems.append("MAX_JSON_BODY_BYTES phải >= 1024")
+        if self.FFMPEG_TIMEOUT_SECONDS < 30:
+            problems.append("FFMPEG_TIMEOUT_SECONDS phải >= 30")
         for proxy in self.TRUSTED_PROXIES:
             try:
                 network = ip_network(proxy, strict=False)

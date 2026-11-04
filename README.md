@@ -147,7 +147,7 @@ Phát triển ứng dụng/
 │   │   ├── export_service.py        # Render PDF (WeasyPrint/ReportLab), DOCX, Markdown
 │   │   ├── firebase_database.py     # Firestore: cache, lịch sử, export & soft delete
 │   │   └── main.py                  # FastAPI, middleware, health/readiness, cleanup loop
-│   ├── tests/                       # 179 unit/integration tests (pytest)
+│   ├── tests/                       # 184 unit/integration tests (pytest)
 │   ├── requirements.txt             # Thư viện Python chạy production
 │   ├── requirements-dev.txt         # Thêm pytest/httpx cho CI
 │   ├── Dockerfile                   # Image production (ffmpeg + Pango/Cairo)
@@ -307,6 +307,32 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
    Backend sẽ chạy tại `http://localhost:8000`. Container đã cài sẵn `ffmpeg`,
    thư viện render PDF và có healthcheck tự động.
 
+#### Triển khai HTTPS production (Caddy)
+
+Repo có sẵn `deploy/Caddyfile` và `docker-compose.prod.yml`. Trỏ DNS
+`api.example.com` về máy chủ, đặt trong `.env`:
+
+```dotenv
+API_BIND=127.0.0.1
+API_DOMAIN=api.example.com
+ACME_EMAIL=ops@example.com
+PUBLIC_API_URL=https://api.example.com
+ALLOWED_HOSTS=api.example.com
+CORS_ORIGINS=https://app.example.com
+```
+
+Sau đó:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+python scripts/check_health.py --base-url https://api.example.com
+```
+
+Caddy tự xin/gia hạn chứng chỉ TLS và chuyển WebSocket; cổng 8000 chỉ lắng
+nghe trên loopback. Firewall chỉ mở 22/80/443. Hướng dẫn đầy đủ (backup,
+restore, giám sát, SPF/DKIM/DMARC, checklist go-live) ở
+[`docs/VAN_HANH_PRODUCTION.md`](docs/VAN_HANH_PRODUCTION.md).
+
 > Ghi chú: mặc định container chạy Whisper trên CPU (`int8`). Nếu máy có GPU
 > NVIDIA, có thể đổi `WHISPER_DEVICE=cuda` và cấu hình NVIDIA Container Toolkit.
 
@@ -325,7 +351,7 @@ xuất tài liệu PDF/DOCX/Markdown, dọn dẹp TTL, health/readiness, SSRF, p
 quyền cache theo `owner_id`, xuất dữ liệu, vô hiệu hoá tài khoản (xoá mềm),
 media token, phân trang lịch sử, giới hạn upload, xác thực/giới hạn WebSocket,
 dịch phụ đề theo ngữ cảnh (cache/retry/giới hạn song song), số câu quiz theo
-thời lượng và nhận diện IP sau proxy (179 test).
+thời lượng và nhận diện IP sau proxy (184 test).
 
 GitHub Actions chạy thêm kiểm tra manifest extension, `expo-doctor`,
 `expo export --platform web`, build Docker image, smoke test runtime trong
@@ -338,17 +364,29 @@ CRITICAL có bản vá bằng Trivy. Workflow `security.yml` chạy `pip-audit` 
 
 ### CÀI ĐẶT TIỆN ÍCH MỞ RỘNG TRÌNH DUYỆT (BROWSER EXTENSION)
 
-1. Mở trình duyệt Chrome / Edge, truy cập: `chrome://extensions/`
-2. Bật công tắc **Chế độ dành cho nhà phát triển (Developer mode)** ở góc trên bên phải.
-3. Bấm nút **Tải tiện ích đã giải nén (Load unpacked)** ở góc trên bên trái.
-4. Chọn đường dẫn đến thư mục:  
+1. Nếu cần gọi backend local/tunnel, bật manifest dev trước:
+   ```powershell
+   npm run extension:dev
+   ```
+2. Mở trình duyệt Chrome / Edge, truy cập: `chrome://extensions/`
+3. Bật công tắc **Chế độ dành cho nhà phát triển (Developer mode)** ở góc trên bên phải.
+4. Bấm nút **Tải tiện ích đã giải nén (Load unpacked)** ở góc trên bên trái.
+5. Chọn đường dẫn đến thư mục:  
    `c:\...\Phát triển ứng dụng\src\browser-extension`
-5. Tiện ích **"PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG"** sẽ xuất hiện trên thanh công cụ trình duyệt. Bấm biểu tượng 📌 để ghim tiện ích.
+6. Tiện ích **"PHỤ ĐỀ BÀI GIẢNG TỰ ĐỘNG"** sẽ xuất hiện trên thanh công cụ trình duyệt. Bấm biểu tượng 📌 để ghim tiện ích.
 
-> Extension chỉ được cấp quyền gọi `localhost` và `https://*.trycloudflare.com`.
-> Nếu triển khai backend ở domain riêng (ví dụ `https://api.example.com`), thêm
-> domain đó vào `host_permissions` trong `src/browser-extension/manifest.json`
-> rồi bấm **Reload** tại `chrome://extensions/`.
+> `manifest.json` mặc định là bản **production**, không chứa `localhost` hay
+> `*.trycloudflare.com`. Lệnh `npm run extension:dev` thêm các host dev; chạy
+> `npm run extension:prod` để trả lại manifest sạch trước khi phát hành.
+> Nếu backend ở domain riêng (ví dụ `https://api.example.com`), thêm domain đó
+> vào `host_permissions` rồi bấm **Reload** tại `chrome://extensions/`.
+>
+> Đóng gói ZIP để gửi duyệt Chrome Web Store:
+> ```powershell
+> npm run extension:package
+> ```
+> Script từ chối đóng gói nếu manifest còn host dev (trừ khi truyền
+> `--allow-dev-hosts`).
 
 ---
 
@@ -378,11 +416,13 @@ CRITICAL có bản vá bằng Trivy. Workflow `security.yml` chạy `pip-audit` 
 
 ### ĐÓNG GÓI ỨNG DỤNG DI ĐỘNG (EAS BUILD)
 
-`app.json` đã khai báo định danh phát hành `com.edtechai.lecture` cho cả
-Android (`android.package`, `versionCode`) và iOS (`ios.bundleIdentifier`,
-`buildNumber`). Cấu hình build nằm trong `eas.json`:
+`app.config.js` đọc `app.json` và bổ sung `extra.eas.projectId`, `owner` và
+`updates.url` (OTA) từ biến môi trường, nên không hardcode ID dự án:
 
 ```powershell
+$env:EAS_PROJECT_ID = "<uuid-tren-expo.dev>"
+$env:EXPO_OWNER = "<tai-khoan-expo>"          # tùy chọn
+$env:EXPO_PUBLIC_API_URL = "https://api.example.com"
 npm install -g eas-cli
 eas login
 eas build --profile preview --platform android   # APK cài trực tiếp
@@ -395,6 +435,9 @@ eas build --profile production --platform all     # AAB/IPA cho store
 
 > `cli.appVersionSource` đặt là `local`, nên phiên bản trong `app.json` là
 > nguồn duy nhất; profile production tự tăng số build mỗi lần chạy.
+> Workflow `.github/workflows/mobile-eas.yml` build thủ công và tự bỏ qua nếu
+> chưa có secret `EXPO_TOKEN`. Xem chi tiết tại
+> [`docs/PHAT_HANH_MOBILE.md`](docs/PHAT_HANH_MOBILE.md).
 
 ---
 
@@ -442,7 +485,7 @@ Firestore Console (hoặc đặt `deleted: false`).
 
 ---
 
-### SAO LƯU DỮ LIỆU FIRESTORE
+### SAO LƯU & KHÔI PHỤC DỮ LIỆU
 
 Script `scripts/backup_firestore.py` xuất toàn bộ collection quan trọng
 (`users`, `lectures`, `media_owners`, `system_config`) ra JSON Lines, mỗi
@@ -454,14 +497,30 @@ python scripts/backup_firestore.py
 python scripts/backup_firestore.py --out D:\backups --collections users,lectures
 ```
 
+File upload/video là dữ liệu lớn nằm ngoài Firestore. Sao lưu thêm bằng:
+
+```powershell
+# Thư mục local (bind mount)
+python scripts/backup_uploads.py
+
+# Named volume đang dùng trong docker-compose.yml
+python scripts/backup_uploads.py --docker-volume lecture_uploads
+```
+
+Khi cần phục hồi, dùng `scripts/restore_firestore.py` (mặc định ghi đè đúng
+trạng thái backup; `--merge` để trộn):
+
+```powershell
+python scripts/restore_firestore.py --input backups\20260101-120000 --dry-run
+python scripts/restore_firestore.py --input backups\20260101-120000
+```
+
 Script dùng `FIREBASE_CREDENTIALS_PATH` trong `src/backend-ai/.env` (hoặc tham
 số `--credentials`). Nên chạy định kỳ bằng Task Scheduler/cron và giữ bản sao
 ở nơi khác ngoài máy chủ. Bản backup chứa hash mật khẩu/OTP và phiên đăng nhập,
 nên thư mục `backups/` đã được `.gitignore` và script đặt quyền `700/600` trên
-POSIX; nếu lưu lên cloud, hãy bật mã hoá phía dịch vụ lưu trữ. Khi cần khôi phục, tạo lại document từ file JSONL
-bằng Firestore Console hoặc một script `set()` nhỏ; nếu dùng tính năng export
-chính thức của Google Cloud thì nên export thẳng sang Cloud Storage để có thể
-`gcloud firestore import`.
+POSIX; nếu lưu lên cloud, hãy bật mã hoá phía dịch vụ lưu trữ. Quy trình chi
+tiết và lịch chạy mẫu nằm trong [`docs/VAN_HANH_PRODUCTION.md`](docs/VAN_HANH_PRODUCTION.md).
 
 ---
 
@@ -550,6 +609,8 @@ proxy; nếu không cấu hình, backend bỏ qua `X-Forwarded-For` để tránh
 5. **Bản quyền phương tiện:** Hệ thống tôn trọng quyền sở hữu trí tuệ của tác giả video; toàn bộ quá trình trích xuất âm thanh và bóc tách nội dung phục vụ thuần túy cho mục đích nghiên cứu học thuật phi thương mại.
 6. **Chống dò tài khoản:** Đăng nhập luôn chạy PBKDF2 (kể cả khi không tìm thấy tài khoản) để cân bằng thời gian phản hồi; các luồng quên mật khẩu/gửi lại OTP trả thông báo trung tính, không tiết lộ email đã đăng ký hay chưa. Độ dài email/mật khẩu/OTP được giới hạn ở tầng schema để tránh payload quá lớn.
 7. **Xác minh email không thay thế đăng nhập:** `/api/auth/verify-otp` chỉ kích hoạt tài khoản; tài khoản đã xác minh không thể dùng endpoint này để lấy phiên mà phải đăng nhập bằng mật khẩu. Media token cũng mang `token_version` nên bị thu hồi ngay khi đổi/đặt lại mật khẩu hoặc đăng xuất toàn bộ.
+8. **Chống dò mật khẩu & lạm dụng:** ngoài rate limit theo IP, đăng nhập sai quá `LOGIN_MAX_ATTEMPTS` lần trong `LOGIN_WINDOW_SECONDS` sẽ tạm khoá theo email/username (áp dụng cả tài khoản không tồn tại). Body JSON/form bị chặn nếu vượt `MAX_JSON_BODY_BYTES`; ffmpeg có timeout để một video lỗi không treo worker.
+9. **Quy trình & tài liệu:** xem [`SECURITY.md`](SECURITY.md) để báo cáo lỗ hổng, [`docs/PRIVACY_POLICY.md`](docs/PRIVACY_POLICY.md) và [`docs/TERMS_OF_SERVICE.md`](docs/TERMS_OF_SERVICE.md) (mẫu cần rà soát pháp lý trước khi công bố), cùng [`docs/VAN_HANH_PRODUCTION.md`](docs/VAN_HANH_PRODUCTION.md) cho vận hành/backup.
 
 ---
 

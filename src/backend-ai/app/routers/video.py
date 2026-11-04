@@ -871,12 +871,24 @@ async def burn_subtitles_into_video(request: BurnSubtitlesRequest, user=Depends(
             capture_output=True,
             text=True,
             check=False,
+            timeout=settings.FFMPEG_TIMEOUT_SECONDS,
         )
         if completed.returncode != 0 or not os.path.isfile(output_path):
             logger.error("FFmpeg subtitle burn failed: %s", completed.stderr[-1000:])
             if os.path.exists(output_path):
                 os.remove(output_path)
             raise HTTPException(status_code=500, detail="FFmpeg khong the render phu de vao video.")
+    except subprocess.TimeoutExpired as exc:
+        logger.error("FFmpeg burn subtitles vượt quá %ss", settings.FFMPEG_TIMEOUT_SECONDS)
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+        raise HTTPException(
+            status_code=504,
+            detail="Ghi phụ đề vào video quá thời gian cho phép. Vui lòng thử video ngắn hơn.",
+        ) from exc
     finally:
         if os.path.exists(subtitle_path):
             try:
@@ -1364,7 +1376,7 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
     try:
         import subprocess
         cmd = ["ffmpeg", "-y", "-i", audio_path, "-t", "30", "-ar", "16000", "-ac", "1", fast_wav]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=settings.FFMPEG_TIMEOUT_SECONDS)
         if os.path.exists(fast_wav):
             fast_segments, det = whisper_service.transcribe_audio(audio_path=fast_wav, task="transcribe")
             if target_lang != det:

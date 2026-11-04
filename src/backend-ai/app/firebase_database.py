@@ -253,6 +253,44 @@ class FirebaseService:
             logger.warning(f"Lỗi ghi dữ liệu vào Firebase Firestore: {e}")
             return False
 
+    @staticmethod
+    def _history_item(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Chuẩn hoá một document Firestore thành mục lịch sử trả về client."""
+        v_url = data.get("video_url")
+        if not v_url:
+            return None
+
+        raw_q = data.get("quiz", [])
+        clean_q = [
+            item if isinstance(item, dict) else {
+                "question": str(item).strip(),
+                "options": ["A. Hoàn toàn đồng ý", "B. Cần thêm cơ sở", "C. Không đồng ý", "D. Ý kiến khác"],
+                "correct_answer": "A",
+                "answer": "A",
+                "explanation": "Câu hỏi ôn tập từ bài giảng."
+            }
+            for item in raw_q
+        ] if isinstance(raw_q, list) else []
+
+        return {
+            "video_url": data.get("video_url"),
+            "media_url": data.get("media_url") or data.get("media_stream_url"),
+            "media_stream_url": data.get("media_stream_url") or data.get("media_url"),
+            "title": data.get("title"),
+            "duration_seconds": data.get("duration_seconds"),
+            "language": data.get("language"),
+            "summary": data.get("summary"),
+            "segments": data.get("segments", []),
+            "key_points": data.get("key_points", []),
+            "formulas_and_terms": data.get("formulas_and_terms", []),
+            "sections": data.get("sections", []),
+            "quiz": clean_q,
+            "quiz_target": data.get("quiz_target"),
+            "folder": data.get("folder") or "Bài giảng chung",
+            "tags": data.get("tags") or ["Bài giảng"],
+            "owner_id": data.get("owner_id"),
+        }
+
     def get_history(
         self,
         limit: int = 25,
@@ -261,9 +299,11 @@ class FirebaseService:
     ) -> tuple[List[Dict[str, Any]], bool]:
         """Lấy một trang lịch sử bài giảng của user, mới nhất trước.
 
-        Firestore không sắp xếp theo ``cached_at`` nếu thiếu composite index,
-        nên lấy thêm ``offset + limit + 1`` bản ghi rồi sắp xếp/khử trùng lặp
-        trong bộ nhớ. Trả về ``(items, has_more)``.
+        Ưu tiên truy vấn có thứ tự ở phía server (``cached_at`` giảm dần) để
+        không tải cả collection vào RAM. Dữ liệu cũ thiếu ``cached_at`` (hoặc
+        thiếu composite index) sẽ được xử lý bằng fallback quét giới hạn và
+        sắp xếp trong bộ nhớ; chạy ``scripts/backfill_cached_at.py`` để chuyển
+        hoàn toàn sang đường truy vấn nhanh.
         """
         if not self.db:
             self.init_firebase()
@@ -274,59 +314,59 @@ class FirebaseService:
             limit = max(1, min(int(limit or 25), 100))
             offset = max(0, int(offset or 0))
 
-            query = self.db.collection("lectures")
-            if owner_id:
-                query = query.where("owner_id", "==", owner_id)
-            else:
+            if not owner_id:
                 return [], False
 
+            server_items: List[Dict[str, Any]] = []
+            server_ok = False
+            try:
+                docs = list(
+                    self.db.collection("lectures")
+                    .where("owner_id", "==", owner_id)
+                    .order_by("cached_at", direction="DESCENDING")
+                    .offset(offset)
+                    .limit(limit + 1)
+                    .stream()
+                )
+                server_ok = True
+            except Exception as exc:
+                # Thiếu index/trường cached_at: dùng đường fallback bên dưới.
+                logger.info(f"Chưa dùng được truy vấn lịch sử có thứ tự: {exc}")
+                docs = []
+
+            if server_ok:
+                seen_server = set()
+                for doc in docs:
+                    item = self._history_item(doc.to_dict() or {})
+                    if not item or item["video_url"] in seen_server:
+                        continue
+                    seen_server.add(item["video_url"])
+                    server_items.append(item)
+                if server_items:
+                    return server_items[:limit], len(server_items) > limit
+
+            # Fallback: dữ liệu cũ chưa có cached_at hoặc Firestore chưa có index.
+            query = self.db.collection("lectures").where("owner_id", "==", owner_id)
             # Lấy dư để bù các bản ghi trùng URL và biết còn trang sau hay không.
             fetch_limit = min(1000, (offset + limit + 1) * 2)
             docs = list(query.limit(fetch_limit).stream())
-            def _sort_key(d):
-                data = d.to_dict()
-                return str(data.get("cached_at") or data.get("created_at") or "")
-            docs.sort(key=_sort_key, reverse=True)
+            docs.sort(
+                key=lambda d: str(
+                    (d.to_dict() or {}).get("cached_at")
+                    or (d.to_dict() or {}).get("created_at")
+                    or ""
+                ),
+                reverse=True,
+            )
 
             history = []
             seen_urls = set()
             for doc in docs:
-                data = doc.to_dict()
-                v_url = data.get("video_url")
-                # Lọc khử trùng lặp theo URL
-                if not v_url or v_url in seen_urls:
+                item = self._history_item(doc.to_dict() or {})
+                if not item or item["video_url"] in seen_urls:
                     continue
-                seen_urls.add(v_url)
-
-                raw_q = data.get("quiz", [])
-                clean_q = [
-                    item if isinstance(item, dict) else {
-                        "question": str(item).strip(),
-                        "options": ["A. Hoàn toàn đồng ý", "B. Cần thêm cơ sở", "C. Không đồng ý", "D. Ý kiến khác"],
-                        "correct_answer": "A",
-                        "answer": "A",
-                        "explanation": "Câu hỏi ôn tập từ bài giảng."
-                    }
-                    for item in raw_q
-                ] if isinstance(raw_q, list) else []
-                history.append({
-                    "video_url": data.get("video_url"),
-                    "media_url": data.get("media_url") or data.get("media_stream_url"),
-                    "media_stream_url": data.get("media_stream_url") or data.get("media_url"),
-                    "title": data.get("title"),
-                    "duration_seconds": data.get("duration_seconds"),
-                    "language": data.get("language"),
-                    "summary": data.get("summary"),
-                    "segments": data.get("segments", []),
-                    "key_points": data.get("key_points", []),
-                    "formulas_and_terms": data.get("formulas_and_terms", []),
-                    "sections": data.get("sections", []),
-                    "quiz": clean_q,
-                    "quiz_target": data.get("quiz_target"),
-                    "folder": data.get("folder") or "Bài giảng chung",
-                    "tags": data.get("tags") or ["Bài giảng"],
-                    "owner_id": data.get("owner_id"),
-                })
+                seen_urls.add(item["video_url"])
+                history.append(item)
                 if len(history) >= offset + limit + 1:
                     break
 

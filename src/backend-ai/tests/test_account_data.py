@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.core.dependencies import auth_rate_limit, get_current_user, get_optional_user, heavy_rate_limit
+from app.core.login_throttle import reset_login_throttle
 from app.firebase_database import firebase_service
 from app.main import app
 from app.services.auth_service import auth_service
@@ -60,6 +61,9 @@ class FakeQuery:
         self._field = None
         self._value = None
         self._limit = None
+        self._order_field = None
+        self._descending = False
+        self._offset = 0
 
     def where(self, *args, **kwargs):
         if len(args) >= 3 and args[1] == "==":
@@ -67,17 +71,36 @@ class FakeQuery:
             self._value = args[2]
         return self
 
+    def order_by(self, field, direction=None, **kwargs):
+        self._order_field = field
+        self._descending = str(direction or "ASCENDING").upper().endswith("DESCENDING")
+        return self
+
+    def offset(self, count):
+        self._offset = max(0, int(count))
+        return self
+
     def limit(self, count):
         self._limit = count
         return self
 
     def stream(self):
-        refs = [
-            FakeRef(self._store, doc_id)
+        rows = [
+            (doc_id, data)
             for doc_id, data in self._store.items()
             if self._field is None or data.get(self._field) == self._value
         ]
-        return iter(refs[: self._limit] if self._limit else refs)
+        # Firestore bỏ qua document thiếu trường dùng trong order_by.
+        if self._order_field:
+            rows = [row for row in rows if self._order_field in row[1]]
+            rows.sort(
+                key=lambda row: str(row[1].get(self._order_field) or ""),
+                reverse=self._descending,
+            )
+        rows = rows[self._offset:]
+        if self._limit is not None:
+            rows = rows[: self._limit]
+        return iter([FakeRef(self._store, doc_id) for doc_id, _ in rows])
 
 
 class FakeCollection:
@@ -145,6 +168,15 @@ def no_auth_rate_limit():
         yield
     finally:
         app.dependency_overrides.pop(auth_rate_limit, None)
+
+
+@pytest.fixture()
+def reset_login_limits():
+    reset_login_throttle()
+    try:
+        yield
+    finally:
+        reset_login_throttle()
 
 
 @pytest.fixture()
@@ -357,6 +389,81 @@ def test_history_pagination_returns_next_offset(monkeypatch):
     assert [item["title"] for item in second_payload["items"]] == ["Bài cũ hơn"]
     assert second_payload["has_more"] is False
     assert second_payload["next_offset"] is None
+
+
+def test_history_falls_back_for_legacy_documents_without_cached_at(monkeypatch):
+    db = FakeDB()
+    _seed(db)
+    # Tài liệu cũ chưa có cached_at nên không xuất hiện trong truy vấn order_by.
+    db.collection("lectures").document("lecture-1").set({
+        "owner_id": "user-1",
+        "video_url": "https://youtu.be/legacy",
+        "title": "Bài giảng cũ",
+        "created_at": "2025-06-01T00:00:00",
+    })
+    monkeypatch.setattr(firebase_service, "db", db)
+    app.dependency_overrides[get_optional_user] = lambda: dict(USER)
+    try:
+        response = TestClient(app).get("/api/history?limit=5")
+    finally:
+        app.dependency_overrides.pop(get_optional_user, None)
+
+    assert response.status_code == 200
+    assert [item["title"] for item in response.json()["items"]] == ["Bài giảng cũ"]
+    assert response.json()["has_more"] is False
+
+
+def test_login_locks_identifier_after_repeated_failures(
+    monkeypatch, no_auth_rate_limit, reset_login_limits
+):
+    db = FakeDB()
+    _seed(db)
+    email = "hocvien@example.com"
+    user_id = hashlib.sha256(email.encode()).hexdigest()
+    db.collection("users").document(user_id).set({**USER, "id": user_id, "email": email})
+    monkeypatch.setattr(firebase_service, "db", db)
+    monkeypatch.setattr(email_service, "configured", lambda: False)
+    monkeypatch.setattr(settings, "LOGIN_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(settings, "LOGIN_WINDOW_SECONDS", 900)
+
+    client = TestClient(app)
+    wrong = {"email": email, "password": "sai-mat-khau"}
+    assert client.post("/api/auth/login", json=wrong).status_code == 401
+    assert client.post("/api/auth/login", json=wrong).status_code == 401
+
+    blocked = client.post("/api/auth/login", json=wrong)
+    assert blocked.status_code == 429
+    assert int(blocked.headers["retry-after"]) >= 1
+
+    # Mật khẩu đúng vẫn bị chặn trong thời gian khoá.
+    correct = client.post(
+        "/api/auth/login", json={"email": email, "password": "secret123"}
+    )
+    assert correct.status_code == 429
+
+
+def test_login_success_clears_failure_counter(
+    monkeypatch, no_auth_rate_limit, reset_login_limits
+):
+    db = FakeDB()
+    _seed(db)
+    email = "hocvien@example.com"
+    user_id = hashlib.sha256(email.encode()).hexdigest()
+    db.collection("users").document(user_id).set({**USER, "id": user_id, "email": email})
+    monkeypatch.setattr(firebase_service, "db", db)
+    monkeypatch.setattr(email_service, "configured", lambda: False)
+    monkeypatch.setattr(settings, "LOGIN_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(settings, "LOGIN_WINDOW_SECONDS", 900)
+
+    client = TestClient(app)
+    wrong = {"email": email, "password": "sai-mat-khau"}
+    assert client.post("/api/auth/login", json=wrong).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"email": email, "password": "secret123"}
+    ).status_code == 200
+
+    # Bộ đếm đã được xoá nên lần sai tiếp theo vẫn là 401, chưa bị khoá.
+    assert client.post("/api/auth/login", json=wrong).status_code == 401
 
 
 def test_register_fails_closed_in_production_without_smtp(monkeypatch, no_auth_rate_limit):

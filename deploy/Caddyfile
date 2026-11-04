@@ -1,0 +1,47 @@
+# Caddy làm reverse proxy + TLS tự động cho backend FastAPI.
+#
+# Caddy tự xin và gia hạn chứng chỉ Let's Encrypt khi:
+#   - API_DOMAIN trỏ A/AAAA về IP máy chủ;
+#   - cổng 80/443 mở từ Internet;
+#   - ACME_EMAIL là email thật để nhận cảnh báo hết hạn.
+#
+# Biến môi trường được truyền từ docker-compose.prod.yml:
+#   API_DOMAIN=api.example.com
+#   ACME_EMAIL=ops@example.com
+
+{
+	email {$ACME_EMAIL}
+	# Tắt header Server để giảm thông tin lộ ra ngoài.
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	# Caddy tự xử lý WebSocket và HTTP/2 cho mobile/extension.
+	reverse_proxy api:8000 {
+		# Giữ nguyên IP client để rate limit hoạt động; backend chỉ tin
+		# X-Forwarded-For khi peer nằm trong TRUSTED_PROXIES.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		# Video upload 150MB + multipart overhead.
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

@@ -17,12 +17,13 @@ services:
     image: lecture-ai-api:latest
     restart: unless-stopped
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_BIND:-0.0.0.0}:${API_PORT:-8000}:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
       FIREBASE_CREDENTIALS_PATH: /app/secrets/serviceAccountKey.json
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET phải được đặt và dài ít nhất 32 ký tự}
@@ -55,6 +56,10 @@ services:
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
       FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
+      FFMPEG_TIMEOUT_SECONDS: ${FFMPEG_TIMEOUT_SECONDS:-1800}
+      MAX_JSON_BODY_BYTES: ${MAX_JSON_BODY_BYTES:-2097152}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-10}
+      LOGIN_WINDOW_SECONDS: ${LOGIN_WINDOW_SECONDS:-900}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
       # Development dùng '*' cho tiện truy cập LAN; production bắt buộc domain cụ thể
       # (settings.validate() sẽ từ chối '*').
@@ -68,6 +73,12 @@ services:
     volumes:
       - lecture_uploads:/app/uploads
       - ./secrets:/app/secrets:ro
+    # Giới hạn log Docker để không làm đầy đĩa khi chạy dài ngày.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"]
       interval: 30s

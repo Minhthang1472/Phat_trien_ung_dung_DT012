@@ -8,6 +8,12 @@
     "mobile": "npm --prefix src/mobile-app start",
     "mobile:web": "npm --prefix src/mobile-app run web",
     "test:backend": "cd src/backend-ai && python -m pytest -q",
-    "docker:up": "docker compose up --build"
+    "docker:up": "docker compose up --build",
+    "docker:prod": "docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build",
+    "extension:dev": "node scripts/switch-extension-manifest.mjs dev",
+    "extension:prod": "node scripts/switch-extension-manifest.mjs prod",
+    "extension:package": "python scripts/package_extension.py",
+    "backup": "python scripts/backup_firestore.py && python scripts/backup_uploads.py",
+    "health": "python scripts/check_health.py"
   }
 }
