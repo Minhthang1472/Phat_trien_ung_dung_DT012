@@ -2,6 +2,7 @@ import os
 import uuid
 import shutil
 import time
+import threading
 import subprocess
 import urllib.parse
 import requests
@@ -53,7 +54,8 @@ from app.core.dependencies import (
     heavy_rate_limit,
     logger,
 )
-from app.core.job_queue import JobQueueError, job_queue
+from app.core.job_queue import JobQueueError, JobStatus, job_queue
+from app.services.streaming_service import run_background_transcription
 
 router = APIRouter(tags=["video"])
 
@@ -1179,231 +1181,8 @@ async def pair_video_and_subtitles(
 
 
 # ==============================================================================
-# GIAI ĐOẠN 3: XỬ LÝ SONG SONG NGẦN CHO VIDEO DÀI (BACKGROUND CHUNK STREAMING)
+# GIAI ĐOẠN 3: XỬ LÝ SONG SONG NGẦM CHO VIDEO DÀI (BACKGROUND CHUNK STREAMING)
 # ==============================================================================
-
-import threading
-
-
-def _persist_job(job_id: str, **changes) -> None:
-    """Cập nhật trạng thái job, không làm hỏng worker nếu Redis tạm lỗi."""
-    try:
-        job_queue.update_job(job_id, **changes)
-    except JobQueueError as exc:
-        logger.error("Không cập nhật được trạng thái job %s: %s", job_id, exc)
-
-
-def _run_background_transcription(job_id: str, audio_path: str, target_lang: str, src_lang: str):
-    """
-    Worker tiến trình ngầm cho VIDEO DÀI:
-    - Bóc tách theo luồng Streaming Generator liên tục.
-    - Cứ mỗi 3 câu mới (khoảng 8-15 giây audio), dịch ngay và nhồi trực tiếp vào job["segments"].
-    - Đảm bảo người dùng xem tới đâu thì phụ đề đã có sẵn tới đó, gối đầu liên tục không bị khựng sau 30 giây!
-    """
-    try:
-        job = job_queue.get_job(job_id)
-    except JobQueueError as exc:
-        logger.error("Không đọc được job %s: %s", job_id, exc)
-        return
-    if not job:
-        return
-
-    cancelled = False
-    try:
-        # Job có thể đã bị huỷ trong lúc chờ worker nhận việc.
-        if job_queue.is_cancelled(job_id):
-            _persist_job(
-                job_id,
-                status="cancelled",
-                progress=100,
-                finished_at=time.time(),
-            )
-            return
-
-        duration = float(job.get("duration_seconds") or 1800.0)
-        # Giữ lại các câu 30s đầu đã được load ban đầu
-        existing_segments = list(job.get("segments", []))
-        all_segments = list(existing_segments)
-        max_existing_end = max((float(s.get("end", 0)) for s in existing_segments), default=0.0)
-
-        # Chuẩn bị ngữ cảnh + glossary một lần cho cả video để mọi batch nhỏ
-        # đều được dịch nhất quán (không gọi lại Gemini brief mỗi 3 câu).
-        translation_brief = translation_service.build_video_brief(
-            existing_segments,
-            video_title=job.get("title", ""),
-            source_lang=src_lang,
-            target_lang=target_lang,
-        )
-
-        buffer_batch = []
-        detected = "en"
-
-        for raw_seg in whisper_service.transcribe_audio_generator(
-            audio_path=audio_path,
-            language=None if src_lang == "auto" else src_lang,
-            task="transcribe"
-        ):
-            if job_queue.is_cancelled(job_id):
-                cancelled = True
-                break
-
-            detected = raw_seg.get("detected_language") or detected
-
-            # Bỏ qua các câu rơi vào khoảng 30s đầu đã được nạp trước đó
-            if float(raw_seg.get("end", 0)) <= max_existing_end:
-                continue
-
-            buffer_batch.append(raw_seg)
-
-            # Cứ mỗi 3 câu mới: Dịch ngay lập tức và bơm vào danh sách phụ đề đang chạy!
-            if len(buffer_batch) >= 3:
-                translated_batch = list(buffer_batch)
-                if target_lang != detected:
-                    try:
-                        translated_batch = translation_service.translate_segments(
-                            translated_batch,
-                            source_lang=detected,
-                            target_lang=target_lang,
-                            video_title=job.get("title", ""),
-                            context=translation_brief.get("context"),
-                            glossary=translation_brief.get("glossary"),
-                        )
-                    except Exception as te:
-                        logger.warning(f"Lỗi dịch batch nhỏ: {te}")
-                        for s in translated_batch:
-                            s["translated_text"] = s.get("text", "")
-                else:
-                    for s in translated_batch:
-                        s["translated_text"] = s.get("text", "")
-
-                for item in translated_batch:
-                    item["id"] = len(all_segments)
-                    all_segments.append(item)
-
-                buffer_batch = []
-
-                # Cập nhật trực tiếp vào job để Frontend SyncPlayer nhận ngay ở lần poll tiếp theo
-                job["segments"] = list(all_segments)
-                job["detected_language"] = detected
-                prog = min(95, max(10, int((float(raw_seg.get("end", 0)) / duration) * 100)))
-                job["progress"] = prog
-                _persist_job(
-                    job_id,
-                    segments=job["segments"],
-                    detected_language=detected,
-                    progress=prog,
-                )
-
-        if cancelled:
-            _persist_job(
-                job_id,
-                status="cancelled",
-                progress=100,
-                segments=list(all_segments),
-                detected_language=detected,
-                finished_at=time.time(),
-            )
-            logger.info("Job streaming %s đã dừng theo yêu cầu người dùng.", job_id)
-            return
-
-        # Dịch nốt các câu còn lại trong buffer nếu còn
-        if buffer_batch:
-            translated_batch = list(buffer_batch)
-            if target_lang != detected:
-                try:
-                    translated_batch = translation_service.translate_segments(
-                        translated_batch,
-                        source_lang=detected,
-                        target_lang=target_lang,
-                        video_title=job.get("title", ""),
-                        context=translation_brief.get("context"),
-                        glossary=translation_brief.get("glossary"),
-                    )
-                except Exception:
-                    for s in translated_batch:
-                        s["translated_text"] = s.get("text", "")
-            else:
-                for s in translated_batch:
-                    s["translated_text"] = s.get("text", "")
-
-            for item in translated_batch:
-                item["id"] = len(all_segments)
-                all_segments.append(item)
-
-            job["segments"] = list(all_segments)
-
-        # Toàn bộ video dài đã xong: Tạo Tóm tắt, Mindmap, Quiz siêu tốc
-        transcript = " ".join(s.get("text", "") for s in all_segments)
-        summary_data = summary_service.summarize_transcript(
-            transcript,
-            include_quiz=True,
-            duration_seconds=job.get("duration_seconds"),
-            quiz_target=job.get("quiz_target"),
-            video_title=job.get("title", ""),
-        )
-
-        job["segments"] = all_segments
-        job["detected_language"] = detected
-        job["summary"] = summary_data.get("summary", "")
-        job["key_points"] = summary_data.get("key_points", [])
-        job["formulas_and_terms"] = summary_data.get("formulas_and_terms", [])
-        job["sections"] = summary_data.get("sections") or []
-        job["quiz"] = normalize_quiz(summary_data.get("quiz", []), sections=job["sections"])
-        job["quiz_target"] = summary_data.get("quiz_target")
-        job["mindmap"] = summary_data.get("mindmap") or normalize_mindmap(None, default_title=job.get("title", ""), key_points=job.get("key_points"))
-        job["exercises"] = summary_data.get("exercises") or normalize_exercises(None, key_points=job.get("key_points"))
-        job["folder"] = summary_data.get("folder") or "Bài giảng chung"
-        job["tags"] = summary_data.get("tags") or ["Bài giảng"]
-        job["status"] = "completed"
-        job["progress"] = 100
-
-        full_res = {
-            "video_url": job["video_url"],
-            "title": job["title"],
-            "duration_seconds": job["duration_seconds"],
-            "language": target_lang,
-            "detected_language": detected,
-            "segments": all_segments,
-            "summary": job["summary"],
-            "key_points": job["key_points"],
-            "formulas_and_terms": job["formulas_and_terms"],
-            "sections": job["sections"],
-            "quiz": job["quiz"],
-            "quiz_target": job.get("quiz_target"),
-            "mindmap": job["mindmap"],
-            "exercises": job["exercises"],
-            "folder": job["folder"],
-            "tags": job["tags"],
-            "owner_id": job.get("owner_id"),
-        }
-        firebase_service.save_lecture_cache(job["video_url"], full_res)
-        _persist_job(
-            job_id,
-            status="completed",
-            progress=100,
-            segments=all_segments,
-            detected_language=detected,
-            summary=job["summary"],
-            key_points=job["key_points"],
-            formulas_and_terms=job["formulas_and_terms"],
-            sections=job["sections"],
-            quiz=job["quiz"],
-            quiz_target=job.get("quiz_target"),
-            mindmap=job["mindmap"],
-            exercises=job["exercises"],
-            folder=job["folder"],
-            tags=job["tags"],
-            finished_at=time.time(),
-        )
-        logger.info(f"Đã hoàn thành nạp gối đầu toàn bộ video dài [{job.get('title')}]: {len(all_segments)} câu phụ đề.")
-    except Exception as e:
-        logger.error(f"Lỗi worker xử lý ngầm video: {e}")
-        _persist_job(job_id, status="failed", error=str(e), finished_at=time.time())
-    finally:
-        if os.path.exists(audio_path):
-            try: os.remove(audio_path)
-            except Exception: pass
-
 
 @router.post("/api/video/stream-init")
 async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_current_user), _limit=Depends(heavy_rate_limit)):
@@ -1478,7 +1257,7 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
         "video_url": url,
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],
-        "status": "queued" if job_queue.is_redis else "processing",
+        "status": JobStatus.QUEUED if job_queue.is_redis else JobStatus.PROCESSING,
         "progress": 30,
         "segments": fast_segments,
         "language": target_lang,
@@ -1505,7 +1284,7 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
             logger.info("Đã đưa job streaming %s vào hàng đợi Redis.", job_id)
         else:
             worker = threading.Thread(
-                target=_run_background_transcription,
+                target=run_background_transcription,
                 args=(job_id, audio_path, target_lang, src_lang),
                 daemon=True,
             )
@@ -1537,7 +1316,7 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
         "language": target_lang,
         "segments": fast_segments,
         "is_streaming": True,
-        "status": "processing",
+        "status": JobStatus.PROCESSING,
         "progress": 30,
         "summary": "AI đang bóc tách song song bài giảng ở chế độ nền trong khi bạn theo dõi video...",
         "key_points": ["Hệ thống streaming song song đang hoạt động"],
@@ -1576,7 +1355,7 @@ async def get_stream_status(job_id: str = Query(..., description="ID của phiê
 
     status = job.get("status")
     # "cancelled"/"failed" cũng là trạng thái kết thúc để client dừng poll.
-    is_completed = status in {"completed", "failed", "cancelled"}
+    is_completed = JobStatus.is_terminal(status)
     progress = 100 if is_completed else job.get("progress", 0)
 
     return {

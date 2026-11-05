@@ -17,7 +17,7 @@ import time
 import traceback
 
 from app.core.config import settings
-from app.core.job_queue import JobQueueError, job_queue
+from app.core.job_queue import JobQueueError, JobStatus, job_queue
 from app.core.logging_config import configure_logging
 from app.firebase_database import firebase_service
 
@@ -28,7 +28,7 @@ def _mark_failed(job_id: str, message: str) -> None:
     try:
         job_queue.update_job(
             job_id,
-            status="failed",
+            status=JobStatus.FAILED,
             error=message,
             finished_at=time.time(),
         )
@@ -98,7 +98,7 @@ def run_worker() -> int:
         if not job:
             logger.warning("Bỏ qua job %s vì đã hết TTL hoặc bị xoá.", job_id)
             continue
-        if job.get("status") in {"completed", "failed", "cancelled"}:
+        if JobStatus.is_terminal(job.get("status")):
             logger.info("Bỏ qua job %s vì đã ở trạng thái kết thúc.", job_id)
             continue
         if not audio_path or not os.path.exists(audio_path):
@@ -110,13 +110,13 @@ def run_worker() -> int:
         try:
             job_queue.update_job(
                 job_id,
-                status="processing",
+                status=JobStatus.PROCESSING,
                 worker_started_at=time.time(),
             )
             # Import muộn để worker chỉ nạp model/thư viện AI khi thực sự có job.
-            from app.routers.video import _run_background_transcription
+            from app.services.streaming_service import run_background_transcription
 
-            _run_background_transcription(job_id, audio_path, target_lang, src_lang)
+            run_background_transcription(job_id, audio_path, target_lang, src_lang)
         except Exception as exc:  # pragma: no cover - phòng thủ
             logger.error(
                 "Worker gặp lỗi khi xử lý job %s: %s\n%s",

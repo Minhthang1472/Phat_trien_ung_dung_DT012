@@ -30,6 +30,21 @@ CANCEL_TTL_SECONDS = 24 * 3600
 WORKER_HEARTBEAT_TTL_SECONDS = 120
 
 
+class JobStatus:
+    """Trạng thái job dùng chung giữa API, worker và dashboard."""
+
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    TERMINAL = frozenset({COMPLETED, FAILED, CANCELLED})
+
+    @classmethod
+    def is_terminal(cls, status: Optional[str]) -> bool:
+        return str(status or "").strip().lower() in cls.TERMINAL
+
+
 class JobQueueError(RuntimeError):
     """Redis không khả dụng hoặc dữ liệu job không đọc được."""
 
@@ -78,7 +93,7 @@ class MemoryJobQueue:
             job["cancel_requested"] = True
             job["cancel_requested_at"] = time.time()
             job["updated_at"] = time.time()
-            return {"status": "cancelled"}
+            return {"status": JobStatus.CANCELLED}
 
     def is_cancelled(self, job_id: str) -> bool:
         with self._lock:
@@ -132,10 +147,10 @@ class MemoryJobQueue:
             "redis": False,
             "available": True,
             "pending": pending,
-            "processing": counts.get("processing", 0),
-            "completed": counts.get("completed", 0),
-            "failed": counts.get("failed", 0),
-            "cancelled": counts.get("cancelled", 0),
+            "processing": counts.get(JobStatus.PROCESSING, 0),
+            "completed": counts.get(JobStatus.COMPLETED, 0),
+            "failed": counts.get(JobStatus.FAILED, 0),
+            "cancelled": counts.get(JobStatus.CANCELLED, 0),
             "total": len(jobs),
             "worker_alive": True,
             "worker_last_seen_seconds": 0,
@@ -292,7 +307,7 @@ class RedisJobQueue:
             cancel_requested=True,
             cancel_requested_at=time.time(),
         )
-        return {"status": "cancelled"}
+        return {"status": JobStatus.CANCELLED}
 
     def is_cancelled(self, job_id: str) -> bool:
         return bool(
@@ -387,10 +402,10 @@ class RedisJobQueue:
             "redis": True,
             "available": True,
             "pending": self.pending_count(),
-            "processing": counts.get("processing", 0),
-            "completed": counts.get("completed", 0),
-            "failed": counts.get("failed", 0),
-            "cancelled": counts.get("cancelled", 0),
+            "processing": counts.get(JobStatus.PROCESSING, 0),
+            "completed": counts.get(JobStatus.COMPLETED, 0),
+            "failed": counts.get(JobStatus.FAILED, 0),
+            "cancelled": counts.get(JobStatus.CANCELLED, 0),
             "total": total,
             "worker_alive": heartbeat_seconds < WORKER_HEARTBEAT_TTL_SECONDS,
             "worker_last_seen_seconds": heartbeat_seconds,

@@ -8,7 +8,7 @@ from app.core.dependencies import heavy_rate_limit
 from app.core.job_queue import MemoryJobQueue
 from app.firebase_database import firebase_service
 from app.main import app
-from app.routers import admin as admin_module
+from app.services import admin_service
 
 TOKEN = "a" * 40
 HEADERS = {"X-Admin-Token": TOKEN}
@@ -39,7 +39,7 @@ def admin_env(monkeypatch, no_heavy_rate_limit):
         }
     )
     queue.enqueue("job-abc", {"audio_path": "/tmp/a.wav"})
-    monkeypatch.setattr(admin_module, "job_queue", queue)
+    monkeypatch.setattr(admin_service, "job_queue", queue)
 
     counts = {"users": 5, "lectures": 9, "media_owners": 4}
     monkeypatch.setattr(
