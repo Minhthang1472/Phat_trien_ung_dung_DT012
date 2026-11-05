@@ -7,7 +7,66 @@
 #   2. Đặt serviceAccountKey.json vào ./secrets/ (đã được .gitignore bảo vệ).
 #   3. docker compose up --build
 #
-# Endpoint: http://localhost:8000  (Swagger: /docs, health: /health, metrics: /metrics)
+# Endpoint: http://localhost:8000  (Swagger: /docs, health: /health, metrics: /metrics,
+# quản trị: /admin)
+#
+# Redis queue (tùy chọn, cần cho nhiều API instance hoặc worker tách riêng):
+#   - Đặt REDIS_URL=redis://redis:6379/0 trong .env
+#   - docker compose --profile queue up --build
+#   - Không đặt REDIS_URL: job chạy bằng thread trong tiến trình API như cũ.
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-production}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-text}
+  FIREBASE_CREDENTIALS_PATH: /app/secrets/serviceAccountKey.json
+  FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET phải được đặt và dài ít nhất 32 ký tự}
+  ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES:-60}
+  REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
+  MAX_REFRESH_SESSIONS: ${MAX_REFRESH_SESSIONS:-5}
+  OTP_TTL_MINUTES: ${OTP_TTL_MINUTES:-10}
+  OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-5}
+  METRICS_TOKEN: ${METRICS_TOKEN:-}
+  ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+  ENABLE_DOCS: ${ENABLE_DOCS:-false}
+  WS_MAX_CONNECTIONS: ${WS_MAX_CONNECTIONS:-20}
+  WS_MAX_BUFFER_BYTES: ${WS_MAX_BUFFER_BYTES:-5242880}
+  TRANSLATION_MAX_CONCURRENCY: ${TRANSLATION_MAX_CONCURRENCY:-4}
+  TRANSLATION_WORKERS: ${TRANSLATION_WORKERS:-6}
+  TRANSLATION_CACHE_SIZE: ${TRANSLATION_CACHE_SIZE:-5000}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+  OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+  MEDIA_TOKEN_TTL_MINUTES: ${MEDIA_TOKEN_TTL_MINUTES:-120}
+  ALLOWED_VIDEO_HOSTS: ${ALLOWED_VIDEO_HOSTS:-youtube.com,youtu.be,drive.google.com,drive.usercontent.google.com,docs.google.com,dropbox.com}
+  PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+  SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+  WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-small}
+  WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+  WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+  FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
+  FFMPEG_TIMEOUT_SECONDS: ${FFMPEG_TIMEOUT_SECONDS:-1800}
+  MAX_JSON_BODY_BYTES: ${MAX_JSON_BODY_BYTES:-2097152}
+  LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-10}
+  LOGIN_WINDOW_SECONDS: ${LOGIN_WINDOW_SECONDS:-900}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
+  # Development dùng '*' cho tiện truy cập LAN; production bắt buộc domain cụ thể
+  # (settings.validate() sẽ từ chối '*').
+  ALLOWED_HOSTS: "${ALLOWED_HOSTS:-*}"
+  REDIS_URL: ${REDIS_URL:-}
+  TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+  UPLOAD_TTL_HOURS: ${UPLOAD_TTL_HOURS:-24}
+  AUDIO_TEMP_TTL_HOURS: ${AUDIO_TEMP_TTL_HOURS:-6}
+  STREAM_JOB_TTL_MINUTES: ${STREAM_JOB_TTL_MINUTES:-120}
+  CLEANUP_INTERVAL_MINUTES: ${CLEANUP_INTERVAL_MINUTES:-30}
+  # API và worker dùng chung volume để worker mở được file audio API đã tải.
+  AUDIO_TEMP_DIR: /app/audio-temp
 
 services:
   api:
@@ -21,57 +80,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-production}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_FORMAT: ${LOG_FORMAT:-text}
-      FIREBASE_CREDENTIALS_PATH: /app/secrets/serviceAccountKey.json
-      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET phải được đặt và dài ít nhất 32 ký tự}
-      ACCESS_TOKEN_TTL_MINUTES: ${ACCESS_TOKEN_TTL_MINUTES:-60}
-      REFRESH_TOKEN_TTL_DAYS: ${REFRESH_TOKEN_TTL_DAYS:-30}
-      MAX_REFRESH_SESSIONS: ${MAX_REFRESH_SESSIONS:-5}
-      OTP_TTL_MINUTES: ${OTP_TTL_MINUTES:-10}
-      OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-5}
-      METRICS_TOKEN: ${METRICS_TOKEN:-}
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
-      ENABLE_DOCS: ${ENABLE_DOCS:-false}
-      WS_MAX_CONNECTIONS: ${WS_MAX_CONNECTIONS:-20}
-      WS_MAX_BUFFER_BYTES: ${WS_MAX_BUFFER_BYTES:-5242880}
-      TRANSLATION_MAX_CONCURRENCY: ${TRANSLATION_MAX_CONCURRENCY:-4}
-      TRANSLATION_WORKERS: ${TRANSLATION_WORKERS:-6}
-      TRANSLATION_CACHE_SIZE: ${TRANSLATION_CACHE_SIZE:-5000}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
-      MEDIA_TOKEN_TTL_MINUTES: ${MEDIA_TOKEN_TTL_MINUTES:-120}
-      ALLOWED_VIDEO_HOSTS: ${ALLOWED_VIDEO_HOSTS:-youtube.com,youtu.be,drive.google.com,drive.usercontent.google.com,docs.google.com,dropbox.com}
-      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
-      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USERNAME: ${SMTP_USERNAME:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-}
-      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-small}
-      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
-      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
-      FFMPEG_PATH: ${FFMPEG_PATH:-ffmpeg}
-      FFMPEG_TIMEOUT_SECONDS: ${FFMPEG_TIMEOUT_SECONDS:-1800}
-      MAX_JSON_BODY_BYTES: ${MAX_JSON_BODY_BYTES:-2097152}
-      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-10}
-      LOGIN_WINDOW_SECONDS: ${LOGIN_WINDOW_SECONDS:-900}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://localhost:19006}
-      # Development dùng '*' cho tiện truy cập LAN; production bắt buộc domain cụ thể
-      # (settings.validate() sẽ từ chối '*').
-      ALLOWED_HOSTS: "${ALLOWED_HOSTS:-*}"
-      REDIS_URL: ${REDIS_URL:-}
-      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
-      UPLOAD_TTL_HOURS: ${UPLOAD_TTL_HOURS:-24}
-      AUDIO_TEMP_TTL_HOURS: ${AUDIO_TEMP_TTL_HOURS:-6}
-      STREAM_JOB_TTL_MINUTES: ${STREAM_JOB_TTL_MINUTES:-120}
-      CLEANUP_INTERVAL_MINUTES: ${CLEANUP_INTERVAL_MINUTES:-30}
+      <<: *backend-env
     volumes:
       - lecture_uploads:/app/uploads
+      - lecture_audio:/app/audio-temp
       - ./secrets:/app/secrets:ro
     # Giới hạn log Docker để không làm đầy đĩa khi chạy dài ngày.
     logging:
@@ -86,5 +98,66 @@ services:
       retries: 3
       start_period: 40s
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles: ["queue"]
+    # Job state là dữ liệu tạm: không cần ghi đĩa, giới hạn RAM để an toàn.
+    command:
+      [
+        "redis-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--maxmemory",
+        "256mb",
+        "--maxmemory-policy",
+        "allkeys-lru"
+      ]
+    expose:
+      - "6379"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    build:
+      context: ./src/backend-ai
+      dockerfile: Dockerfile
+    image: lecture-ai-api:latest
+    restart: unless-stopped
+    profiles: ["queue"]
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      <<: *backend-env
+      # Worker chỉ chạy khi có Redis; mặc định trỏ vào service redis ở trên.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - lecture_uploads:/app/uploads
+      - lecture_audio:/app/audio-temp
+      - ./secrets:/app/secrets:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # Image có healthcheck HTTP của API; worker không mở cổng nên tắt riêng.
+    healthcheck:
+      disable: true
+
 volumes:
   lecture_uploads:
+  lecture_audio:

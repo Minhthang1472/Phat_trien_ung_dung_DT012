@@ -33,8 +33,9 @@ from app.core.metrics import metrics_registry
 from app.firebase_database import firebase_service
 from app.api.websocket_router import ws_router
 from app.routers import auth_router, export_router, history_router, video_router
-from app.routers import admin_router
-from app.services.cleanup_service import cleanup_uploads, prune_jobs, prune_rate_buckets
+from app.routers import admin_router, admin_dashboard_router
+from app.core.job_queue import JobQueueError, job_queue
+from app.services.cleanup_service import cleanup_uploads, prune_rate_buckets
 
 logger = logging.getLogger("uvicorn")
 
@@ -137,7 +138,6 @@ async def _cleanup_loop() -> None:
         try:
             # Import muộn để tránh vòng lặp import khi khởi động
             from app.core.dependencies import UPLOAD_DIR, _rate_buckets
-            from app.routers import video as video_module
             from app.services.audio_service import AUDIO_TEMP_DIR
 
             # Chỉ dọn uploads khi đọc được danh sách media đang được tham chiếu.
@@ -157,7 +157,10 @@ async def _cleanup_loop() -> None:
                     protected_names=referenced_media,
                 )
             await asyncio.to_thread(cleanup_uploads, AUDIO_TEMP_DIR, audio_ttl)
-            prune_jobs(video_module.streaming_jobs, job_ttl)
+            try:
+                await asyncio.to_thread(job_queue.prune, job_ttl)
+            except JobQueueError as exc:
+                logger.warning("Bỏ qua dọn job vì hàng đợi không khả dụng: %s", exc)
             prune_rate_buckets(_rate_buckets, max(3600, job_ttl))
         except Exception as exc:  # pragma: no cover - phòng thủ
             logger.warning("Vòng lặp dọn dẹp gặp lỗi: %s", exc)
@@ -178,6 +181,17 @@ async def lifespan(app: FastAPI):
 
     # Khởi động kết nối Google Firebase Cloud Firestore
     firebase_service.init_firebase()
+
+    if job_queue.is_redis:
+        logger.info("Hàng đợi job dùng Redis; cần chạy worker riêng (python -m app.worker).")
+        try:
+            if not job_queue.worker_alive():
+                logger.warning(
+                    "Chưa thấy worker heartbeat. Job streaming sẽ chờ cho tới khi "
+                    "worker được khởi động."
+                )
+        except JobQueueError as exc:
+            logger.warning("Không kiểm tra được worker Redis: %s", exc)
 
     cleanup_task = asyncio.create_task(_cleanup_loop())
     try:
@@ -280,10 +294,18 @@ async def security_headers_middleware(request: Request, call_next):
     # sẽ chặn audio/video tải trực tiếp bằng thẻ media.
     headers.setdefault("Cross-Origin-Resource-Policy", "cross-origin")
     # Không để proxy/trình duyệt cache response chứa token hoặc dữ liệu quản trị.
-    if request.url.path.startswith(("/api/auth/", "/api/admin/")):
+    if request.url.path.startswith(("/api/auth/", "/api/admin/", "/admin")):
         headers["Cache-Control"] = "no-store"
         headers["Pragma"] = "no-cache"
-    if request.url.path not in {"/docs", "/redoc", "/openapi.json"}:
+    if request.url.path == "/admin" or request.url.path.startswith("/admin/"):
+        # Dashboard là trang tĩnh duy nhất được phép tải script/style cùng origin.
+        headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
+            "form-action 'none'; frame-ancestors 'none'",
+        )
+    elif request.url.path not in {"/docs", "/redoc", "/openapi.json"}:
         headers.setdefault(
             "Content-Security-Policy",
             "default-src 'none'; frame-ancestors 'none'",
@@ -305,6 +327,7 @@ app.include_router(history_router)
 app.include_router(video_router)
 app.include_router(export_router)
 app.include_router(admin_router)
+app.include_router(admin_dashboard_router)
 
 
 @app.get("/health")

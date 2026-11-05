@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="data:,">
+  <title>Quản trị · Lecture AI</title>
+  <link rel="stylesheet" href="/admin/styles.css">
+</head>
+<body>
+  <div id="login-view" class="login-view" hidden>
+    <form id="login-form" class="login-card" autocomplete="off">
+      <h1>Quản trị Lecture AI</h1>
+      <p class="muted">Nhập <code>ADMIN_TOKEN</code> đã cấu hình ở backend. Token chỉ lưu trong tab hiện tại (sessionStorage).</p>
+      <label for="token-input">Admin token</label>
+      <input id="token-input" type="password" inputmode="text" autocomplete="current-password" required>
+      <button type="submit" class="primary">Đăng nhập</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="dashboard-view" hidden>
+    <header class="topbar">
+      <div>
+        <h1>Quản trị Lecture AI</h1>
+        <p id="last-updated" class="muted">Chưa tải dữ liệu</p>
+      </div>
+      <div class="topbar-actions">
+        <label class="refresh-label" for="refresh-select">Tự làm mới</label>
+        <select id="refresh-select">
+          <option value="0">Tắt</option>
+          <option value="10">10 giây</option>
+          <option value="15" selected>15 giây</option>
+          <option value="30">30 giây</option>
+        </select>
+        <button id="refresh-button" type="button">Làm mới</button>
+        <button id="logout-button" type="button" class="ghost">Đăng xuất</button>
+      </div>
+    </header>
+
+    <p id="notice" class="notice" role="status" hidden></p>
+
+    <main>
+      <section class="cards" aria-label="Thống kê tổng quan">
+        <article class="card">
+          <span class="card-label">Người dùng</span>
+          <strong id="stat-users" class="card-value">—</strong>
+          <span id="stat-deleted" class="card-hint">Đang xoá mềm: —</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Bài giảng</span>
+          <strong id="stat-lectures" class="card-value">—</strong>
+          <span class="card-hint">Bản ghi cache Firestore</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Media sở hữu</span>
+          <strong id="stat-media" class="card-value">—</strong>
+          <span class="card-hint">Quyền truy cập file upload</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Dung lượng upload</span>
+          <strong id="stat-storage" class="card-value">—</strong>
+          <span id="stat-storage-files" class="card-hint">— file</span>
+        </article>
+        <article class="card">
+          <span class="card-label">Hàng đợi</span>
+          <strong id="stat-queue" class="card-value">—</strong>
+          <span id="stat-worker" class="card-hint">Worker: —</span>
+        </article>
+      </section>
+
+      <section class="panel" aria-labelledby="queue-title">
+        <div class="panel-head">
+          <h2 id="queue-title">Hàng đợi xử lý</h2>
+          <span id="queue-backend" class="badge">—</span>
+        </div>
+        <dl class="queue-grid">
+          <div><dt>Chờ</dt><dd id="queue-pending">—</dd></div>
+          <div><dt>Đang xử lý</dt><dd id="queue-processing">—</dd></div>
+          <div><dt>Hoàn thành</dt><dd id="queue-completed">—</dd></div>
+          <div><dt>Thất bại</dt><dd id="queue-failed">—</dd></div>
+          <div><dt>Đã huỷ</dt><dd id="queue-cancelled">—</dd></div>
+        </dl>
+      </section>
+
+      <section class="panel" aria-labelledby="jobs-title">
+        <div class="panel-head">
+          <h2 id="jobs-title">Job gần đây</h2>
+          <span class="muted">20 job mới nhất</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Job ID</th>
+                <th scope="col">Bài giảng</th>
+                <th scope="col">Trạng thái</th>
+                <th scope="col">Tiến độ</th>
+                <th scope="col">Cập nhật</th>
+              </tr>
+            </thead>
+            <tbody id="jobs-body">
+              <tr><td colspan="5" class="empty">Chưa có dữ liệu.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="deleted-title">
+        <div class="panel-head">
+          <h2 id="deleted-title">Tài khoản xoá mềm</h2>
+          <span class="muted">Dữ liệu bài giảng được giữ nguyên khi khôi phục</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Tài khoản</th>
+                <th scope="col">Email</th>
+                <th scope="col">Thời điểm xoá</th>
+                <th scope="col">Hành động</th>
+              </tr>
+            </thead>
+            <tbody id="deleted-body">
+              <tr><td colspan="4" class="empty">Chưa có tài khoản nào bị xoá mềm.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/admin/app.js" defer></script>
+</body>
+</html>

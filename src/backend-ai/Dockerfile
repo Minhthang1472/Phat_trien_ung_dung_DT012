@@ -28,7 +28,7 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY app ./app
 COPY run_server.py ./
 
-RUN mkdir -p /app/uploads /app/secrets \
+RUN mkdir -p /app/uploads /app/audio-temp /app/secrets \
     && useradd --create-home --uid 10001 appuser \
     && chown -R appuser:appuser /app
 

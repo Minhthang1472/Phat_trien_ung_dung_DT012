@@ -40,13 +40,18 @@ hình sai (ví dụ đặt `ALLOWED_HOSTS=*` ở production), dịch vụ bên t
    `METRICS_TOKEN` ≥ 16 ký tự. Để trống hai token sau nếu không dùng.
 3. Production bắt buộc HTTPS, `ALLOWED_HOSTS` và `CORS_ORIGINS` là domain cụ
    thể; đặt `API_BIND=127.0.0.1` khi chạy sau Caddy.
-4. Bật Dependabot, pip-audit, npm audit và Trivy trong CI (đã cấu hình sẵn).
-5. Sao lưu Firestore + thư mục upload định kỳ, lưu offsite và **thử khôi phục**
+4. Dashboard `/admin` chỉ dùng qua HTTPS; không chia sẻ `ADMIN_TOKEN` và đăng
+   xuất sau khi dùng xong. Token chỉ lưu trong `sessionStorage` của trình duyệt.
+5. Nếu bật Redis queue, không mở cổng 6379 ra Internet và không đặt mật khẩu
+   yếu. Redis chứa trạng thái job (tiêu đề, tiến độ, phụ đề tạm) nên cần được
+   bảo vệ như dữ liệu nội bộ; dùng mạng Docker riêng hoặc `requirepass` + TLS.
+6. Bật Dependabot, pip-audit, npm audit và Trivy trong CI (đã cấu hình sẵn).
+7. Sao lưu Firestore + thư mục upload định kỳ, lưu offsite và **thử khôi phục**
    ít nhất mỗi quý.
-6. Rà soát `firestore.rules` và không cấp quyền đọc trực tiếp cho client.
-7. Giới hạn quyền service account Firebase theo nguyên tắc tối thiểu.
-8. Che dữ liệu nhạy cảm trong log; dùng `LOG_FORMAT=json` khi đẩy vào hệ thống
-   log tập trung.
+8. Rà soát `firestore.rules` và không cấp quyền đọc trực tiếp cho client.
+9. Giới hạn quyền service account Firebase theo nguyên tắc tối thiểu.
+10. Che dữ liệu nhạy cảm trong log; dùng `LOG_FORMAT=json` khi đẩy vào hệ thống
+    log tập trung.
 
 ## Câu hỏi
 

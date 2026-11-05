@@ -53,6 +53,7 @@ from app.core.dependencies import (
     heavy_rate_limit,
     logger,
 )
+from app.core.job_queue import JobQueueError, job_queue
 
 router = APIRouter(tags=["video"])
 
@@ -335,16 +336,20 @@ async def stream_media_endpoint(
 
 # Bộ lưu trữ trạng thái các tác vụ bị hủy ngang (Yêu cầu 1)
 cancelled_jobs: set = set()
-streaming_jobs: dict = {}
 
 @router.post("/api/video/cancel/{job_id}")
 async def cancel_job(job_id: str, user=Depends(get_current_user)):
     """Cơ chế ngắt ngang tiến trình đang chạy (Yêu cầu 1)."""
     cancelled_jobs.add(job_id)
-    if job_id in streaming_jobs:
-        if streaming_jobs[job_id].get("owner_id") != user["id"]:
-            raise HTTPException(status_code=403, detail="Bạn không có quyền hủy tác vụ này.")
-        streaming_jobs[job_id]["is_cancelled"] = True
+    try:
+        result = await run_in_threadpool(job_queue.request_cancel, job_id, user["id"])
+    except JobQueueError:
+        raise HTTPException(
+            status_code=503,
+            detail="Hàng đợi tạm thời không khả dụng, vui lòng thử lại sau.",
+        )
+    if result.get("status") == "forbidden":
+        raise HTTPException(status_code=403, detail="Bạn không có quyền hủy tác vụ này.")
     logger.info(f"Đã kích hoạt ngắt ngang cho tác vụ: {job_id}")
     return {"success": True, "message": f"Tác vụ {job_id} đã được gửi tín hiệu dừng."}
 
@@ -1179,7 +1184,14 @@ async def pair_video_and_subtitles(
 
 import threading
 
-streaming_jobs = {}
+
+def _persist_job(job_id: str, **changes) -> None:
+    """Cập nhật trạng thái job, không làm hỏng worker nếu Redis tạm lỗi."""
+    try:
+        job_queue.update_job(job_id, **changes)
+    except JobQueueError as exc:
+        logger.error("Không cập nhật được trạng thái job %s: %s", job_id, exc)
+
 
 def _run_background_transcription(job_id: str, audio_path: str, target_lang: str, src_lang: str):
     """
@@ -1189,8 +1201,23 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
     - Đảm bảo người dùng xem tới đâu thì phụ đề đã có sẵn tới đó, gối đầu liên tục không bị khựng sau 30 giây!
     """
     try:
-        job = streaming_jobs.get(job_id)
-        if not job:
+        job = job_queue.get_job(job_id)
+    except JobQueueError as exc:
+        logger.error("Không đọc được job %s: %s", job_id, exc)
+        return
+    if not job:
+        return
+
+    cancelled = False
+    try:
+        # Job có thể đã bị huỷ trong lúc chờ worker nhận việc.
+        if job_queue.is_cancelled(job_id):
+            _persist_job(
+                job_id,
+                status="cancelled",
+                progress=100,
+                finished_at=time.time(),
+            )
             return
 
         duration = float(job.get("duration_seconds") or 1800.0)
@@ -1216,6 +1243,10 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
             language=None if src_lang == "auto" else src_lang,
             task="transcribe"
         ):
+            if job_queue.is_cancelled(job_id):
+                cancelled = True
+                break
+
             detected = raw_seg.get("detected_language") or detected
 
             # Bỏ qua các câu rơi vào khoảng 30s đầu đã được nạp trước đó
@@ -1256,6 +1287,24 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
                 job["detected_language"] = detected
                 prog = min(95, max(10, int((float(raw_seg.get("end", 0)) / duration) * 100)))
                 job["progress"] = prog
+                _persist_job(
+                    job_id,
+                    segments=job["segments"],
+                    detected_language=detected,
+                    progress=prog,
+                )
+
+        if cancelled:
+            _persist_job(
+                job_id,
+                status="cancelled",
+                progress=100,
+                segments=list(all_segments),
+                detected_language=detected,
+                finished_at=time.time(),
+            )
+            logger.info("Job streaming %s đã dừng theo yêu cầu người dùng.", job_id)
+            return
 
         # Dịch nốt các câu còn lại trong buffer nếu còn
         if buffer_batch:
@@ -1328,12 +1377,28 @@ def _run_background_transcription(job_id: str, audio_path: str, target_lang: str
             "owner_id": job.get("owner_id"),
         }
         firebase_service.save_lecture_cache(job["video_url"], full_res)
+        _persist_job(
+            job_id,
+            status="completed",
+            progress=100,
+            segments=all_segments,
+            detected_language=detected,
+            summary=job["summary"],
+            key_points=job["key_points"],
+            formulas_and_terms=job["formulas_and_terms"],
+            sections=job["sections"],
+            quiz=job["quiz"],
+            quiz_target=job.get("quiz_target"),
+            mindmap=job["mindmap"],
+            exercises=job["exercises"],
+            folder=job["folder"],
+            tags=job["tags"],
+            finished_at=time.time(),
+        )
         logger.info(f"Đã hoàn thành nạp gối đầu toàn bộ video dài [{job.get('title')}]: {len(all_segments)} câu phụ đề.")
     except Exception as e:
         logger.error(f"Lỗi worker xử lý ngầm video: {e}")
-        if job_id in streaming_jobs:
-            streaming_jobs[job_id]["status"] = "failed"
-            streaming_jobs[job_id]["error"] = str(e)
+        _persist_job(job_id, status="failed", error=str(e), finished_at=time.time())
     finally:
         if os.path.exists(audio_path):
             try: os.remove(audio_path)
@@ -1365,6 +1430,21 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
         cached["exercises"] = normalize_exercises(cached.get("exercises"), key_points=cached.get("key_points"))
         return cached
 
+    # Redis mode: không nhận job nếu worker chưa chạy, tránh job nằm chờ vô hạn.
+    if job_queue.is_redis:
+        try:
+            worker_ready = await run_in_threadpool(job_queue.worker_alive)
+        except JobQueueError:
+            raise HTTPException(
+                status_code=503,
+                detail="Hàng đợi xử lý tạm thời không khả dụng, vui lòng thử lại sau.",
+            )
+        if not worker_ready:
+            raise HTTPException(
+                status_code=503,
+                detail="Worker xử lý video chưa sẵn sàng. Vui lòng thử lại sau.",
+            )
+
     # Tải audio stream
     audio_info = audio_service.extract_audio_from_url(url, duration_limit_sec=None)
     audio_path = audio_info["audio_path"]
@@ -1393,12 +1473,12 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
             try: os.remove(fast_wav)
             except Exception: pass
 
-    streaming_jobs[job_id] = {
+    job = {
         "job_id": job_id,
         "video_url": url,
         "title": audio_info["title"],
         "duration_seconds": audio_info["duration"],
-        "status": "processing",
+        "status": "queued" if job_queue.is_redis else "processing",
         "progress": 30,
         "segments": fast_segments,
         "language": target_lang,
@@ -1406,14 +1486,39 @@ async def init_streaming_video(request: ProcessVideoRequest, user=Depends(get_cu
         "quiz_target": request.quiz_target,
         "created_at": time.time(),
     }
+    src_lang = request.source_language or "auto"
 
-    # Kích hoạt worker chạy ngầm song song
-    worker = threading.Thread(
-        target=_run_background_transcription,
-        args=(job_id, audio_path, target_lang, request.source_language or "auto"),
-        daemon=True
-    )
-    worker.start()
+    try:
+        # Redis: worker riêng (app.worker) nhận job qua hàng đợi. Không Redis:
+        # chạy thread nội bộ như trước để đồ án vẫn hoạt động một tiến trình.
+        await run_in_threadpool(job_queue.create_job, job)
+        if job_queue.is_redis:
+            await run_in_threadpool(
+                job_queue.enqueue,
+                job_id,
+                {
+                    "audio_path": audio_path,
+                    "target_lang": target_lang,
+                    "src_lang": src_lang,
+                },
+            )
+            logger.info("Đã đưa job streaming %s vào hàng đợi Redis.", job_id)
+        else:
+            worker = threading.Thread(
+                target=_run_background_transcription,
+                args=(job_id, audio_path, target_lang, src_lang),
+                daemon=True,
+            )
+            worker.start()
+    except JobQueueError as exc:
+        logger.error("Không thể tạo job streaming %s: %s", job_id, exc)
+        if os.path.exists(audio_path):
+            try: os.remove(audio_path)
+            except Exception: pass
+        raise HTTPException(
+            status_code=503,
+            detail="Hàng đợi xử lý tạm thời không khả dụng, vui lòng thử lại sau.",
+        )
 
     is_drive = audio_service.is_google_drive(url)
     drive_id = audio_service.extract_drive_id(url) if is_drive else ""
@@ -1450,7 +1555,13 @@ async def get_stream_status(job_id: str = Query(..., description="ID của phiê
     """
     Kiểm tra trạng thái tiến trình xử lý ngầm và nhận danh sách phụ đề mới nhất
     """
-    job = streaming_jobs.get(job_id)
+    try:
+        job = await run_in_threadpool(job_queue.get_job, job_id)
+    except JobQueueError:
+        raise HTTPException(
+            status_code=503,
+            detail="Hàng đợi tạm thời không khả dụng, vui lòng thử lại sau.",
+        )
     if not job:
         return {
             "job_id": job_id,
@@ -1463,10 +1574,15 @@ async def get_stream_status(job_id: str = Query(..., description="ID của phiê
     if job.get("owner_id") != user["id"]:
         raise HTTPException(status_code=403, detail="Bạn không có quyền xem tác vụ này.")
 
+    status = job.get("status")
+    # "cancelled"/"failed" cũng là trạng thái kết thúc để client dừng poll.
+    is_completed = status in {"completed", "failed", "cancelled"}
+    progress = 100 if is_completed else job.get("progress", 0)
+
     return {
         "job_id": job_id,
-        "status": job.get("status"),
-        "progress": job.get("progress", 0),
+        "status": status,
+        "progress": progress,
         "segments": job.get("segments", []),
         "summary": job.get("summary"),
         "key_points": job.get("key_points", []),
@@ -1476,7 +1592,8 @@ async def get_stream_status(job_id: str = Query(..., description="ID của phiê
         "quiz_target": job.get("quiz_target"),
         "mindmap": job.get("mindmap"),
         "exercises": job.get("exercises", []),
-        "is_completed": job.get("status") == "completed"
+        "error": job.get("error"),
+        "is_completed": is_completed
     }
 
 

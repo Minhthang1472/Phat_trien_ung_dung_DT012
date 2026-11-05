@@ -291,7 +291,9 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
    (`0.0.0.0/0`, `::/0`). Đặt `ALLOWED_HOSTS` bằng domain thật
    (ví dụ `api.example.com`) để chặn Host header lạ. Đặt `METRICS_TOKEN`
    (>= 16 ký tự) để bảo vệ `/metrics`; đặt `ADMIN_TOKEN` (>= 32 ký tự) nếu cần
-   API khôi phục tài khoản.
+   API khôi phục tài khoản và dashboard quản trị tại `/admin`.
+   Mặc định job streaming chạy trong tiến trình API. Để dùng Redis queue, đặt
+   `REDIS_URL=redis://redis:6379/0` và chạy kèm `--profile queue` (xem bên dưới).
    Nếu chạy sau reverse proxy/load balancer, đặt `TRUSTED_PROXIES` (IP/CIDR,
    phân tách bằng dấu phẩy) để rate limit đọc đúng IP qua `X-Forwarded-For`.
    `/docs` mặc định tắt ở production (bật bằng `ENABLE_DOCS=true`).
@@ -306,6 +308,17 @@ npm run mobile:web  # Chạy trực tiếp trên trình duyệt
    ```
    Backend sẽ chạy tại `http://localhost:8000`. Container đã cài sẵn `ffmpeg`,
    thư viện render PDF và có healthcheck tự động.
+
+   **Tùy chọn Redis queue** (worker tách riêng, job còn sau khi API restart):
+
+   ```powershell
+   # Thêm REDIS_URL=redis://redis:6379/0 vào .env rồi:
+   docker compose --profile queue up --build
+   ```
+
+   Không đặt `REDIS_URL` thì API tự chạy job bằng thread nội bộ và không cần
+   service `worker`. Dashboard quản trị: `http://localhost:8000/admin` (nhập
+   `ADMIN_TOKEN`).
 
 #### Triển khai HTTPS production (Caddy)
 
@@ -485,6 +498,22 @@ Firestore Console (hoặc đặt `deleted: false`).
 
 ---
 
+### ADMIN DASHBOARD
+
+Mở `/admin` trên backend (ví dụ `http://127.0.0.1:8000/admin`) và nhập
+`ADMIN_TOKEN`. Giao diện HTML/CSS/JS thuần, không cần build:
+
+- thống kê người dùng, tài khoản xoá mềm, bài giảng, media, dung lượng upload;
+- trạng thái hàng đợi và worker heartbeat; 20 job gần đây kèm tiến độ;
+- danh sách tài khoản xoá mềm và nút khôi phục;
+- tự làm mới 10/15/30 giây hoặc tắt.
+
+Token chỉ lưu trong `sessionStorage` của tab hiện tại. Nếu `ADMIN_TOKEN` trống,
+cả dashboard API lẫn `/api/admin/*` trả 404 để không lộ sự tồn tại. Endpoint
+quản trị dùng rate limit 10 request/phút/IP.
+
+---
+
 ### SAO LƯU & KHÔI PHỤC DỮ LIỆU
 
 Script `scripts/backup_firestore.py` xuất toàn bộ collection quan trọng
@@ -524,15 +553,27 @@ tiết và lịch chạy mẫu nằm trong [`docs/VAN_HANH_PRODUCTION.md`](docs/
 
 ---
 
-### LƯU Ý KHI MỞ RỘNG QUY MÔ
+### HÀNG ĐỢI REDIS & MỞ RỘNG QUY MÔ
 
-Job xử lý video/streaming, bộ đếm hủy job và rate limit hiện lưu trong RAM của
-tiến trình. Docker chạy `uvicorn --workers 1`; không tăng số worker hoặc chạy
-nhiều instance phía sau load balancer nếu chưa bổ sung hàng đợi ngoài
-(Redis/Celery) hoặc định tuyến cố định theo `job_id`. Với quy mô đồ án, một
-worker là đủ và tránh phát sinh hạ tầng không cần thiết. Khi đặt sau proxy,
-cấu hình `TRUSTED_PROXIES` để rate limit không gộp mọi người dùng vào IP của
-proxy; nếu không cấu hình, backend bỏ qua `X-Forwarded-For` để tránh giả mạo.
+Mặc định backend chạy một tiến trình: job streaming, rate limit và bộ đếm đăng
+nhập nằm trong RAM, phù hợp quy mô đồ án.
+
+Khi cần worker tách riêng hoặc nhiều API instance:
+
+1. Đặt `REDIS_URL=redis://redis:6379/0` trong `.env`.
+2. Chạy `docker compose --profile queue up -d --build` (hoặc
+   `python -m app.worker` nếu chạy trực tiếp).
+3. Kiểm tra `/admin`: hàng đợi hiển thị `Redis · worker online`.
+
+Job state lưu trong Redis với TTL làm mới mỗi lần cập nhật; hàng đợi FIFO dùng
+`RPUSH`/`BLPOP`; API và worker chia sẻ volume audio (`AUDIO_TEMP_DIR`). Nếu
+Redis tạm lỗi, API trả 503 cho thao tác job thay vì âm thầm chạy sai tiến trình.
+Không dùng Redis thì không cần worker; job đang chạy sẽ mất khi API restart.
+
+Khi đặt sau proxy, cấu hình `TRUSTED_PROXIES` để rate limit không gộp mọi người
+dùng vào IP của proxy; nếu không cấu hình, backend bỏ qua `X-Forwarded-For` để
+tránh giả mạo. Chi tiết vận hành ở
+[`docs/VAN_HANH_PRODUCTION.md`](docs/VAN_HANH_PRODUCTION.md).
 
 ---
 
@@ -587,6 +628,10 @@ proxy; nếu không cấu hình, backend bỏ qua `X-Forwarded-For` để tránh
 | `DELETE` | `/api/auth/account` | Vô hiệu hoá tài khoản (xoá mềm, giữ dữ liệu; mật khẩu bắt buộc với tài khoản email) | Bearer Token |
 | `GET` | `/api/admin/users` | Liệt kê tài khoản đang bị vô hiệu hoá | `X-Admin-Token` |
 | `POST` | `/api/admin/users/{id}/restore` | Khôi phục tài khoản xoá mềm, giữ nguyên dữ liệu | `X-Admin-Token` |
+| `GET` | `/api/admin/overview` | Dữ liệu tổng hợp cho dashboard `/admin` | `X-Admin-Token` |
+| `GET` | `/api/admin/stats` | Thống kê user/bài giảng/media/dung lượng/hàng đợi | `X-Admin-Token` |
+| `GET` | `/api/admin/queue` | Trạng thái hàng đợi và worker heartbeat | `X-Admin-Token` |
+| `GET` | `/api/admin/jobs` | Danh sách job streaming gần đây | `X-Admin-Token` |
 | `GET` | `/api/export` | Xuất tài liệu bài giảng (`?video_url=...&format=pdf\|docx\|md`) | Bearer Token |
 | `GET` | `/health` | Liveness probe (tiến trình còn sống) | Public |
 | `GET` | `/health/ready` | Readiness probe (Firebase, thư mục upload, JWT secret) | Public |

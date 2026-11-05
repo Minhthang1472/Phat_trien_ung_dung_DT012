@@ -12,7 +12,11 @@ from app.core.config import settings
 logger = logging.getLogger("uvicorn")
 
 # Thư mục tạm riêng cho audio để vòng dọn dẹp chỉ xoá file do ứng dụng tạo ra.
-AUDIO_TEMP_DIR = os.path.join(tempfile.gettempdir(), "lecture-ai-audio")
+# Khi chạy Redis queue, API và worker phải trỏ cùng một thư mục (volume dùng
+# chung) để worker mở được file audio do API tải về.
+AUDIO_TEMP_DIR = os.getenv("AUDIO_TEMP_DIR", "").strip() or os.path.join(
+    tempfile.gettempdir(), "lecture-ai-audio"
+)
 os.makedirs(AUDIO_TEMP_DIR, exist_ok=True)
 
 # Hostname tuyệt đối không được phép truy cập, kể cả khi resolve ra IP công khai.

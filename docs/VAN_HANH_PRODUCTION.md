@@ -36,6 +36,8 @@ SMTP_PASSWORD=...
 SMTP_FROM=no-reply@example.com
 API_DOMAIN=api.example.com
 ACME_EMAIL=ops@example.com
+# Bật Redis queue (tùy chọn, cần cho worker tách riêng)
+REDIS_URL=redis://redis:6379/0
 ```
 
 Đặt service account Firebase vào `./secrets/serviceAccountKey.json` (quyền
@@ -51,13 +53,21 @@ Sinh secret bằng PowerShell:
 ## 3. Khởi động
 
 ```bash
-# Lần đầu hoặc sau khi đổi Dockerfile/requirements
+# Lần đầu hoặc sau khi đổi Dockerfile/requirements (một tiến trình, không Redis)
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Hoặc bật Redis + worker tách riêng
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile queue up -d --build
 
 # Xem trạng thái
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f api
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f worker
 ```
+
+Khi bật `--profile queue`, đặt `REDIS_URL=redis://redis:6379/0` trong `.env`
+để API đẩy job vào Redis. Nếu để trống, API vẫn chạy job bằng thread nội bộ và
+service `worker` sẽ dừng ngay khi khởi động (có log hướng dẫn).
 
 Luồng request: `Internet -> Caddy (443) -> api:8000 (mạng Docker nội bộ)`.
 Caddy tự xin/gia hạn chứng chỉ Let's Encrypt và chuyển WebSocket.
@@ -72,6 +82,34 @@ curl -H "Authorization: Bearer $METRICS_TOKEN" https://api.example.com/metrics |
 
 `/docs` mặc định tắt ở production (`ENABLE_DOCS=false`). `/api/admin` trả 404
 nếu `ADMIN_TOKEN` trống.
+
+### Admin dashboard
+
+Mở `https://api.example.com/admin`, nhập `ADMIN_TOKEN` để đăng nhập. Token chỉ
+lưu trong `sessionStorage` của tab hiện tại, không nằm trong cookie hay file
+tĩnh. Trang tự làm mới mỗi 15 giây (đổi được 10/15/30 giây hoặc tắt) và hiển
+thị:
+
+- số người dùng, tài khoản xoá mềm, bài giảng, media và dung lượng upload;
+- trạng thái hàng đợi: chờ/đang xử lý/hoàn thành/thất bại/đã huỷ, worker
+  heartbeat (Redis) hoặc chế độ in-memory;
+- 20 job gần đây kèm tiến độ;
+- danh sách tài khoản xoá mềm và nút khôi phục.
+
+API tương ứng (đều yêu cầu header `X-Admin-Token`):
+
+| Method | Đường dẫn | Mục đích |
+| --- | --- | --- |
+| `GET` | `/api/admin/overview` | Dữ liệu tổng hợp cho dashboard |
+| `GET` | `/api/admin/stats` | Thống kê user/bài giảng/media/dung lượng/queue |
+| `GET` | `/api/admin/queue` | Trạng thái hàng đợi và worker |
+| `GET` | `/api/admin/jobs` | Job gần đây (`limit` 1–100) |
+| `GET` | `/api/admin/users` | Tài khoản xoá mềm |
+| `POST` | `/api/admin/users/{id}/restore` | Khôi phục tài khoản |
+
+Dashboard dùng CSP riêng chỉ cho phép script/style cùng origin; các route khác
+vẫn giữ `default-src 'none'`. Endpoint quản trị bị giới hạn bởi rate limit
+`heavy` (10 request/phút/IP), nên không nên đặt chu kỳ tự làm mới quá ngắn.
 
 ## 4. Sao lưu
 
@@ -161,15 +199,37 @@ dig +short TXT _dmarc.example.com
 dig +short TXT selector._domainkey.example.com
 ```
 
-## 7. Redis và nhiều worker
+## 7. Redis queue và worker
 
-Mặc định backend chạy **một worker** và giữ rate limit, job streaming, bộ đếm
-đăng nhập trong RAM. Nếu cần scale ngang:
+Mặc định backend chạy **một tiến trình**: job streaming, rate limit và bộ đếm
+đăng nhập nằm trong RAM. Với đồ án, cấu hình này là đủ và không cần thêm hạ
+tầng.
 
-- Bật `REDIS_URL` để rate limit phân tán.
-- Thay hàng đợi trong RAM bằng Celery/RQ và định tuyến job theo `job_id`.
-- Chỉ tăng `--workers` sau khi đã chuyển các trạng thái trên ra khỏi RAM.
-- Cấu hình load balancer sticky session nếu vẫn dùng WebSocket/streaming RAM.
+Khi cần worker tách riêng hoặc chạy nhiều API instance:
+
+1. Trong `.env`, đặt `REDIS_URL=redis://redis:6379/0`.
+2. Khởi động kèm profile queue:
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile queue up -d --build
+   ```
+3. Mở `/admin`, mục **Hàng đợi xử lý** phải hiển thị `Redis · worker online`.
+
+Cơ chế:
+
+- Job streaming được lưu trong Redis dưới dạng JSON, TTL làm mới mỗi lần cập
+  nhật (`STREAM_JOB_TTL_MINUTES`, mặc định 120 phút sau lần cập nhật cuối).
+- Hàng đợi dùng `RPUSH` + `BLPOP` nên xử lý FIFO; nhiều worker có thể cùng
+  nhận job nhưng nên chạy **một worker** nếu dùng Whisper trên CPU/GPU nhỏ.
+- Cờ huỷ nằm ở key riêng; worker kiểm tra giữa các batch và dừng job, trạng
+  thái cuối là `cancelled` (client dừng poll như `completed`).
+- API và worker dùng chung volume `lecture_audio` (`AUDIO_TEMP_DIR=/app/audio-temp`)
+  để worker mở được file audio API đã tải về.
+- Rate limit tự dùng Redis khi có `REDIS_URL`; nếu Redis tạm lỗi, rate limit
+  quay về bộ nhớ cục bộ, còn job queue trả `503` thay vì chạy sai tiến trình.
+- Chạy worker ngoài Docker: `cd src/backend-ai && python -m app.worker`.
+
+Nếu không dùng Redis, không cần chạy worker và job streaming sẽ mất khi API
+restart (dữ liệu bài giảng đã lưu trong Firestore vẫn còn).
 
 ## 8. Cập nhật phiên bản
 
@@ -179,8 +239,11 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 python scripts/check_health.py --base-url https://api.example.com
 ```
 
-Job streaming đang chạy trong RAM sẽ mất khi restart; hãy chọn thời điểm ít
-người dùng. Firestore và file upload không bị ảnh hưởng.
+Không có Redis, job streaming đang chạy trong RAM sẽ mất khi restart; hãy chọn
+thời điểm ít người dùng. Có Redis, job đang chờ trong hàng đợi vẫn còn sau khi
+API restart. Nếu worker bị dừng giữa chừng, job có thể kẹt ở trạng thái
+`processing`; theo dõi qua `/admin` và yêu cầu người dùng chạy lại bài giảng.
+Firestore và file upload không bị ảnh hưởng.
 
 ## 9. Checklist trước khi mở traffic
 
@@ -192,6 +255,8 @@ người dùng. Firestore và file upload không bị ảnh hưởng.
 - [ ] `firebase deploy --only firestore:rules,firestore:indexes`.
 - [ ] Đã chạy `scripts/backfill_cached_at.py` cho dữ liệu cũ.
 - [ ] Backup Firestore + upload chạy được và đã thử restore.
+- [ ] Nếu bật Redis queue: đã chạy `--profile queue`, firewall không mở cổng
+      Redis ra Internet và `/admin` báo worker online.
 - [ ] Uptime monitor + cảnh báo log/ổ đĩa.
 - [ ] `docs/PRIVACY_POLICY.md` và `docs/TERMS_OF_SERVICE.md` đã được rà soát
       pháp lý và đăng công khai.

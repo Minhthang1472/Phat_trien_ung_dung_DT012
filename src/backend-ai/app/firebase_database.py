@@ -472,6 +472,49 @@ class FirebaseService:
             return []
         return list(users.values())[:cap]
 
+    @staticmethod
+    def _count_query(query) -> Optional[int]:
+        """Đếm bằng aggregation của Firestore; trả None nếu SDK/DB không hỗ trợ."""
+        try:
+            result = query.count().get()
+            return int(result[0][0].value)
+        except Exception as exc:
+            logger.warning("Không đếm được tài liệu Firestore: %s", exc)
+            return None
+
+    def count_collection(self, collection_name: str) -> Optional[int]:
+        """Số tài liệu trong collection, dùng count() thay vì tải toàn bộ."""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return None
+        return self._count_query(self.db.collection(collection_name))
+
+    def count_deleted_users(self) -> Optional[int]:
+        """Số tài khoản xoá mềm (hỗ trợ cả dữ liệu cũ chỉ có account_status)."""
+        if not self.db:
+            self.init_firebase()
+        if not self.db:
+            return None
+        counts = []
+        for field, value in (("deleted", True), ("account_status", "deleted")):
+            try:
+                try:
+                    from google.cloud.firestore_v1.base_query import FieldFilter
+
+                    query = self.db.collection("users").where(
+                        filter=FieldFilter(field, "==", value)
+                    )
+                except ImportError:
+                    query = self.db.collection("users").where(field, "==", value)
+            except Exception as exc:
+                logger.warning("Không tạo được truy vấn đếm tài khoản: %s", exc)
+                continue
+            count = self._count_query(query)
+            if count is not None:
+                counts.append(count)
+        return max(counts) if counts else None
+
     def restore_user_account(self, user_id: str) -> Dict[str, Any]:
         """Khôi phục tài khoản xoá mềm bằng cách xoá các dấu hiệu vô hiệu hoá."""
         if not self.db:
