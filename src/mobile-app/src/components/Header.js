@@ -165,24 +165,23 @@ export default function Header({
           <View style={styles.rightSection}>
             {rightElement}
 
-            {!showBack ? (
-              <>
-                <View style={styles.streakPill}>
-                  <Icon name="fire" size={15} color={colors.coral} />
-                  <Text style={styles.streakText}>{streakLabel || currentStreak}</Text>
-                </View>
+            {!showBack && !hideStreak ? (
+              <View style={styles.streakPill}>
+                <Icon name="fire" size={15} color={colors.coral} />
+                <Text style={styles.streakText}>{streakLabel || currentStreak}</Text>
+              </View>
+            ) : null}
 
-                {/* Nút chuông thông báo trực quan */}
-                <TouchableOpacity
-                  style={styles.bellButton}
-                  onPress={() => setShowNotifModal(true)}
-                  activeOpacity={0.75}
-                  accessibilityLabel="Thông báo hệ thống"
-                >
-                  <Icon name="bell" size={21} color={unreadCount > 0 ? colors.coral : colors.slate} />
-                  {unreadCount > 0 ? <View style={styles.bellDot} /> : null}
-                </TouchableOpacity>
-              </>
+            {!showBack && !hideNotification ? (
+              <TouchableOpacity
+                style={styles.bellButton}
+                onPress={() => setShowNotifModal(true)}
+                activeOpacity={0.75}
+                accessibilityLabel="Thông báo hệ thống"
+              >
+                <Icon name="bell" size={21} color={unreadCount > 0 ? colors.coral : colors.slate} />
+                {unreadCount > 0 ? <View style={styles.bellDot} /> : null}
+              </TouchableOpacity>
             ) : null}
 
             {onOpenSettings ? (
