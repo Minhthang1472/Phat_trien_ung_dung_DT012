@@ -754,7 +754,7 @@ export default function ProfileScreen({ currentUser, onBack, onAuthSuccess, onSk
     <View style={styles.container}>
       <AuraBackground />
       {/* Header không có nút quay về vì đã có thanh điều hướng dưới đáy */}
-      <Header title="HỒ SƠ" />
+      <Header title="HỒ SƠ" streakLabel={`${Math.max(1, streakDays)} Ngày`} />
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}

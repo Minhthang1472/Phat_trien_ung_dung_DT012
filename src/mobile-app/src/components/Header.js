@@ -6,6 +6,7 @@ import Icon from './ui/Icon';
 import BrandLogo from './ui/BrandLogo';
 import NotificationModal from './NotificationModal';
 import { notificationService } from '../services/notificationService';
+import { streakService } from '../services/streakService';
 import { apiService } from '../services/api';
 
 export default function Header({
@@ -16,11 +17,26 @@ export default function Header({
   onBack,
   showBack = false,
   rightElement,
-  streakLabel = '1 Ngày',
+  streakLabel,
 }) {
   const [internalOnline, setInternalOnline] = useState(apiService.getLastKnownOnline ? apiService.getLastKnownOnline() : true);
   const [notifications, setNotifications] = useState([]);
   const [showNotifModal, setShowNotifModal] = useState(false);
+  const [currentStreak, setCurrentStreak] = useState(streakLabel || '1 Ngày');
+
+  useEffect(() => {
+    if (streakLabel) {
+      setCurrentStreak(streakLabel);
+    } else {
+      let active = true;
+      streakService.getOrUpdateStreak().then((days) => {
+        if (active && days) {
+          setCurrentStreak(`${days} Ngày`);
+        }
+      });
+      return () => { active = false; };
+    }
+  }, [streakLabel]);
 
   useEffect(() => {
     let active = true;
@@ -151,7 +167,7 @@ export default function Header({
               <>
                 <View style={styles.streakPill}>
                   <Icon name="fire" size={15} color={colors.coral} />
-                  <Text style={styles.streakText}>{streakLabel}</Text>
+                  <Text style={styles.streakText}>{streakLabel || currentStreak}</Text>
                 </View>
 
                 {/* Nút chuông thông báo trực quan */}
