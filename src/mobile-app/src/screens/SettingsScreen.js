@@ -12,7 +12,6 @@ import * as FileSystem from 'expo-file-system';
 import * as LegacyFileSystem from 'expo-file-system/legacy';
 import { colors } from '../constants/theme';
 import { apiService } from '../services/api';
-import { streakService } from '../services/streakService';
 import Header from '../components/Header';
 import AuraBackground from '../components/ui/AuraBackground';
 import {
@@ -36,15 +35,7 @@ export default function SettingsScreen({ onNavigate, onLogout, currentUser }) {
   const [defaultExportDir, setDefaultExportDir] = useState({ uri: null, name: null });
   const [serverOnline, setServerOnline] = useState(apiService.getLastKnownOnline ? apiService.getLastKnownOnline() : true);
   const [localLectureCount, setLocalLectureCount] = useState(0);
-  const [streakDays, setStreakDays] = useState(1);
 
-  useEffect(() => {
-    let active = true;
-    streakService.getOrUpdateStreak().then((d) => {
-      if (active && d) setStreakDays(d);
-    });
-    return () => { active = false; };
-  }, []);
 
   // States cho Popup Đổi mật khẩu
   const [modalVisible, setModalVisible] = useState(false);
@@ -336,7 +327,7 @@ export default function SettingsScreen({ onNavigate, onLogout, currentUser }) {
   return (
     <View style={styles.container}>
       <AuraBackground />
-      <Header title="CÀI ĐẶT" serverStatus={{ online: serverOnline }} streakLabel={`${streakDays} Ngày`} />
+      <Header title="CÀI ĐẶT" serverStatus={{ online: serverOnline }} hideStreak hideNotification />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         {/* Tiêu đề trang + trạng thái máy chủ */}
         <View style={styles.pageHeader}>

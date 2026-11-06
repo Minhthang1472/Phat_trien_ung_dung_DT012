@@ -18,6 +18,8 @@ export default function Header({
   showBack = false,
   rightElement,
   streakLabel,
+  hideStreak = false,
+  hideNotification = false,
 }) {
   const [internalOnline, setInternalOnline] = useState(apiService.getLastKnownOnline ? apiService.getLastKnownOnline() : true);
   const [notifications, setNotifications] = useState([]);
