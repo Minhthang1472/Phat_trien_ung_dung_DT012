@@ -229,12 +229,14 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
 app.add_middleware(BodySizeLimitMiddleware)
 
 # Cấu hình CORS để Mobile App (React Native) và Browser Extension có thể kết nối không bị chặn
+# Dùng regex để chấp nhận localhost và chrome-extension://<id>; tránh preflight 400
+# do origin không nằm trong allow_origins tĩnh.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"https?://localhost(:\d+)?|https?://127\.0\.0\.1(:\d+)?|chrome-extension://[a-zA-Z0-9_-]+",
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Admin-Token"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Admin-Token", "Accept"],
     expose_headers=["X-Request-ID", "X-API-Version", "Content-Disposition", "Retry-After"],
 )
 

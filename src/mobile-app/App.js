@@ -40,12 +40,16 @@ export default function App() {
       document.title = 'EdTech AI - Học Thông Minh Mỗi Ngày';
       const rootEl = document.getElementById('root');
       document.documentElement.style.height = '100%';
+      document.documentElement.style.width = '100%';
       document.body.style.height = '100%';
+      document.body.style.width = '100%';
       document.body.style.margin = '0';
       document.body.style.overflow = 'hidden';
       document.body.style.backgroundColor = colors.surface;
       if (rootEl) {
         rootEl.style.height = '100%';
+        rootEl.style.width = '100%';
+        rootEl.style.minHeight = '100vh';
         rootEl.style.display = 'flex';
         rootEl.style.flexDirection = 'column';
       }
@@ -174,10 +178,12 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
+    width: '100%',
     backgroundColor: colors.surface,
   },
   container: {
     flex: 1,
+    width: '100%',
   },
   contentArea: {
     flex: 1,

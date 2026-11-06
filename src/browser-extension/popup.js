@@ -248,12 +248,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     const refreshed = await refreshExtensionSession(deviceId, refreshToken);
     if (refreshed) return refreshed;
 
-    // Xin phiên mới theo device_id
+    // Xin phiên mới theo device_id. Nếu origin extension chưa nằm trong CORS,
+    // preflight sẽ bị 400 ngay tại browser; sau khi backend cho phép origin này,
+    // flow mới thành công và token sẽ được lưu lại để dùng cho protected APIs.
     try {
       const serverUrl = activeBackendUrl || "http://127.0.0.1:8000";
       const sessionRes = await fetchWithTimeout(`${serverUrl}/api/auth/extension-session`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
         body: JSON.stringify({ device_id: deviceId })
       }, 4000);
       if (sessionRes.ok) {
@@ -263,7 +268,13 @@ document.addEventListener("DOMContentLoaded", async () => {
           return sessionData.token;
         }
       }
-    } catch (_) {}
+      if (sessionRes.status === 400 || sessionRes.status === 401 || sessionRes.status === 403) {
+        const detail = await sessionRes.text().catch(() => "");
+        console.warn("extension session failed:", sessionRes.status, detail);
+      }
+    } catch (err) {
+      console.warn("extension session request failed:", err);
+    }
     return null;
   };
 
