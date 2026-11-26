@@ -42,6 +42,12 @@
           "backgroundColor": "#FFFFFF"
         }
       ]
-    ]
+    ],
+    "owner": "minhthang1472s-team",
+    "extra": {
+      "eas": {
+        "projectId": "329afa04-afd2-4a11-b276-582a8bd0c4a3"
+      }
+    }
   }
 }

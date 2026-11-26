@@ -41,32 +41,38 @@ export default function VideoPlayerSection({
   styles,
 }) {
   const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const [boxSize, setBoxSize] = useState({ width: 0, height: 0 });
   const isPhysicallyLandscape = winWidth > winHeight;
 
   let containerDynamicStyle = styles.videoContainer;
   let playerHeight = 220;
+  let playerWidth = '100%';
 
   if (isFullscreen) {
     if (isPhysicallyLandscape) {
+      // Nằm gọn trong SafeArea (không tràn ra sau thanh điều hướng Android), căn giữa đều tỉ lệ 16:9
+      const availW = boxSize.width > 0 ? boxSize.width : Math.round(winWidth * 0.86);
+      const availH = boxSize.height > 0 ? boxSize.height : Math.round(winHeight * 0.86);
+      let fitW = availW;
+      let fitH = Math.round(availW * (9 / 16));
+      if (fitH > availH) {
+        fitH = availH;
+        fitW = Math.round(availH * (16 / 9));
+      }
       containerDynamicStyle = [
         styles.videoContainer,
         {
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          width: winWidth,
-          height: winHeight,
-          zIndex: 99999,
-          elevation: 99999,
+          flex: 1,
+          width: '100%',
+          height: '100%',
           borderRadius: 0,
           backgroundColor: '#000000',
           alignItems: 'center',
           justifyContent: 'center',
         },
       ];
-      playerHeight = winHeight;
+      playerWidth = fitW;
+      playerHeight = fitH;
     } else {
       containerDynamicStyle = [
         styles.videoContainer,
@@ -85,6 +91,7 @@ export default function VideoPlayerSection({
           justifyContent: 'center',
         },
       ];
+      playerWidth = winHeight;
       playerHeight = winWidth;
     }
   }
@@ -114,7 +121,15 @@ export default function VideoPlayerSection({
   const fallbackEmbedUrl = drivePreviewUrl || (lecture?.video_url && !lecture.video_url.startsWith('local_file://') ? lecture.video_url : null);
 
   return (
-    <View style={containerDynamicStyle}>
+    <View
+      style={containerDynamicStyle}
+      onLayout={(e) => {
+        const { width, height } = e.nativeEvent.layout;
+        if (width > 0 && height > 0 && (Math.abs(width - boxSize.width) > 2 || Math.abs(height - boxSize.height) > 2)) {
+          setBoxSize({ width, height });
+        }
+      }}
+    >
       {Platform.OS === 'web' ? (
         isYouTube && youtubeId ? (
           <iframe
@@ -265,7 +280,7 @@ export default function VideoPlayerSection({
         isYouTube && youtubeId ? (
           <YoutubePlayer
             ref={ytPlayerRef}
-            width={isFullscreen ? (isPhysicallyLandscape ? winWidth : winHeight) : '100%'}
+            width={isFullscreen ? playerWidth : '100%'}
             height={isFullscreen ? playerHeight : 220}
             play={isPlaying}
             videoId={youtubeId}
